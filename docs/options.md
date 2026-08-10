@@ -70,11 +70,28 @@ bar, with the custom keyboard as a later experiment.
 ttyd -W --index client.html tmux new -A -s pi
 ```
 
-Single self-contained `client.html`: ttyd's WS protocol, iOS standalone meta tags,
-permanent key bar, composer + direct toggle with autocorrect off, pinned-grid pan/zoom
-alongside reflow, alt-screen-aware scrolling, reconnect-with-repaint. Cloudflare tunnel
-for access, reusing the pi-phone pattern.
+Single self-contained `client.html`, plus a Cloudflare tunnel reusing the pi-phone pattern.
 
-Escalate only on evidence: `tmux -CC` if the session/pane UI is genuinely wanted, an own
-server if web push or non-tmux replay become requirements.
+## v1 scope — keep it small
+
+In, because each is load-bearing and cheap:
+
+1. ttyd WS protocol (5 constants) + a terminal widget.
+2. iOS standalone meta tags. One line, ~30% more rows.
+3. Permanent key bar: sticky modifiers, arrows w/ repeat-on-hold, Tab/Esc, PageUp/Dn.
+4. Composer + direct-mode toggle, `autocorrect="off" autocapitalize="off" spellcheck="false"`.
+5. Reflow **and** pinned-grid pan/zoom as separate controls — the actual differentiator.
+6. Reconnect: don't dispose the terminal, backoff, send a `refresh-client -S` keybind on
+   reattach. A handful of lines, fixes the dominant mobile failure.
+7. `visualViewport` layout handling; lock out rubber-band and double-tap zoom.
+
+Out until there is evidence:
+
+- Custom dictionary / completion engine — cut, speculative.
+- `tmux -CC` control mode and any session/window/pane UI — big, and one session is enough.
+- Custom on-screen keyboard replacing the OS one — big; the key bar covers most of it.
+- Own server, service worker, web push — push belongs out-of-band (Pushover) anyway.
+- Voice/TTS, session recording, multi-user.
+
+Dictation needs no code: it comes free with a real `<textarea>`.
 </content>

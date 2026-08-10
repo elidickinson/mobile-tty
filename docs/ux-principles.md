@@ -88,22 +88,14 @@ The composer's real value was never autocorrect. It is:
    the composer for editing*, never send directly. And it cannot work against a canvas
    terminal capturing raw keys, so it requires the composer regardless.
 
-### Replace the generic dictionary with a repo-aware one
+**No custom dictionary or completion engine.** Harvesting identifiers from scrollback and
+ranking them is a speculative feature with real complexity; autocorrect-off plus ordinary
+typing is the simple answer, and jargon typed literally is jargon typed correctly.
 
-The right fix for jargon is not a better autocorrect, it is a better dictionary. Two
-features, both cheap under the no-server architecture:
-
-- **Token strip.** Harvest identifiers from the visible screen and scrollback (via
-  `capture-pane`), rank by recency, offer as tappable chips above the keyboard. The
-  jargon you are about to retype is overwhelmingly jargon pi.dev just printed at you —
-  paths, symbols, branch names, error strings. swell.sh did this from bash-completion;
-  scrollback is a better source and needs no server.
-- **Tap-to-insert from the terminal.** Tap a path or identifier on screen to drop it into
-  the composer. On a phone this is strictly better than typing it.
-
-Both of these are far easier against **DOM-rendered** output (real text nodes, real hit
-targets) than against a canvas, where you would have to reimplement glyph hit-testing.
-Add it to the case for wterm in §6.
+**Tap-to-insert** stays, because it is not a dictionary — tap a word in the output, it
+lands in the composer. Against DOM-rendered output that is a click handler plus word-
+boundary expansion; against a canvas it would mean glyph hit-testing, which is another
+point for wterm in §6. If it turns out to be fiddly, cut it; nothing depends on it.
 
 ## 3. Reflow and zoom are different operations; expose both
 
