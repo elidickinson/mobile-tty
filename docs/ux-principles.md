@@ -53,19 +53,57 @@ trick fixes it. Only decoupling grid size from render size does (§3).
 For pi.dev specifically the dominant input is **prose prompts**, not keystrokes.
 Keystrokes are the minority case (approve, cancel, navigate, Ctrl-C).
 
-That inverts the usual terminal assumption:
-
-- **Composer mode (default).** A real `<textarea>`/contenteditable above the terminal.
-  Buys back autocorrect, predictive text, and — most importantly — **dictation**. Typing a
-  paragraph-long prompt on a phone is miserable; dictating it is pleasant. Dictation only
-  works against a real text input; it cannot work against a canvas terminal that is
-  capturing raw keys. Enter sends, Shift+Enter newlines, history persists.
+- **Composer mode (default).** A real `<textarea>` above the terminal. Enter sends,
+  Shift+Enter newlines, history persists.
 - **Direct mode (toggle).** Raw keystroke streaming for interactive TUI moments, with the
   compact key bar. Explicit, visible, and never the surprise default.
 
 This is also the answer to "permanent on-screen keyboard": the permanent thing is the
 **key bar** (modifiers, arrows, Tab/Esc, PageUp/Dn), always visible and cheap in pixels.
 The full keyboard — OS or custom — is summoned, not resident.
+
+### Autocorrect is a liability here, not a benefit
+
+Agent prompts are jargon- and abbreviation-dense — identifiers, flags, paths, branch
+names. iOS autocorrect mangles exactly those. The asymmetry is what settles it: a typo in
+prose is something the model infers straight through, whereas a *corrected* identifier
+silently points the agent at the wrong file. Wrong-but-plausible beats misspelled.
+
+So turn it off, explicitly, on the element itself (iOS does not inherit these from
+parents):
+
+```html
+<textarea autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off">
+```
+
+The composer's real value was never autocorrect. It is:
+
+1. **Editability.** Touch cursor placement, selection handles, the magnifier, cut/paste.
+   Editing a long prompt in a raw terminal with arrow keys is agony; in a textarea it is
+   ordinary. This alone justifies the mode.
+2. **Review before send.** Nothing reaches the TUI until you commit it. No half-typed
+   prompts, no accidental interrupts.
+3. **Dictation** — kept, but scoped: good for prose intent ("figure out why the token
+   refresh is failing"), useless for `kubectl get pods -n kube-system`. It must land *in
+   the composer for editing*, never send directly. And it cannot work against a canvas
+   terminal capturing raw keys, so it requires the composer regardless.
+
+### Replace the generic dictionary with a repo-aware one
+
+The right fix for jargon is not a better autocorrect, it is a better dictionary. Two
+features, both cheap under the no-server architecture:
+
+- **Token strip.** Harvest identifiers from the visible screen and scrollback (via
+  `capture-pane`), rank by recency, offer as tappable chips above the keyboard. The
+  jargon you are about to retype is overwhelmingly jargon pi.dev just printed at you —
+  paths, symbols, branch names, error strings. swell.sh did this from bash-completion;
+  scrollback is a better source and needs no server.
+- **Tap-to-insert from the terminal.** Tap a path or identifier on screen to drop it into
+  the composer. On a phone this is strictly better than typing it.
+
+Both of these are far easier against **DOM-rendered** output (real text nodes, real hit
+targets) than against a canvas, where you would have to reimplement glyph hit-testing.
+Add it to the case for wterm in §6.
 
 ## 3. Reflow and zoom are different operations; expose both
 
@@ -156,6 +194,8 @@ fork, no server code. Escalate to `tmux -CC` or an own server only if pushed the
 Renderer: this strengthens the case for **wterm**'s DOM rendering over canvas — native
 momentum scrolling, selection handles, find, and accessibility are mobile UX problems that
 DOM gets for free and canvas forces you to reimplement badly, and its bundle is far
-smaller. The risk is maturity; **ghostty-web** is the API-compatible fallback and xterm.js
-the conservative one.
+smaller. §2's tap-to-insert adds to this: tapping a path or identifier in the output is
+natural against real text nodes and a glyph-hit-testing project against a canvas. The risk
+is maturity; **ghostty-web** is the API-compatible fallback and xterm.js the conservative
+one.
 </content>
