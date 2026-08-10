@@ -28,5 +28,6 @@ Research only. See `docs/`.
 - [`docs/landscape.md`](docs/landscape.md) — comprehensive survey of what exists
 - [`docs/ttyd-notes.md`](docs/ttyd-notes.md) — ttyd protocol + what `--index` can and can't do
 - [`docs/design-notes.md`](docs/design-notes.md) — patterns worth stealing, open problems, build options
+- [`docs/ux-principles.md`](docs/ux-principles.md) — UX-first derivation of the architecture
 </content>
 </invoke>

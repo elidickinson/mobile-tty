@@ -65,22 +65,22 @@ real static server, rubber-band scroll fighting the terminal.
 
 | | Approach | Gets you | Costs |
 |---|---|---|---|
-| **1** | `ttyd --index custom.html` + tmux | Key bar, gestures, grid/zoom controls, scroll buttons, layout. ~90% of the UX goal. | Single self-contained HTML file only; no PWA/service worker; no session list. |
-| **2** | ttyd + sidecar static server proxying `/ws` | All of the above + PWA, multi-asset build, auth, session list | Two processes; still can't change ttyd's reconnect behavior |
-| **3** | Own server (node-pty / Go) + custom client | Full control: replay buffer, tmux control-mode integration, multi-session, reconnect | Own the PTY layer (small — node-pty is ~20 lines) and the ops |
+| **1** | `ttyd --index custom.html` + tmux, smart client | Key bar, gestures, grid/zoom controls, iOS standalone, reconnect-with-repaint, and (via `tmux -CC`) session/pane UI | Single self-contained HTML file; no service worker, so no offline and no web push |
+| **2** | ~~ttyd + sidecar static server proxying `/ws`~~ | — | **Ruled out.** Everything it was wanted for is reachable from client JS — see `ux-principles.md` §6. Pure added process for no gain. |
+| **3** | Own server (node-pty / Go) + custom client | Full control: server-side replay buffer, multi-session, web push, gzip/asset pipeline | Own the PTY layer and the ops. Only justified if push or non-tmux replay become requirements |
 | **4** | `cli2ssh`/`wish` + Blink/Termius | Reconnect, roaming, mature key bar — all free | Zero UI control; no flexible screen sizing |
 
-**Assessment.** Option 1 is a genuinely good afternoon-sized starting point and worth
-building first purely to find out which of the above problems actually bite in practice —
-ttyd's protocol is 5 constants and its `--index` hook is real. But note that options 2
-and 3 are nearly the same amount of work, because the moment a sidecar exists, ttyd's
-remaining contribution is just PTY spawning. If the replay buffer or session list turn
-out to matter, go straight to 3 and skip 2.
+**Assessment.** Option 1 is the answer, not just the spike. The sidecar (2) was a false
+middle: iOS standalone needs only meta tags, and reconnect-repaint plus session
+management are both reachable in-band — the latter via tmux control mode, which is a
+structured protocol the client can parse over the same PTY stream. Go to 3 only if web
+push or replay for non-tmux sessions turn out to be requirements.
 
-Renderer: **xterm.js** to start (ecosystem, addons), but **wterm** deserves a real look —
-DOM rendering means native momentum scroll, selection handles, find, and a11y, which are
-precisely the mobile problems canvas forces you to reimplement. **ghostty-web** is the
-low-risk swap since it's API-compatible with xterm.js.
+Renderer: **wterm** is the interesting bet — DOM rendering means native momentum scroll,
+selection handles, find, and a11y (precisely the mobile problems canvas forces you to
+reimplement), and its ~12KB WASM parser makes a far smaller single-file bundle than
+xterm.js, which matters because `--index` is served uncompressed. **ghostty-web** is the
+API-compatible fallback; xterm.js the conservative one.
 
 ## Open questions
 
