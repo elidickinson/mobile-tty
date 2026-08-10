@@ -80,10 +80,13 @@ In, because each is load-bearing and cheap:
 2. iOS standalone meta tags. One line, ~30% more rows.
 3. Permanent key bar: sticky modifiers, arrows w/ repeat-on-hold, Tab/Esc, PageUp/Dn.
 4. Composer + direct-mode toggle, `autocorrect="off" autocapitalize="off" spellcheck="false"`.
-5. Reflow **and** pinned-grid pan/zoom as separate controls — the actual differentiator.
-6. Reconnect: don't dispose the terminal, backoff, send a `refresh-client -S` keybind on
-   reattach. A handful of lines, fixes the dominant mobile failure.
-7. `visualViewport` layout handling; lock out rubber-band and double-tap zoom.
+5. Grid-size presets (50×30 / 120×40 / 160×50) **and** pinned-grid pan/zoom as separate
+   controls — the actual differentiator. Never auto-resize.
+6. Scrollback: touch drag + PageUp/Dn/Home/End buttons + jump-to-bottom. pi is not
+   alt-screen, so this is just the widget's own scrollback.
+7. Reconnect: don't dispose the terminal, backoff, then a **resize nudge** (N−1 → N) to
+   force a full repaint. App-agnostic, no tmux keybind needed.
+8. `visualViewport` layout handling; lock out rubber-band and double-tap zoom.
 
 Out until there is evidence:
 

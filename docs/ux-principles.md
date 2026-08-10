@@ -125,8 +125,9 @@ redraw-on-attach, which is why every mobile project in the survey leans on tmux.
 
 - Sticky/toggle modifiers (tap Ctrl, then c), plus held-modifier for real chords.
 - Repeat-on-hold for arrows.
-- Alt-screen-aware scrolling: client scrollback on the normal screen; copy-mode or
-  PageUp/Dn on the alternate screen. Never guess.
+- Scrolling: **measured — pi does not use the alternate screen** (see `concerns.md`), so
+  plain client-side scrollback plus PageUp/Dn buttons is the whole answer. No copy-mode,
+  no mouse-event synthesis. Add alt-screen detection only if arbitrary TUIs are wanted.
 - `visualViewport` listeners for keyboard-aware layout — mandatory whenever the OS
   keyboard can appear.
 - Lock the layout: no rubber-band, no double-tap zoom, no accidental pinch on the page.
