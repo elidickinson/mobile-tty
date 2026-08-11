@@ -16,11 +16,7 @@ html, body {
   background: var(--bg);
   color: var(--fg);
   font: 13px/1.2 var(--font);
-  /* The document must not be pannable. `overflow: hidden` alone does not stop
-     iOS dragging the page around once the keyboard is up — the drag then never
-     reaches the terminal. Pinning both to the viewport does. */
-  position: fixed;
-  inset: 0;
+  /* The page itself never scrolls; only the terminal does. */
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: manipulation;

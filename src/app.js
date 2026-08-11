@@ -65,13 +65,9 @@ function applyLayout() {
   app.style.transform = `translateY(${snap.offsetTop}px)`
   app.style.paddingLeft = `${snap.insetLeft}px`
   app.style.paddingRight = `${snap.insetRight}px`
+  app.style.paddingBottom = `${l.bottomInset}px`
 
-  // The bar owns the home-indicator inset instead of leaving a gap under it.
-  bar.style.height = `${l.keyBarHeight}px`
-  bar.style.flexBasis = `${l.keyBarHeight}px`
-  bar.style.paddingBottom = `${l.keyBarPadBottom}px`
-
-  toBottom.style.bottom = `${l.keyBarHeight + 10}px`
+  toBottom.style.bottom = `${l.keyBarHeight + l.bottomInset + 10}px`
 
   sizeScreen()
   checkChromeVisible()

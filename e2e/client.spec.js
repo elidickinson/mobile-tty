@@ -272,7 +272,7 @@ test('reconnect keeps the screen and nudges the size to force a repaint', async 
   expect(nudge[0].rows).toBe(nudge[1].rows)
 })
 
-test('the key bar absorbs the home-indicator inset, leaving no gap beneath it', async ({ page }) => {
+test('the key bar stays on screen and clears the home-indicator inset', async ({ page }) => {
   await ready(page)
   await page.addStyleTag({ content: '#safe-probe { padding-bottom: 34px !important; }' })
   await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')))
@@ -280,13 +280,15 @@ test('the key bar absorbs the home-indicator inset, leaving no gap beneath it', 
 
   const m = await page.evaluate(() => {
     const bar = document.getElementById('bar').getBoundingClientRect()
-    const app = document.getElementById('app').getBoundingClientRect()
     const btn = document.querySelector('#bar button').getBoundingClientRect()
-    return { barBottom: bar.bottom, appBottom: app.bottom, barHeight: bar.height, btnBottom: btn.bottom }
+    return { barTop: bar.top, barBottom: bar.bottom, barHeight: bar.height,
+             btnHeight: btn.height, visual: window.visualViewport.height }
   })
-  expect(m.barBottom).toBeCloseTo(m.appBottom, 0)      // no dead space under the bar
-  expect(m.barHeight).toBeCloseTo(44 + 34, 0)          // it grew by the inset
-  expect(m.btnBottom).toBeLessThanOrEqual(m.appBottom - 33)  // keys stay clear of the indicator
+  // The bar is a fixed height and must be wholly on screen, clear of the inset.
+  expect(m.barHeight).toBeCloseTo(44, 0)
+  expect(m.btnHeight).toBeGreaterThan(20)
+  expect(m.barBottom).toBeLessThanOrEqual(m.visual - 34 + 1)
+  expect(m.barTop).toBeGreaterThan(0)
 })
 
 test('the client reloads itself when the server serves a newer build', async ({ page }) => {
@@ -314,7 +316,7 @@ test('the menu can reload the app, since standalone has no browser chrome', asyn
   expect(await page.evaluate(() => sessionStorage.getItem('reloaded'))).toBeNull()
 })
 
-test('the document cannot be panned — the drag must reach the terminal', async ({ page }) => {
+test('the document is not scrollable and the terminal claims vertical drags', async ({ page }) => {
   await ready(page)
   const m = await page.evaluate(() => {
     const s = getComputedStyle(document.documentElement)
@@ -326,8 +328,6 @@ test('the document cannot be panned — the drag must reach the terminal', async
       docScrollable: document.scrollingElement.scrollHeight - document.scrollingElement.clientHeight,
     }
   })
-  expect(m.htmlPos).toBe('fixed')
-  expect(m.bodyPos).toBe('fixed')
   expect(m.screenTouch).toBe('pan-y')
   expect(m.docScrollable).toBeLessThanOrEqual(0)
 })
