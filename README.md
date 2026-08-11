@@ -1,25 +1,54 @@
 # mobile-tty
 
-A TUI-friendly mobile web terminal: drive pi.dev (or anything full-screen) from a phone
-over a WebSocket-attached PTY. A level below pi-phone / Happy / Omnara — those replace the
-TUI with a chat UI; this keeps the real terminal and fixes the *mobile terminal*.
+Drive pi.dev — or any full-screen terminal app — from a phone, over a WebSocket-attached
+PTY. It keeps the real terminal rather than replacing it with a chat UI.
 
-It exists to fix three things: the keyboard hides most of the screen, you can't scroll back,
-and ~50 columns wrecks a dense layout.
-
-## Run
+## Start it
 
 ```
 npm install
-./serve.sh              # ttyd --index dist/client.html dtach -A <sock> -r winch -z pi
+./serve.sh                          # serves on :7681, runs pi
+PORT=8080 ./serve.sh                # different port
+./serve.sh bash                     # run something else
+MTTY_SOCKET=/tmp/work.sock ./serve.sh   # a second, independent session
 ```
 
-Then open it on the phone, or add it to the Home Screen for +7 rows. To watch or type from
-the desktop at the same time:
+Open `http://<your-ip>:7681/` on the phone. **Add to Home Screen** and launch it from there
+— standalone mode drops Safari's chrome and is worth about 7 extra rows.
+
+pi keeps running when you close the page; reopening reattaches to the same session.
+
+## Use it
+
+**Key bar**, left to right: `⌃ ⌥ ⇧` are sticky — tap one, then the next key you press
+(including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then
+`esc`, `⇥` tab, arrows (hold to repeat), `⇈ ⇊` to page the view, `⌨` to summon or dismiss
+the keyboard, and `≡` for the menu.
+
+**Scrolling** is a normal drag. When you scroll away from the live screen a **↓ latest**
+button appears; typing also jumps you back. New output while you're reading history leaves
+you where you are.
+
+**Rotate to landscape** for 93 columns instead of 50. The grid never resizes on its own when
+the keyboard opens — only the visible window shrinks.
+
+**Menu** (`≡`): grid presets and **Fit**, zoom (render scale only — the grid stays put),
+**Reconnect**, **Clear view** (local only), **Reload app** (picks up a new build; standalone
+has no reload button), and a live readout of viewport, insets, grid and scroll state. Errors
+paint a red panel at the top of the screen.
+
+## Watch from the desktop
+
+Attach to the same session while the phone is connected — both can type, both see everything:
 
 ```
-dtach -a "$TMPDIR/mobile-tty.sock" -r winch      # Ctrl-\ detaches, Ctrl-C goes to pi
+dtach -a "$TMPDIR/mobile-tty.sock" -r winch
 ```
+
+`Ctrl-\` detaches and leaves pi running. `Ctrl-C` goes through to pi.
+
+Attaching takes the PTY size, so the phone's grid will be wrong until you tap **Fit**. Sizing
+the desktop window to the phone's grid avoids it entirely.
 
 ## Test
 
@@ -27,28 +56,13 @@ dtach -a "$TMPDIR/mobile-tty.sock" -r winch      # Ctrl-\ detaches, Ctrl-C goes 
 npm test                # 40 unit
 npm run test:e2e        # 29 WebKit at 402x812 against fixtures/fake-pi.sh
 npm run test:smoke      # 3 against real pi under dtach; sends no prompts, costs no tokens
+npm run build           # dist/client.html, one self-contained file
 ```
 
-Anything mechanisable is a pure function; the device verifies the viewport adapter and
-everything downstream of it is testable without a keyboard. Not doing visual regression —
-goldens would churn while the design moves.
+## Notes
 
-## Shape
+Requires `ttyd` and `dtach` (`brew install ttyd dtach`). Alternate-screen apps — Claude
+Code, vim, htop — are out of scope for now; dictation is untested.
 
-One self-contained `dist/client.html` (~70 KB), bundled by esbuild because ttyd's `--index`
-serves exactly one document and 404s everything else. No sidecar, no fork, no server code.
-
-- **dtach, not tmux** — tmux takes the terminal's alternate screen, which zeroes client
-  scrollback and would delete the reason for a DOM renderer.
-- **wterm** for the terminal — DOM rendering, inlined WASM core, raw bytes in.
-- **Errors paint a red panel** at the top and `≡` carries a live readout: a phone shows no
-  stack trace, and that blind spot has cost more debugging time than any bug.
-
-Why each of those, and every measured number behind them:
+Why it is built this way, and the measurements behind it:
 [`docs/decisions.md`](docs/decisions.md) · [`docs/numbers.md`](docs/numbers.md).
-
-## Known gaps
-
-- Dictation is untested; alternate-screen apps (Claude Code, vim) are out of scope.
-- One PTY means one size: whoever acted last owns it, and `Fit` is how the phone acts.
-- `fake-pi.sh` may be worth replacing with real pi driven by a purpose-built extension.
