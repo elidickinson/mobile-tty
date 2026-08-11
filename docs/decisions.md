@@ -148,8 +148,16 @@ Two independent operations, conflated by every existing tool into one font-size 
 portrait's 50, trading rows for columns almost exactly. Since ~50 cols is what wrecks a
 dense layout, rotating is a free resize strategy. Rotate for width, pan for the rest.
 
-**Never auto-resize** — not on keyboard, browser chrome, or rotation. Grid changes only on
-explicit user action.
+**Resize only on deliberate action.** The keyboard opening and browser chrome collapsing
+are involuntary and must never touch the grid — reflowing pi mid-sentence is the thing this
+rule exists to prevent. Rotating the phone is deliberate, and landscape is worth roughly
+twice the columns, so it refits. Requiring a menu tap for the single biggest win available
+was the rule misfiring.
+
+**The grid is sized from the layout viewport, not the visual one.** `innerHeight` ignores
+the keyboard, so the grid survives it opening and only the visible window shrinks — which
+is the occlude-and-pan model above, arrived at from the other direction. Sizing from the
+visual viewport would have baked a keyboard-sized grid in whenever the two interacted.
 
 ## Reconnect
 

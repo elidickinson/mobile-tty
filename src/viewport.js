@@ -75,6 +75,10 @@ export function deriveLayout(s) {
     appHeight,
     keyBarHeight,
     keyBarPadBottom: bottomInset,
+    // What to size the *grid* from. The layout viewport ignores the keyboard,
+    // so the grid stays put when it opens and the visible window just shows
+    // less of it — occlude and pan, rather than reflowing pi mid-sentence.
+    stableHeight: s.innerHeight - s.insetBottom - KEY_BAR_H,
     terminal: {
       top: 0,
       left: s.insetLeft,

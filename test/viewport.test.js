@@ -77,6 +77,24 @@ test('with the keyboard up the bottom inset is not reserved — it is over the k
   assert.ok(rows > reserved, 'that is a whole extra row of pi')
 })
 
+test('the grid is sized from the layout viewport, so the keyboard never reflows it', () => {
+  const down = deriveLayout(FIXTURES['standalone portrait, kb down'])
+  const up = deriveLayout(FIXTURES['standalone portrait, kb up'])
+  assert.equal(down.stableHeight, up.stableHeight, 'same grid whether the keyboard is up or not')
+  assert.equal(up.stableHeight, 812 - 34 - KEY_BAR_H)
+  assert.ok(up.stableHeight > up.terminal.height, 'more grid than fits on screen — pan to the rest')
+})
+
+test('landscape is worth roughly twice the columns', () => {
+  const portrait = deriveLayout(FIXTURES['standalone portrait, kb down'])
+  const landscape = deriveLayout(FIXTURES['standalone landscape, kb down'])
+  const p = gridFor(portrait.terminal.width, portrait.stableHeight, CELL_13PX)
+  const l = gridFor(landscape.terminal.width, landscape.stableHeight, CELL_13PX)
+  assert.equal(p.cols, 50)
+  assert.equal(l.cols, 108)
+  assert.ok(l.rows < p.rows, 'it trades rows for columns')
+})
+
 test('offsetTop counts against available height', () => {
   const f = { ...FIXTURES['safari portrait, kb up'], offsetTop: 40, visualHeight: 364 }
   assert.equal(deriveLayout(f).keyboardHeight, 310)

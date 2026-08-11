@@ -206,12 +206,41 @@ test('a shorter viewport keeps the bottom of the screen in view', async ({ page 
   expect(visible).toBe(true)
 })
 
-test('a viewport change does not resize the grid', async ({ page }) => {
+test('the keyboard opening does not resize the grid', async ({ page }) => {
   await ready(page)
   const before = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])
-  await page.setViewportSize({ width: 402, height: 498 })
+  await page.setViewportSize({ width: 402, height: 498 })   // same orientation, less room
   await page.waitForTimeout(600)
   expect(await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])).toEqual(before)
+})
+
+test('rotating to landscape refits the grid — that is the whole point of landscape', async ({ page }) => {
+  await ready(page)
+  const [portraitCols] = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])
+
+  await page.setViewportSize({ width: 874, height: 402 })
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols)).toBeGreaterThan(portraitCols * 1.8)
+
+  const [cols, rows] = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])
+  await expect(page.locator('#screen')).toContainText(`${cols}x${rows}`)
+
+  await page.setViewportSize({ width: 402, height: 812 })
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols)).toBe(portraitCols)
+})
+
+test('the grid is sized from the layout viewport, so it outlives the keyboard', async ({ page }) => {
+  await ready(page)
+  const rows = await page.evaluate(() => window.mtty.state.rows)
+  await page.setViewportSize({ width: 402, height: 498 })
+  await page.waitForTimeout(600)
+
+  // More grid than fits: the rest is reachable by scrolling, not by reflowing.
+  const m = await page.evaluate(() => {
+    const s = document.getElementById('screen')
+    return { scrollHeight: s.scrollHeight, clientHeight: s.clientHeight }
+  })
+  expect(m.scrollHeight).toBeGreaterThan(m.clientHeight)
+  expect(await page.evaluate(() => window.mtty.state.rows)).toBe(rows)
 })
 
 test('reconnect keeps the screen and nudges the size to force a repaint', async ({ page }) => {

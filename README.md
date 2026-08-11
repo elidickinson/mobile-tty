@@ -43,8 +43,9 @@ parser so UTF-8 never gets split across WebSocket messages in JS.
    PageUp/Dn/Home/End.
 4. Input goes straight to pi with its own input box visible and anchored; a hidden capture
    element supplies dictation and autocorrect-off.
-5. Grid presets **and** independent pinned-grid pan/zoom. Never auto-resize. Landscape
-   (108 cols) is a first-class option.
+5. Grid presets **and** independent pinned-grid pan/zoom. The grid is sized from the layout
+   viewport, so the keyboard never reflows it; rotation refits, since landscape (108 cols)
+   is worth roughly twice the columns.
 6. Scrolling: native touch drag over the terminal's own scrollback, ⇞/⇟ to page the view,
    and a "↓ latest" button when scrolled away from the live screen.
 7. Layout driven by `visualViewport`, debounced, pinned to the bottom so the keyboard
@@ -109,6 +110,7 @@ farm unless dictation becomes a blocker.
 
 - Confirmed on device: bottom pinning with the keyboard up, standalone mode.
 - Landscape keyboard-up grid — still unmeasured.
+- Landscape refit is verified in WebKit, not yet on hardware.
 - Dictation through wterm's hidden textarea — untested.
 - Round-trip echo latency through a tunnel.
 - Whether `fake-pi.sh` should be replaced by real pi driven by a purpose-built extension.

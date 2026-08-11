@@ -114,20 +114,34 @@ function setScale(scale) {
   sizeScreen()
 }
 
+/**
+ * Size the grid to the device, not to the moment. Rows come from the layout
+ * viewport so the keyboard opening never reflows pi; only what is visible
+ * changes.
+ */
 function fitGrid() {
-  const boxH = viewport.clientHeight / state.scale
-  const boxW = viewport.clientWidth / state.scale
-  const { cols, rows } = gridFor(boxW, boxH, state.cell)
+  const l = deriveLayout(readViewport())
+  const { cols, rows } = gridFor(l.terminal.width / state.scale, l.stableHeight / state.scale, state.cell)
   setGrid(cols, rows)
 }
 
 // visualViewport fires a burst during rotation and keyboard animation, and the
 // intermediate values are wrong. Act at once, then again once it settles.
 let settle = null
+let orientation = null
+
 function onViewportChange() {
   applyLayout()
   clearTimeout(settle)
-  settle = setTimeout(applyLayout, 200)
+  settle = setTimeout(() => {
+    applyLayout()
+    // Rotating is a deliberate act and landscape is worth ~2x the columns, so
+    // it refits. The keyboard and browser chrome are not deliberate, and never
+    // touch the grid.
+    const now = deriveLayout(readViewport()).orientation
+    if (orientation !== null && now !== orientation) fitGrid()
+    orientation = now
+  }, 200)
 }
 
 // ---------------------------------------------------------------- key bar
@@ -254,6 +268,7 @@ async function main() {
 
   applyLayout()
   fitGrid()
+  orientation = deriveLayout(readViewport()).orientation
   conn.connect({ cols: state.cols, rows: state.rows })
 
   checkForNewBuild()
