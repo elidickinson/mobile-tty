@@ -49,11 +49,21 @@ viewport so the keyboard just shrinks the window onto an unchanged screen.
 assumed a full-screen alt-screen TUI, where client scrollback is empty and you need tmux
 copy-mode to scroll at all. pi doesn't use the alternate screen, so:
 
+**Drag is not enough, and probably shouldn't be primary.** Drag-scroll competes with text
+selection, with iOS edge gestures, and — decisively — **with panning the pinned grid**,
+which already claims the drag gesture. It is also poor one-handed: it needs travel across
+the screen rather than a fixed thumb-reachable target. So a dedicated control is the main
+mechanism, not a fallback.
+
 | Fix | Effect | Cost / cons |
 |---|---|---|
-| ★ **Client-side scrollback + touch drag** | Just works. The terminal widget's own scrollback holds the real conversation history. With a DOM renderer this is literally native browser scrolling, with momentum and selection handles for free. | None. This is the whole feature. |
-| ★ **PageUp / PageDown / Home / End on the key bar** | Scrolls the *viewport*, not sent to pi. Directly answers "send page up/down easily". | Trivial. |
-| **Jump-to-bottom button + follow-output toggle** | Once you scroll up you need a way back, and new output shouldn't yank you down mid-read. | Small, and genuinely needed. |
+| ★ **Velocity nub / hold-and-pull widget.** Fixed thumb-reachable pad; displacement sets scroll *speed*, not distance. Pull slightly to creep a line at a time, further to fly through history; release to stop. | No travel, one-handed, works with the keyboard up, conflicts with nothing. Covers both "nudge one line" and "go back 500 lines" with one control. | Non-standard affordance to learn. Needs a sane response curve and a dead zone. |
+| ★ **Make it 2D and it also does the panning.** Horizontal displacement pans across a wide pinned grid; vertical continues past the top edge into scrollback. | Unifies scroll and pan: the viewport is a window over a tall surface — scrollback above, live screen below. No modes, no gesture conflict. | Only worth it if the pinned-grid model lands. |
+| ★ **Discrete buttons alongside** — PageUp/PageDown/Home/End, jump-to-bottom | Precise and repeatable where the nub is continuous; immune to gesture capture. Directly answers "send page up/down easily". | Trivial. |
+| ★ **Position indicator** — thin rail showing where you are and how much history remains | Continuous scrolling in a terminal is disorienting without it. | Small. |
+| ★ **Follow-output toggle** | New output must not yank you down mid-read; needs an obvious way back to live. | Small, genuinely needed. |
+| **Touch drag** | Free with a DOM renderer, familiar. | Conflicts as above. Keep as a convenience where it doesn't clash, not as the design. |
+| **Scrollbar thumb rail (hold and pull)** | Familiar, position feedback for free. | Thin hit target, awkward at the screen edge one-handed. Weaker than the nub. |
 | ~~tmux copy-mode / scroll-to-copy-mode~~ | — | **Not needed.** Only required for true alt-screen apps (vim, htop). |
 | ~~Synthesised SGR mouse wheel events~~ | — | **Not needed.** pi doesn't enable mouse reporting; nothing would consume them. |
 | ~~`capture-pane` reader view~~ | — | **Not needed.** Cut. |
