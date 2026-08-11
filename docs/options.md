@@ -1,7 +1,9 @@
-# Options recap
+# Options — consolidated
 
-Every plausible choice on each axis, with the short case for and against. Recommendations
-marked ★. Reasoning behind them is in `ux-principles.md` and `design-notes.md`.
+Single current list. Supersedes earlier versions in this file; reflects the KISS cuts and
+the pi 0.84.1 measurements in `concerns.md`. ★ = recommended.
+
+Axes D/E/F map to the three stated concerns.
 
 ---
 
@@ -9,58 +11,77 @@ marked ★. Reasoning behind them is in `ux-principles.md` and `design-notes.md`
 
 | Option | Pros | Cons |
 |---|---|---|
-| ★ **ttyd `--index` + tmux** | Single static binary, zero server code. Protocol is 5 constants. tmux gives reconnect-redraw and persistence free. Afternoon-sized. | One HTML document only — everything inlined, served uncompressed. No service worker → no web push. |
-| **ttyd + `tmux -CC`** (control mode) | Adds session/window/pane UI and `capture-pane` replay, still with no server code. In-band structured protocol. | You're writing an iTerm2-class tmux client: demux `%output` per pane, track notifications. Real complexity. |
-| **Fork ttyd** | Multi-asset serving, gzip, service worker, replay buffer — all unblocked. Keeps the solid C/libwebsockets PTY core. | C, and a fork to maintain against upstream. Everything it buys except push is reachable client-side anyway. |
-| **Own server** (node-pty / Go) | Total control: replay buffer for non-tmux sessions, web push, asset pipeline, multi-session, auth. | You own PTY handling and ops. Only justified once push or non-tmux replay are real requirements. |
-| **Adopt + modify an existing mobile project** (remobi, mobux, claude-web-terminal) | Starts far ahead — key bars, gestures, PWA already done. claude-web-terminal is already ttyd+tmux. | Inherit their architecture and their renderer. None does pinned-grid pan/zoom, the one feature that matters most. |
-| **GoTTY** (`sorenisanerd` fork) | Go, easy to hack, same lineage. | No advantage over ttyd; smaller ecosystem. |
-| **wetty** | Built-in SSH-to-host mode. | Node runtime, heavier, no mobile story. |
-| **VibeTunnel as base** | Already ships ghostty-web, asciinema recording, session list. | Big Swift+Node codebase, Mac-centric, its own web UI to fight. |
-| **SSH + native client** (cli2ssh/wish + Blink/Termius) | Reconnect, roaming, predictive echo, mature modifier bar — all free, today. | Zero UI control. No pinned-grid zoom, no composer, no tap-to-insert. Rules out the whole point. |
+| ★ **ttyd `--index` + tmux** | Single static binary, zero server code, 5-constant protocol. tmux adds session persistence across a ttyd restart and desktop detach/reattach. | One HTML document, served uncompressed. No service worker → no web push. |
+| **ttyd `--index`, no tmux** | Simpler still. Now genuinely viable: the resize-nudge repaint and client-side scrollback removed tmux's two load-bearing jobs. | Lose session persistence — kill ttyd and the session is gone. |
+| **ttyd + `tmux -CC`** | Structured session/window/pane UI in-band. | **Much weaker than it looked.** Its main draw was `capture-pane` replay, which the resize nudge makes unnecessary. Now buys only a multi-pane UI, for iTerm2-class client complexity. |
+| **Fork ttyd** | Multi-asset serving, gzip, service worker. | C fork to maintain; everything except push is reachable client-side. |
+| **Own server** (node-pty / Go) | Web push, asset pipeline, multi-session, auth. | You own PTY handling and ops. Justified only once push is a real requirement. |
+| **Adopt an existing project** (claude-web-terminal is already ttyd+tmux) | Starts far ahead on key bar, gestures, PWA. | Inherit their architecture and renderer; none does pinned-grid pan/zoom. |
+| **SSH + Blink/Termius** | Reconnect, roaming, mature modifier bar — free today. | Zero UI control. No pinned-grid zoom, no composer. Rules out the point of the project. |
 
 ## B. Renderer
 
+The measurements **strengthened** this choice: scrolling is now the primary interaction,
+and it is exactly what DOM gives you for free.
+
 | Option | Pros | Cons |
 |---|---|---|
-| ★ **wterm** | Renders to DOM → native momentum scroll, selection handles, find, a11y for free. ~12KB WASM parser = far smaller single-file bundle. Makes tap-to-insert natural. | Newest and least proven. Smallest ecosystem. |
-| **ghostty-web** | Real libghostty VT parser (correct on exotic sequences, RTL). xterm.js-compatible API, so a drop-in swap either direction. ~400KB, MIT. | Canvas — inherits every canvas mobile problem. No addon ecosystem. |
-| **xterm.js** | Ecosystem, addons, VS Code-grade, best-documented. | Canvas: no native selection/scroll/find/a11y. Long-open mobile bugs (#1101, #2403, #1007, #5721). Largest bundle. |
-| **hterm** | DOM, mature, powers Secure Shell. | Google-internal cadence, awkward to embed. |
-| **DomTerm** | DOM, has a ttyd-like server already. | Niche, idiosyncratic, low activity. |
-| **Roll your own DOM renderer** | Exactly the mobile behaviour wanted, minimal bytes. | VT emulation is a deep tarpit. Don't. |
+| ★ **wterm** | DOM → native momentum scroll, selection handles, find, a11y. ~12KB WASM parser = far smaller single-file bundle (matters, `--index` is uncompressed). Makes tap-to-insert trivial. | Newest, least proven, smallest ecosystem. |
+| **ghostty-web** | Real libghostty VT parser. xterm.js-compatible API, so a drop-in swap either way. ~400KB, MIT. | Canvas — you reimplement momentum scroll and selection, the main interactions here. |
+| **xterm.js** | Ecosystem, addons, best documented, safest. | Canvas, same as above. Four long-open mobile bugs (#1101, #2403, #1007, #5721). Largest bundle. |
 
-**Hedge:** build against the xterm.js API surface. ghostty-web is API-compatible by
-design, so that keeps two of the three live and makes wterm the only real port.
+*Hedge:* build against the xterm.js API surface — ghostty-web is compatible by design, so
+only wterm is a real port.
 
 ## C. Input model
 
 | Option | Pros | Cons |
 |---|---|---|
-| ★ **Composer primary + direct-mode toggle** | Editability, review-before-send, dictation. Terminal never sees half-typed input. Matches pi.dev's prose-heavy usage. | Two modes to learn. Wrong mode at the wrong moment is a papercut. Needs autocorrect explicitly disabled. |
-| **Pure direct keystrokes** | Simplest. Correct for any TUI, not just pi.dev. | OS keyboard eats ~40% of screen, can't chord, predictive text corrupts input, no dictation, painful long-prompt editing. |
-| **Custom on-screen keyboard replacing the OS one entirely** | Reclaims ~200pt of viewport. Real chords. Gesture typing and repo-aware completion possible (swell.sh proved the shape). | Big build. Reimplements text entry — layouts, locales, accessibility. Only prior art is stale and limited. |
-| **Permanent key bar + summoned full keyboard** | Cheap in pixels, always-available modifiers/arrows/PageUp. Complements any of the above. | Not sufficient alone for text entry. |
+| ★ **Composer + direct-mode toggle + permanent key bar** | Editability, review-before-send, dictation free. Terminal never sees half-typed input. Matches pi's prose-heavy usage. | Two modes; wrong mode at the wrong moment is a papercut. Needs autocorrect explicitly off. |
+| **Pure direct keystrokes** | Simplest; correct for any TUI. | Keyboard eats ~40% of screen, no chords, predictive text corrupts input, painful long-prompt editing. |
+| **Custom on-screen keyboard** | ~150pt instead of ~320pt, real chords. | Big build, reimplements text entry. Deferred. |
 
-Not mutually exclusive: the recommendation is composer + direct toggle + permanent key
-bar, with the custom keyboard as a later experiment.
+Autocorrect off regardless: `autocorrect="off" autocapitalize="off" spellcheck="false"`,
+set on the element (iOS does not inherit). No custom dictionary — cut as speculative.
 
-## D. Screen sizing
-
-| Option | Pros | Cons |
-|---|---|---|
-| ★ **Both, as separate explicit controls** | Reflow when the TUI adapts well; pan/zoom when it doesn't. Covers every case. | Two concepts to expose without confusing the UI. |
-| **Reflow only** (font size → cols/rows) | What every tool does. Simple, one slider. | ~50 cols on a phone wrecks dense TUI layouts. |
-| **Pinned grid + pan/zoom only** | TUI thinks it's on a desktop; layout preserved. The genuine differentiator — only sshx does it, and it isn't self-hostable. | Panning to read is its own friction. Bad for output that would reflow fine. |
-
-## E. Access / transport
+## D. Keyboard vs viewport → **concern 1**
 
 | Option | Pros | Cons |
 |---|---|---|
-| **Cloudflare tunnel** | No account needed for quick tunnels; static hostname available. Pattern already proven in pi-phone. | Traffic transits Cloudflare. Random URLs unless configured. |
-| **Tailscale** | True private mesh, no public exposure. What claude-web-terminal and remobi assume. | Client required on every device. |
-| **LAN only** | Simplest, nothing exposed. | Useless away from home — defeats the purpose. |
-| **Public + auth** | Works anywhere, no client software. | You are now hosting an authenticated shell on the internet. Needs real care. |
+| ★ **Occlude, never reflow.** Keyboard opening does not resize the PTY; it covers the bottom rows and the view scrolls. | Kills the reflow-thrash you feel every time you type — pi otherwise reflows to ~15 rows and back on every open/close. | Bottom rows hidden while typing; pair with `visualViewport` auto-scroll. |
+| ★ **Keyboard not summoned by default.** Terminal doesn't take focus on tap. | Removes ~320pt for most of the session — you are mostly reading. Biggest single win. | Needs an obvious summon affordance or it reads as broken. |
+| ★ **Standalone display meta tag** | ~120pt ≈ 8 rows back. | One line, no downside. |
+| **Key bar for non-text actions** | ~50pt vs ~320pt for approve/cancel/navigate/Ctrl-C. | Doesn't help when typing prose. |
+| **Refit on keyboard open** (what everyone ships) | — | The problem, not a fix. |
+
+## E. Resizing → **concern 3**
+
+| Option | Pros | Cons |
+|---|---|---|
+| ★ **Grid-size presets** (50×30 / 120×40 / 160×50), all verified against pi | One tap, decisive, repeatable. | Reflow is destructive to dense layout at 50 cols — hence the next row. |
+| ★ **Render scale, independent** — CSS `transform: scale` + pinch/pan over a pinned grid | pi never knows; thinks it's on a desktop. The genuine differentiator — only sshx does it, and it isn't self-hostable. | Panning to read is its own friction. |
+| ★ **Never auto-resize** — not on keyboard, chrome, or rotation | Half of "resize is broken" is "it resizes when I don't want it to". | Rotation must be handled explicitly. |
+| **Continuous font slider only** | Simple, what everyone ships. | Conflates the two operations; ~50 cols wrecks dense layout. |
+
+## F. Scrolling → **concern 2**
+
+pi is **not** alt-screen, which collapses this axis to the easy answers.
+
+| Option | Pros | Cons |
+|---|---|---|
+| ★ **Client scrollback + touch drag** | Just works; holds real conversation history. Native browser scrolling under a DOM renderer. | None. |
+| ★ **PageUp/PageDown/Home/End buttons** | Directly answers "send page up/down easily". Scrolls viewport, not sent to pi. | Trivial. |
+| ★ **Jump-to-bottom + follow-output toggle** | Needed once you scroll up, so new output doesn't yank you down mid-read. | Small. |
+| ~~tmux copy-mode~~ / ~~SGR mouse synthesis~~ / ~~capture-pane reader~~ | — | **Cut.** All solve an alt-screen problem pi doesn't have. Revisit only for vim/htop. |
+
+## G. Access
+
+| Option | Pros | Cons |
+|---|---|---|
+| ★ **Cloudflare tunnel** | No account for quick tunnels; static hostname available. Pattern already proven in pi-phone. | Traffic transits Cloudflare; random URLs unless configured. |
+| **Tailscale** | True private mesh, nothing public. | Client on every device. |
+| **LAN only** | Nothing exposed. | Useless away from home. |
+| **Public + auth** | Works anywhere, no client software. | Hosting an authenticated shell on the internet. |
 
 ---
 
@@ -70,31 +91,23 @@ bar, with the custom keyboard as a later experiment.
 ttyd -W --index client.html tmux new -A -s pi
 ```
 
-Single self-contained `client.html`, plus a Cloudflare tunnel reusing the pi-phone pattern.
+One self-contained `client.html` + a Cloudflare tunnel.
 
-## v1 scope — keep it small
+## v1 scope
 
-In, because each is load-bearing and cheap:
+In:
 
-1. ttyd WS protocol (5 constants) + a terminal widget.
-2. iOS standalone meta tags. One line, ~30% more rows.
-3. Permanent key bar: sticky modifiers, arrows w/ repeat-on-hold, Tab/Esc, PageUp/Dn.
-4. Composer + direct-mode toggle, `autocorrect="off" autocapitalize="off" spellcheck="false"`.
-5. Grid-size presets (50×30 / 120×40 / 160×50) **and** pinned-grid pan/zoom as separate
-   controls — the actual differentiator. Never auto-resize.
-6. Scrollback: touch drag + PageUp/Dn/Home/End buttons + jump-to-bottom. pi is not
-   alt-screen, so this is just the widget's own scrollback.
-7. Reconnect: don't dispose the terminal, backoff, then a **resize nudge** (N−1 → N) to
-   force a full repaint. App-agnostic, no tmux keybind needed.
-8. `visualViewport` layout handling; lock out rubber-band and double-tap zoom.
+1. ttyd WS protocol (5 constants) + terminal widget.
+2. iOS standalone meta tags.
+3. Permanent key bar: sticky modifiers, arrows w/ repeat-on-hold, Tab/Esc, PageUp/Dn/Home/End.
+4. Composer + direct toggle, autocorrect off.
+5. Grid presets **and** independent pinned-grid pan/zoom. Never auto-resize.
+6. Scrollback: touch drag, page buttons, jump-to-bottom.
+7. Keyboard occludes rather than reflows; `visualViewport` handling; no rubber-band or
+   double-tap zoom.
+8. Reconnect: keep the terminal, backoff, resize-nudge (N−1 → N) to force repaint.
 
-Out until there is evidence:
-
-- Custom dictionary / completion engine — cut, speculative.
-- `tmux -CC` control mode and any session/window/pane UI — big, and one session is enough.
-- Custom on-screen keyboard replacing the OS one — big; the key bar covers most of it.
-- Own server, service worker, web push — push belongs out-of-band (Pushover) anyway.
-- Voice/TTS, session recording, multi-user.
-
-Dictation needs no code: it comes free with a real `<textarea>`.
+Out until there is evidence: custom dictionary; `tmux -CC` and pane UI; custom on-screen
+keyboard; own server, service worker, web push (use Pushover out-of-band); voice/TTS,
+recording, multi-user; alt-screen handling for arbitrary TUIs.
 </content>
