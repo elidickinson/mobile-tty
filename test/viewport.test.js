@@ -45,7 +45,7 @@ for (const [name, f] of Object.entries(FIXTURES)) {
     // Everything the app draws must fit inside the visual viewport, which is
     // by definition the space above the keyboard.
     assert.ok(l.appHeight <= f.visualHeight, 'app is sized from the visual viewport, never innerHeight')
-    assert.ok(l.terminal.height + KEY_BAR_H + f.insetBottom <= f.visualHeight)
+    assert.equal(l.terminal.height + l.keyBarHeight, f.visualHeight, 'no dead space anywhere')
     assert.ok(l.terminal.height > 0)
   })
 }
@@ -59,9 +59,22 @@ test('the top inset is already excluded from the viewport, so subtracting it wou
   assert.equal(standalone.terminal.top, 0)
 })
 
-test('the bottom inset is inside the viewport, so it must be reserved', () => {
+test('with the keyboard down the bottom inset is reserved, inside the key bar', () => {
   const l = deriveLayout(FIXTURES['standalone portrait, kb down'])
+  assert.equal(l.keyBarHeight, KEY_BAR_H + 34)
+  assert.equal(l.keyBarPadBottom, 34)
   assert.equal(l.terminal.height, 812 - 34 - KEY_BAR_H)
+})
+
+test('with the keyboard up the bottom inset is not reserved — it is over the keyboard', () => {
+  const up = deriveLayout(FIXTURES['standalone portrait, kb up'])
+  assert.equal(up.keyBarHeight, KEY_BAR_H)
+  assert.equal(up.keyBarPadBottom, 0)
+  assert.equal(up.terminal.height, 498 - KEY_BAR_H, 'reclaims the 34pt home-indicator inset')
+
+  const rows = Math.floor(up.terminal.height / 15)
+  const reserved = Math.floor((498 - 34 - KEY_BAR_H) / 15)
+  assert.ok(rows > reserved, 'that is a whole extra row of pi')
 })
 
 test('offsetTop counts against available height', () => {

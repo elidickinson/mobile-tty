@@ -12,6 +12,13 @@ const bar = $('bar')
 const toBottom = $('to-bottom')
 const menu = $('menu')
 
+// iOS keeps its own copy of a home-screen app's launch document however ttyd
+// labels it — the served response is already `cache-control: no-store`. So the
+// page checks for a newer build itself. A meta tag survives minification and
+// reads the same from the live DOM and from a re-fetched copy.
+const buildIdOf = doc => doc.querySelector('meta[name=build]')?.content ?? ''
+const BUILD_ID = buildIdOf(document)
+
 const MIN_SCALE = 0.4
 const MAX_SCALE = 3
 const PRESETS = [[50, 30], [80, 40], [120, 40], [160, 50]]
@@ -41,8 +48,12 @@ const conn = new TtydConnection({
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => term.write(bytes),   // raw bytes: the VT core reassembles UTF-8
   onTitle: title => { document.title = title },
-  onState: s => { $('menu-state').textContent = s },
+  onState: s => { $('menu-state').textContent = `${s} · ${BUILD_ID}` },
 })
+
+// Diagnostic seam: the e2e suite and the on-device probe read the same shape.
+// Published before startup finishes so nothing has to guess when it appears.
+window.mtty = { conn, term, state, snapshot: () => ({ ...deriveLayout(readViewport()), ...state }) }
 
 // ---------------------------------------------------------------- layout
 
@@ -52,11 +63,15 @@ function applyLayout() {
   const l = deriveLayout(snap)
   app.style.height = `${l.appHeight}px`
   app.style.transform = `translateY(${snap.offsetTop}px)`
-  app.style.paddingBottom = `${snap.insetBottom}px`
   app.style.paddingLeft = `${snap.insetLeft}px`
   app.style.paddingRight = `${snap.insetRight}px`
 
-  toBottom.style.bottom = `${snap.insetBottom + 44 + 10}px`
+  // The bar owns the home-indicator inset instead of leaving a gap under it.
+  bar.style.height = `${l.keyBarHeight}px`
+  bar.style.flexBasis = `${l.keyBarHeight}px`
+  bar.style.paddingBottom = `${l.keyBarPadBottom}px`
+
+  toBottom.style.bottom = `${l.keyBarHeight + 10}px`
 
   sizeScreen()
 }
@@ -210,6 +225,14 @@ function buildMenu() {
 
 // ---------------------------------------------------------------- start
 
+async function checkForNewBuild() {
+  const html = await fetch(location.pathname, { cache: 'reload' }).then(r => r.text())
+  const served = buildIdOf(new DOMParser().parseFromString(html, 'text/html'))
+  if (!served || served === BUILD_ID || sessionStorage.getItem('reloaded') === served) return
+  sessionStorage.setItem('reloaded', served)   // one reload per served build, never a loop
+  location.reload()
+}
+
 async function main() {
   state.cell = measureCell(state.fontSize)
   // Set on the element, not :root — `.wterm` declares its own defaults, which
@@ -233,8 +256,7 @@ async function main() {
   fitGrid()
   conn.connect({ cols: state.cols, rows: state.rows })
 
-  // Diagnostic seam: the e2e suite and the on-device probe read the same shape.
-  window.mtty = { conn, term, state, snapshot: () => ({ ...deriveLayout(readViewport()), ...state }) }
+  checkForNewBuild()
 
   visualViewport.addEventListener('resize', onViewportChange)
   visualViewport.addEventListener('scroll', onViewportChange)

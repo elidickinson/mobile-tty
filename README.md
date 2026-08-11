@@ -47,7 +47,8 @@ parser so UTF-8 never gets split across WebSocket messages in JS.
    (108 cols) is a first-class option.
 6. Scrolling: native touch drag over the terminal's own scrollback, ⇞/⇟ to page the view,
    and a "↓ latest" button when scrolled away from the live screen.
-7. Layout driven by `visualViewport`, debounced. No rubber-band, no double-tap zoom.
+7. Layout driven by `visualViewport`, debounced, pinned to the bottom so the keyboard
+   cannot push pi's input box out of view. No rubber-band, no double-tap zoom.
 8. Reconnect: keep the terminal, backoff, resize-nudge (N−1 → N, 120 ms apart) to force a
    repaint.
 
@@ -106,9 +107,7 @@ farm unless dictation becomes a blocker.
 
 ## Open questions
 
-- Everything above is verified in WebKit at 402×812. **None of it is verified on a real
-  phone yet** — the keyboard, dictation and gesture feel are exactly what the emulator
-  cannot tell us.
+- Confirmed on device: bottom pinning with the keyboard up, standalone mode.
 - Landscape keyboard-up grid — still unmeasured.
 - Dictation through wterm's hidden textarea — untested.
 - Round-trip echo latency through a tunnel.

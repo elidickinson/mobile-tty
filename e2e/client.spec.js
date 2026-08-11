@@ -5,6 +5,7 @@ const ready = async page => {
   await page.goto('/')
   await expect(page.locator('#screen .term-row').first()).toBeVisible()
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
+  await expect.poll(() => page.evaluate(() => Boolean(window.mtty?.term?.bridge))).toBe(true)
 }
 
 test('renders the TUI with box drawing intact', async ({ page }) => {
@@ -127,24 +128,20 @@ const settled = async page => {
     const stable = now === last
     last = now
     return stable
-  }, { intervals: [150, 150, 150, 150, 150, 150] }).toBe(true)
+  }, { intervals: Array(14).fill(150) }).toBe(true)
   return last
 }
 
 const scrollbackCount = page => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount())
 
-// Push real history above the fold. Keep submitting until the scrollback is
-// deep enough rather than assuming a line count: how many lines it takes
-// depends on the grid, and a busy machine can drop keystrokes.
+// Push real history above the fold. `/lines` makes the fixture scroll a fixed
+// block off the top, so the depth does not depend on the grid or on how many
+// keystrokes survive a busy machine.
 const fillScrollback = async page => {
   const ta = page.locator('#screen textarea')
-  for (let batch = 0; batch < 5 && (await scrollbackCount(page)) <= 10; batch++) {
-    for (let i = 0; i < 12; i++) {
-      await ta.pressSequentially(`line${batch}_${i}`)
-      await ta.press('Enter')
-    }
-  }
-  expect(await scrollbackCount(page)).toBeGreaterThan(10)
+  await ta.pressSequentially('/lines')
+  await ta.press('Enter')
+  await expect.poll(() => scrollbackCount(page)).toBeGreaterThan(10)
   return settled(page)
 }
 
@@ -191,14 +188,14 @@ const distanceFromBottom = page => page.evaluate(() => {
 test('a shorter viewport keeps the bottom of the screen in view', async ({ page }) => {
   await ready(page)
   await fillScrollback(page)
-  expect(await distanceFromBottom(page)).toBeLessThan(8)
+  await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
 
   // Standing in for the keyboard opening: the window loses ~310pt and the grid
   // does not reflow, so the bottom rows are what must survive.
   await page.setViewportSize({ width: 402, height: 498 })
   await settled(page)
 
-  expect(await distanceFromBottom(page)).toBeLessThan(8)
+  await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
   const visible = await page.evaluate(() => {
     const s = document.getElementById('screen')
     const rows = [...s.querySelectorAll('.term-row:not(.term-scrollback-row)')].filter(r => r.innerText.trim())
@@ -242,4 +239,34 @@ test('reconnect keeps the screen and nudges the size to force a repaint', async 
   const nudge = await page.evaluate(() => window.__resizes.slice(0, 2))
   expect(nudge[0].columns).toBe(nudge[1].columns - 1)
   expect(nudge[0].rows).toBe(nudge[1].rows)
+})
+
+test('the key bar absorbs the home-indicator inset, leaving no gap beneath it', async ({ page }) => {
+  await ready(page)
+  await page.addStyleTag({ content: '#safe-probe { padding-bottom: 34px !important; }' })
+  await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')))
+  await page.waitForTimeout(400)
+
+  const m = await page.evaluate(() => {
+    const bar = document.getElementById('bar').getBoundingClientRect()
+    const app = document.getElementById('app').getBoundingClientRect()
+    const btn = document.querySelector('#bar button').getBoundingClientRect()
+    return { barBottom: bar.bottom, appBottom: app.bottom, barHeight: bar.height, btnBottom: btn.bottom }
+  })
+  expect(m.barBottom).toBeCloseTo(m.appBottom, 0)      // no dead space under the bar
+  expect(m.barHeight).toBeCloseTo(44 + 34, 0)          // it grew by the inset
+  expect(m.btnBottom).toBeLessThanOrEqual(m.appBottom - 33)  // keys stay clear of the indicator
+})
+
+test('the client reloads itself when the server serves a newer build', async ({ page }) => {
+  await ready(page)
+  const shipped = await page.evaluate(() => document.querySelector('meta[name=build]').content)
+  expect(shipped).toMatch(/^[0-9a-z]+$/)
+
+  // Same build served: it must not reload, or a stale cache becomes a loop.
+  const reloads = []
+  page.on('framenavigated', f => reloads.push(f.url()))
+  await page.evaluate(() => window.mtty && null)
+  await page.waitForTimeout(1000)
+  expect(reloads).toHaveLength(0)
 })

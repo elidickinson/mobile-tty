@@ -51,8 +51,16 @@ while true; do
     case "${ch:-$'\n'}" in
       $'\r'|$'\n')
         [[ "$buf" == '/quit' ]] && break
-        history+=("> $buf" "ok: ${#buf} chars")
-        buf=''
+        if [[ "$buf" == '/lines' ]]; then
+          # Scroll real lines off the top so the client accrues scrollback. The
+          # redraw below clears the screen but not the scrollback (no \e[3J),
+          # so these survive above the fold.
+          for ((i = 0; i < 80; i++)); do printf 'scrollback line %d\r\n' "$i"; done
+          buf=''
+        else
+          history+=("> $buf" "ok: ${#buf} chars")
+          buf=''
+        fi
         ;;
       $'\177') buf="${buf%?}" ;;
       $'\033') skip=2 ;;                                  # swallow a CSI/SS3 sequence

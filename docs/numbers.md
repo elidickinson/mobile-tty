@@ -27,6 +27,12 @@ iPhone, screen **402×874 pt @3x**, iOS 2026-08-10, via `probe/`. Cell at 13px m
 | Standalone portrait | 62 / 34 |
 | Standalone landscape | 0 / 20 |
 
+The top inset is already excluded from the layout viewport, so honouring it again
+double-counts. The bottom inset sits *inside* the viewport, but only overlaps the app when
+the keyboard is down — with the keyboard up the home indicator is over the keyboard, so
+reserving it there is dead space. The key bar absorbs it as padding rather than leaving a
+gap beneath itself.
+
 ## Transients — debounce, never hardcode
 
 `innerHeight` observed at **874, 812, 402** during rotation; keyboard at **237, 310, 314**.
@@ -67,6 +73,7 @@ leave `\e[?1049h` in the stream.
 
 - **Autocorrect:** 0 `insertReplacementText` events over 7 typed chars.
 - **Reconnect nudge gap:** 120 ms between N−1 and N. Zero gap does not repaint.
+- **Key bar:** 44 pt, plus the bottom inset when the keyboard is down.
 - **Cell at 13px in the built client:** 7.83 × 16 pt (measured at runtime, not assumed).
 
 ## ttyd protocol

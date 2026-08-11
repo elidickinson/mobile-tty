@@ -16,6 +16,9 @@ const bundle = {
   logLevel: 'info',
 }
 
+// A stable-per-build stamp the client compares against what the server serves.
+const buildId = () => process.env.SOURCE_DATE_EPOCH ?? Math.floor(Date.now() / 1000).toString(36)
+
 async function emit(js) {
   const [html, wtermCss, css] = await Promise.all([
     readFile('src/index.html', 'utf8'),
@@ -23,6 +26,7 @@ async function emit(js) {
     readFile('src/style.css', 'utf8'),
   ])
   const page = html
+    .replace('%BUILD_ID%', buildId())
     .replace('/*%CSS%*/', () => `${wtermCss}\n${css}`)
     .replace('/*%JS%*/', () => js)
   await mkdir('dist', { recursive: true })

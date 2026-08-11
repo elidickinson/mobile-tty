@@ -89,6 +89,7 @@ html, body {
   height: var(--bar-h);
   flex: 0 0 var(--bar-h);
   display: flex;
+  align-items: stretch;
   gap: 1px;
   background: var(--edge);
   border-top: 1px solid var(--edge);

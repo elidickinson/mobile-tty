@@ -56,19 +56,30 @@ export function measureCell(fontSize) {
  */
 export function deriveLayout(s) {
   const keyboardHeight = Math.max(0, Math.round(s.innerHeight - s.visualHeight - s.offsetTop))
+  const keyboardUp = keyboardHeight >= KEYBOARD_MIN
   const appHeight = s.visualHeight
   const width = s.visualWidth - s.insetLeft - s.insetRight
+
+  // The home indicator only overlaps the app when the keyboard is down; with the
+  // keyboard up it sits over the keyboard, so reserving the inset there is dead
+  // space. When it is down, the key bar absorbs the inset into its own padding
+  // rather than leaving a gap beneath it.
+  const bottomInset = keyboardUp ? 0 : s.insetBottom
+  const keyBarHeight = KEY_BAR_H + bottomInset
+
   return {
     keyboardHeight,
-    keyboardUp: keyboardHeight >= KEYBOARD_MIN,
+    keyboardUp,
     orientation: s.innerWidth > s.innerHeight ? 'landscape' : 'portrait',
     standalone: s.standalone,
     appHeight,
+    keyBarHeight,
+    keyBarPadBottom: bottomInset,
     terminal: {
       top: 0,
       left: s.insetLeft,
       width,
-      height: appHeight - s.insetBottom - KEY_BAR_H,
+      height: appHeight - keyBarHeight,
     },
   }
 }
