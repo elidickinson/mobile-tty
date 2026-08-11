@@ -23,17 +23,25 @@ below follows from that.
 Budget on a ~393×852pt phone: browser chrome ~120pt, OS keyboard ~320pt. Over half the
 screen, gone. Ranked by payoff per unit of work:
 
+**Correct diagnosis (from the user, 2026-08-10):** reflow itself is fine — pi redraws
+correctly at the smaller size. The problems are that (a) the ~15 surviving rows are spent
+on pi's *own* composer and status bar rather than on output, and (b) **you cannot scroll
+that window** to look at anything else. So it is a *viewport control* problem, not a
+resize-thrash problem.
+
 | Fix | Effect | Cost / cons |
 |---|---|---|
-| **Don't summon the keyboard by default.** Terminal never takes focus on tap; keyboard appears only on a deliberate action. | Removes ~320pt for the majority of the session — you are mostly *reading* agent output, not typing. Biggest single win. | Needs an obvious summon affordance or it feels broken. claude-web-terminal does exactly this. |
-| **Standalone display mode** — `<meta name="apple-mobile-web-app-capable" content="yes">` | Recovers ~120pt ≈ 8 rows. | One line. No downside. |
-| ★ **Never resize the PTY when the keyboard opens.** Keep cols/rows pinned; let the keyboard *occlude* the bottom of the terminal and scroll the view instead. | This is the fix people actually feel. Default web-terminal behaviour refits on keyboard open, so pi reflows to ~15 rows, then reflows *back* on close — a full repaint and layout change every time you type. | Bottom rows are hidden while typing, so pair with auto-scroll to keep the active region above the keyboard (`visualViewport`). |
-| **Key bar instead of keyboard** for non-text actions (approve, cancel, navigate, Ctrl-C) | ~50pt instead of ~320pt for the most common interactions. | Doesn't help when actually typing prose. |
-| **Dictation** | No keyboard at all for prose input. | Free with a real `<textarea>`. Useless for jargon. |
-| **Custom on-screen keyboard** | ~150pt instead of ~320pt. | Big build, reimplements text entry. Deferred. |
+| ★ **Scrolling must keep working with the keyboard up.** Terminal is the scroll container (not the page), no auto-snap-to-bottom while scrolled up, plus explicit page/line buttons that work regardless of gesture conflicts. | This is the actual missing capability. Everything else is secondary. | Touch scroll in xterm.js is genuinely weak ([#1007](https://github.com/xtermjs/xterm.js/issues/1007)) — more reason for a DOM renderer, where it is native. Buttons are the gesture-proof fallback. |
+| ★ **Own the composer, so pi's composer doesn't have to be on screen.** Type into your own `<textarea>` above the keyboard; the terminal region is then free to show *output*, scrolled wherever you want. | Directly fixes "the visible part isn't useful". The strongest argument for the composer by far — stronger than editability or dictation. | Two input modes to manage. |
+| ★ **Occlude + pan instead of reflow.** Keep the grid pinned; the keyboard covers part of it and you pan the viewport over the unchanged screen — *the same mechanism as the pinned-grid pan/zoom in concern 3*. | One mechanism solves both problems. The full 40-row screen still exists; you choose which slice to look at, including the live tail. | pi's own composer ends up hidden under the keyboard — fine, because of the row above. Needs the composer to be worth it. |
+| **Don't summon the keyboard by default.** Terminal doesn't take focus on tap. | Removes ~320pt for the majority of the session — you are mostly reading. | Needs an obvious summon affordance. |
+| **Standalone display mode** meta tag | ~120pt ≈ 8 rows back. | One line, no downside. |
+| **Key bar** for approve/cancel/navigate/Ctrl-C | ~50pt instead of ~320pt for the commonest actions. | Doesn't help when typing prose. |
+| **Custom on-screen keyboard** | ~150pt instead of ~320pt. | Big build. Deferred. |
 
-**Net:** default state is a full-screen terminal with no keyboard and a thin key bar. The
-keyboard is summoned to type, and when it appears it occludes rather than reflows.
+**Net:** the fix is viewport control, not resize policy — make the terminal scrollable at
+all times, take over the composer so the scarce rows show output, and reuse the pan/zoom
+viewport so the keyboard just shrinks the window onto an unchanged screen.
 
 ## Concern 2 — scrolling back, page up/down
 
