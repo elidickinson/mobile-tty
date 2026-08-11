@@ -104,8 +104,13 @@ function sizeScreen() {
   // and at 100% the transform buys nothing, so leave it off entirely.
   const scaled = state.scale !== 1
   const naturalW = state.cols * state.cell.width
+  // A whole number of rows. wterm scrolls to the bottom by flooring to a row
+  // boundary, so a box that is not a multiple of the row height leaves it parked
+  // short of the end — and once that remainder exceeds its own 5px tolerance it
+  // stops following output at all. The leftover is under a row of background.
+  const rows = Math.floor(boxH / state.scale / state.cell.height)
   screen.style.width = `${naturalW}px`
-  screen.style.height = `${boxH / state.scale}px`
+  screen.style.height = `${rows * state.cell.height}px`
   screen.style.transform = scaled ? `scale(${state.scale})` : ''
   stage.style.width = `${naturalW * state.scale}px`
   stage.style.height = `${boxH}px`
@@ -194,7 +199,9 @@ function toggleKeyboard() {
 // wterm owns sticking to the bottom: it checks the position before each write,
 // re-pins after rendering, and jumps back on a keystroke. A second mechanism
 // here only fought it for the same property.
-const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < 8
+// Matches wterm's own at-bottom test, so the button and follow-output cannot
+// disagree about whether you are on the live screen.
+const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < 5
 
 /**
  * Apply a sticky modifier to a key from the software keyboard. Those arrive
@@ -334,7 +341,7 @@ function buildMenu() {
       field.value = ''
       menu.hidden = true
     },
-    reconnect: () => conn.ws.close(),
+    reconnect: () => conn.ws?.close(),
     // Local only: pi's own screen is untouched and its next repaint restores it.
     'clear-view': () => term.write(CURSOR_HOME + ERASE_SCREEN + ERASE_SAVED),
     // Standalone has no browser chrome, so this is the only way to pick up a

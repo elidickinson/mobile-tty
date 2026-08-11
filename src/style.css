@@ -104,10 +104,6 @@ html, body {
   touch-action: none;
 }
 
-/* Paired arrows for paging. Two shafts read as "more than one line" next to the
-   single arrows, which a heavier single arrow would not. */
-#bar button.page { font-size: 16px; }
-
 #bar button:active { background: #33333c; }
 #bar button.word { font-size: 14px; }
 #bar button.sticky { background: var(--accent); color: #001; }

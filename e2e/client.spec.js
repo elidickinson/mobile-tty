@@ -471,3 +471,35 @@ test('tapping a key before the core loads does not fault', async ({ page }) => {
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
   await expect(page.locator('#diag-overlay')).toBeHidden()
 })
+
+test('the terminal box is a whole number of rows, so follow-output cannot get stuck', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+  await page.setViewportSize({ width: 402, height: 498 })   // keyboard up
+  await settled(page)
+
+  // wterm scrolls to the bottom by flooring to a row boundary. A box that is not
+  // a multiple of the row height leaves it parked short, and past its own 5px
+  // tolerance it stops following output entirely.
+  const box = await page.evaluate(() => {
+    const s = document.getElementById('screen')
+    return { client: s.clientHeight, row: window.mtty.state.cell.height }
+  })
+  expect(box.client % box.row).toBe(0)
+
+  const ta = page.locator('#screen textarea')
+  for (const word of ['one', 'two', 'three']) {
+    await ta.pressSequentially(word)
+    await ta.press('Enter')
+    await expect.poll(() => distanceFromBottom(page)).toBeLessThan(5)
+  }
+  await expect(page.locator('#to-bottom')).toBeHidden()
+})
+
+test('Reconnect before the socket exists does not fault', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: 'Reconnect' }).tap()
+  await expect(page.locator('#screen')).toContainText('fake-pi ready')
+  await expect(page.locator('#diag-overlay')).toBeHidden()
+})
