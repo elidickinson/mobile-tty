@@ -178,10 +178,6 @@ const BAR = [
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
   { label: '→', key: 'Right', repeat: true },
-  // pi answers PageUp/PageDown with a cursor move and nothing else, and history
-  // lives in the client's scrollback, so these page the view rather than the app.
-  { label: '⇈', name: 'PageUp', act: () => pageBy(-1), repeat: true },
-  { label: '⇊', name: 'PageDown', act: () => pageBy(1), repeat: true },
   { label: '⌨', name: 'keyboard', act: () => toggleKeyboard() },
   { label: '≡', name: 'menu', act: () => { showDiagnostics(); menu.hidden = false } },
 ]
@@ -195,8 +191,6 @@ function toggleKeyboard() {
   if (document.activeElement === input) input.blur()
   else term.focus()
 }
-
-const pageBy = direction => { screen.scrollTop += direction * screen.clientHeight * 0.9 }
 
 // wterm owns sticking to the bottom: it checks the position before each write,
 // re-pins after rendering, and jumps back on a keystroke. A second mechanism
@@ -234,7 +228,7 @@ function buildBar() {
     const b = document.createElement('button')
     b.textContent = item.label
     b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
-    if (item.name === 'PageUp' || item.name === 'PageDown') b.classList.add('page')
+    if (item.label.length > 1) b.classList.add('word')
     if (item.mod) {
       b.dataset.mod = item.mod
       b.addEventListener('pointerdown', e => {
@@ -322,6 +316,17 @@ function buildMenu() {
     'zoom-in': () => setScale(state.scale * 1.25),
     'zoom-out': () => setScale(state.scale / 1.25),
     'zoom-reset': () => setScale(1),
+    top: () => { screen.scrollTop = 0; menu.hidden = true },
+    bottom: () => { screen.scrollTop = screen.scrollHeight; menu.hidden = true },
+    // iOS offers its paste callout on a real, visible field; the terminal's own
+    // input is hidden, so there is nothing there to long-press.
+    'send-paste': () => {
+      const field = $('paste')
+      if (!field.value) return
+      conn.send(field.value)
+      field.value = ''
+      menu.hidden = true
+    },
     reconnect: () => conn.ws.close(),
     // Local only: pi's own screen is untouched and its next repaint restores it.
     'clear-view': () => term.write(CURSOR_HOME + ERASE_SCREEN + ERASE_SAVED),

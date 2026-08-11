@@ -160,23 +160,41 @@ const fillScrollback = async page => {
   return settled(page)
 }
 
-test('the paging keys scroll the view, since pi does not page itself', async ({ page }) => {
+test('the menu jumps to the top and back to the bottom', async ({ page }) => {
   await ready(page)
   const bottom = await fillScrollback(page)
+  expect(bottom).toBeGreaterThan(0)
 
-  await spySocket(page)
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: '⤒ Top' }).tap()
+  expect(await scrollTop(page)).toBe(0)
+  await expect(page.locator('#menu')).toBeHidden()
 
-  await page.getByRole('button', { name: 'PageUp', exact: true }).tap()
-  await page.waitForTimeout(200)
-  const up = await scrollTop(page)
-  expect(up).toBeLessThan(bottom)
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: '⤓ Bottom' }).tap()
+  await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
+})
 
-  // pi answers PageUp with a bare cursor move, so sending it would do nothing.
-  expect(await sentFrames(page)).not.toContain('0\x1b[5~')
+test('pasted text is sent to the terminal', async ({ page }) => {
+  await ready(page)
+  await page.getByRole('button', { name: 'menu' }).tap()
 
-  await page.getByRole('button', { name: 'PageDown', exact: true }).tap()
-  await page.waitForTimeout(200)
-  expect(await scrollTop(page)).toBeGreaterThan(up)
+  // Stands in for the iOS paste callout, which needs a real visible field —
+  // the terminal's own input is hidden, so there is nothing to long-press.
+  await page.locator('#paste').fill('pasted text')
+  await page.getByRole('button', { name: 'Send' }).tap()
+
+  await expect(page.locator('#screen')).toContainText('> pasted text')
+  await expect(page.locator('#menu')).toBeHidden()
+  expect(await page.locator('#paste').inputValue()).toBe('')
+})
+
+test('the key bar keys are big enough to hit', async ({ page }) => {
+  await ready(page)
+  const widths = await page.evaluate(() =>
+    [...document.querySelectorAll('#bar button')].map(b => b.getBoundingClientRect().width))
+  expect(widths.length).toBe(11)
+  expect(Math.min(...widths)).toBeGreaterThan(34)
 })
 
 test('output that redraws the bottom block does not shake the view loose', async ({ page }) => {

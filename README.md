@@ -22,8 +22,8 @@ pi keeps running when you close the page; reopening reattaches to the same sessi
 
 **Key bar**, left to right: `⌃ ⌥ ⇧` are sticky — tap one, then the next key you press
 (including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then
-`esc`, `⇥` tab, arrows (hold to repeat), `⇈ ⇊` to page the view, `⌨` to summon or dismiss
-the keyboard, and `≡` for the menu.
+`esc`, `⇥` tab, arrows (hold to repeat), `⌨` to summon or dismiss the keyboard, and `≡` for
+the menu.
 
 **Scrolling** is a normal drag. When you scroll away from the live screen a **↓ latest**
 button appears; typing also jumps you back. New output while you're reading history leaves
@@ -32,10 +32,12 @@ you where you are.
 **Rotate to landscape** for 93 columns instead of 50. The grid never resizes on its own when
 the keyboard opens — only the visible window shrinks.
 
-**Menu** (`≡`): grid presets and **Fit**, zoom (render scale only — the grid stays put),
-**Reconnect**, **Clear view** (local only), **Reload app** (picks up a new build; standalone
-has no reload button), and a live readout of viewport, insets, grid and scroll state. Errors
-paint a red panel at the top of the screen.
+**Menu** (`≡`): **Top** / **Bottom** to jump either end of the scrollback, **Paste** —
+long-press the field, paste, then Send, since iOS only offers its callout on a visible field
+— grid presets and **Fit**, zoom (render scale only; the grid stays put), **Reconnect**,
+**Clear view** (local only), **Reload app** (picks up a new build; standalone has no reload
+button), and a live readout of viewport, insets, grid and scroll state. Errors paint a red
+panel at the top of the screen.
 
 ## Watch from the desktop
 

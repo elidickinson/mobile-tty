@@ -104,7 +104,7 @@ html, body {
   border: 0;
   background: var(--chrome);
   color: var(--fg);
-  font: 15px/1 var(--font);
+  font: 18px/1 var(--font);
   touch-action: none;
 }
 
@@ -113,6 +113,7 @@ html, body {
 #bar button.page { font-size: 16px; }
 
 #bar button:active { background: #33333c; }
+#bar button.word { font-size: 14px; }
 #bar button.sticky { background: var(--accent); color: #001; }
 
 #to-bottom {
@@ -167,6 +168,17 @@ html, body {
 .menu-head { margin: 14px 0 6px; color: #8a8a95; font-size: 11px; text-transform: uppercase; }
 .menu-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .menu-row input[type=range] { flex: 1; }
+
+.menu-row input[type=text] {
+  flex: 2;
+  min-width: 0;
+  padding: 10px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: #0d0d11;
+  color: var(--fg);
+  font: 13px var(--font);
+}
 
 .menu-row button {
   flex: 1;
