@@ -75,12 +75,20 @@ function applyLayout() {
 function sizeScreen() {
   const boxH = viewport.clientHeight
   if (boxH === 0) return
+
+  // Pin the bottom, not the top. When the keyboard opens the window gets
+  // shorter, and holding scrollTop would leave the top of the grid on screen
+  // with pi's input box pushed out of sight underneath.
+  const fromBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight
+
   const naturalW = state.cols * state.cell.width
   screen.style.width = `${naturalW}px`
   screen.style.height = `${boxH / state.scale}px`
   screen.style.transform = `scale(${state.scale})`
   stage.style.width = `${naturalW * state.scale}px`
   stage.style.height = `${boxH}px`
+
+  screen.scrollTop = screen.scrollHeight - screen.clientHeight - Math.max(0, fromBottom)
 }
 
 function setGrid(cols, rows) {

@@ -192,6 +192,40 @@ test('scrolling up offers a way back to the live screen', async ({ page }) => {
   await expect(page.locator('#to-bottom')).toBeHidden()
 })
 
+const distanceFromBottom = page => page.evaluate(() => {
+  const s = document.getElementById('screen')
+  return s.scrollHeight - s.scrollTop - s.clientHeight
+})
+
+test('a shorter viewport keeps the bottom of the screen in view', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+  expect(await distanceFromBottom(page)).toBeLessThan(8)
+
+  // Standing in for the keyboard opening: the window loses ~310pt and the grid
+  // does not reflow, so the bottom rows are what must survive.
+  await page.setViewportSize({ width: 402, height: 498 })
+  await settled(page)
+
+  expect(await distanceFromBottom(page)).toBeLessThan(8)
+  const visible = await page.evaluate(() => {
+    const s = document.getElementById('screen')
+    const rows = [...s.querySelectorAll('.term-row:not(.term-scrollback-row)')].filter(r => r.innerText.trim())
+    const last = rows.at(-1).getBoundingClientRect()
+    const box = s.getBoundingClientRect()
+    return last.bottom <= box.bottom + 2 && last.bottom > box.top
+  })
+  expect(visible).toBe(true)
+})
+
+test('a viewport change does not resize the grid', async ({ page }) => {
+  await ready(page)
+  const before = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])
+  await page.setViewportSize({ width: 402, height: 498 })
+  await page.waitForTimeout(600)
+  expect(await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])).toEqual(before)
+})
+
 test('reconnect keeps the screen and nudges the size to force a repaint', async ({ page }) => {
   await ready(page)
   await page.locator('#screen textarea').pressSequentially('marker')
