@@ -65,12 +65,16 @@ function applyLayout() {
   app.style.transform = `translateY(${snap.offsetTop}px)`
   app.style.paddingLeft = `${snap.insetLeft}px`
   app.style.paddingRight = `${snap.insetRight}px`
-  app.style.paddingBottom = `${l.bottomInset}px`
+  app.style.paddingBottom = '0px'
 
-  toBottom.style.bottom = `${l.keyBarHeight + l.bottomInset + 10}px`
+  // The bar covers the home-indicator inset rather than leaving a gap under it.
+  bar.style.height = `${l.keyBarHeight}px`
+  bar.style.flexBasis = `${l.keyBarHeight}px`
+  bar.style.paddingBottom = `${l.keyBarPadBottom}px`
+
+  toBottom.style.bottom = `${l.keyBarHeight + 10}px`
 
   sizeScreen()
-  checkChromeVisible()
 }
 
 /**
@@ -207,38 +211,24 @@ function bindRepeat(btn, fire, repeat) {
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) btn.addEventListener(ev, stop)
 }
 
-// ---------------------------------------------------------------- menu
+// ---------------------------------------------------------------- diagnostics
 
 /**
- * A three-finger tap opens the menu from anywhere. The menu button lives in the
- * key bar, so if the bar itself is mislaid there is otherwise no way to reach
- * the diagnostics that would explain why. Three fingers cannot happen by
- * accident while typing or scrolling.
- */
-/**
- * Nothing on a phone shows a stack trace, so a failed startup looks like a
- * missing key bar, or scrolling that does not scroll — symptoms with no
- * apparent cause. Put the actual error on the screen instead.
+ * A phone shows no stack trace, so a client that dies during startup looks like
+ * missing chrome or scrolling that will not scroll — symptoms with no visible
+ * cause. Put the error on the screen instead.
  */
 function reportFatal(what) {
-  const overlay = document.getElementById('diag-overlay')
+  const overlay = $('diag-overlay')
   if (!overlay) return
-  overlay.textContent = `ERROR — ${what}\n\n${safeDiagnostics()}`
+  let detail
+  try { detail = diagnosticText() } catch (e) { detail = `diagnostics failed: ${e}` }
+  overlay.textContent = `ERROR — ${what}\n\n${detail}`
   overlay.hidden = false
 }
 
-const safeDiagnostics = () => { try { return diagnosticText() } catch (e) { return `diagnostics failed: ${e}` } }
-
 window.addEventListener('error', e => reportFatal(`${e.message} @ ${e.lineno}:${e.colno}`))
 window.addEventListener('unhandledrejection', e => reportFatal(`unhandled: ${e.reason?.message ?? e.reason}`))
-
-function bindEscapeHatch() {
-  document.addEventListener('touchstart', e => {
-    if (e.touches.length !== 3) return
-    showDiagnostics()
-    menu.hidden = false
-  }, { passive: true })
-}
 
 /** On-device readout. The emulator cannot report insets or a real keyboard. */
 function diagnosticText() {
@@ -263,19 +253,6 @@ function diagnosticText() {
 
 function showDiagnostics() { $('diag').textContent = diagnosticText() }
 
-/**
- * If the key bar is not on screen there is no way to open the menu, and no way
- * to find out why. Say so where nothing can cover it.
- */
-function checkChromeVisible() {
-  const overlay = $('diag-overlay')
-  const visualH = window.visualViewport.height
-  const forced = location.search.includes('diag')
-  const lost = forced || bar.getBoundingClientRect().bottom > visualH + 1 || bar.getBoundingClientRect().height < 1
-  if (!lost) { overlay.hidden = true; return }
-  overlay.textContent = `${forced ? 'DIAGNOSTICS' : 'KEY BAR OFF SCREEN'} — tap to dismiss\n${diagnosticText()}`
-  overlay.hidden = false
-}
 
 function buildMenu() {
   const presets = $('presets')
@@ -332,7 +309,6 @@ async function main() {
 
   buildBar()
   buildMenu()
-  bindEscapeHatch()
   $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })
   setScale(1)
 
@@ -347,6 +323,10 @@ async function main() {
   applyLayout()
   fitGrid()
   orientation = deriveLayout(readViewport()).orientation
+  // env() insets are not resolved on the first pass, so the first fit is short
+  // by the bottom inset and leaves rows permanently below the fold. Refit once
+  // the real values are in.
+  requestAnimationFrame(() => { applyLayout(); fitGrid() })
   conn.connect({ cols: state.cols, rows: state.rows })
 
   checkForNewBuild()

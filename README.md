@@ -108,7 +108,10 @@ farm unless dictation becomes a blocker.
 
 ## Open questions
 
-- Confirmed on device: bottom pinning with the keyboard up, standalone mode.
+- Confirmed on device: bottom pinning with the keyboard up, standalone mode, the key bar,
+  and real pi over dtach.
+- Errors paint a red panel at the top of the screen; the `≡` menu carries a live readout of
+  viewport, insets, grid and scroll state. Both exist because a phone shows no stack trace.
 - Landscape keyboard-up grid — still unmeasured.
 - Landscape refit is verified in WebKit, not yet on hardware.
 - Dictation through wterm's hidden textarea — untested.

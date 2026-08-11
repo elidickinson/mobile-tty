@@ -62,9 +62,10 @@ export function deriveLayout(s) {
 
   // The home indicator only overlaps the app when the keyboard is down; with the
   // keyboard up it sits over the keyboard, so reserving the inset there is dead
-  // space. The bar keeps a fixed height and the app reserves the inset beneath
-  // it — letting the bar absorb the inset instead broke its layout on device.
+  // space. When it is down the key bar grows to cover it, keeping its keys clear
+  // of the indicator — reserving it below the bar instead just leaves a gap.
   const bottomInset = keyboardUp ? 0 : s.insetBottom
+  const keyBarHeight = KEY_BAR_H + bottomInset
 
   return {
     keyboardHeight,
@@ -72,8 +73,8 @@ export function deriveLayout(s) {
     orientation: s.innerWidth > s.innerHeight ? 'landscape' : 'portrait',
     standalone: s.standalone,
     appHeight,
-    keyBarHeight: KEY_BAR_H,
-    bottomInset,
+    keyBarHeight,
+    keyBarPadBottom: bottomInset,
     // What to size the *grid* from. The layout viewport ignores the keyboard,
     // so the grid stays put when it opens and the visible window just shows
     // less of it — occlude and pan, rather than reflowing pi mid-sentence.
@@ -82,7 +83,7 @@ export function deriveLayout(s) {
       top: 0,
       left: s.insetLeft,
       width,
-      height: appHeight - KEY_BAR_H - bottomInset,
+      height: appHeight - keyBarHeight,
     },
   }
 }

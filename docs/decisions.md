@@ -144,6 +144,9 @@ Two independent operations, conflated by every existing tool into one font-size 
   only learns cols/rows from the PTY, so it believes it is on a desktop. Nothing
   self-hostable offers this.
 
+The insets are not resolved on the very first layout pass, so the initial fit is short by
+the bottom inset and leaves rows below the fold. One refit on the next frame fixes it.
+
 **Landscape is a first-class option**, not an edge case: it yields 108 columns against
 portrait's 50, trading rows for columns almost exactly. Since ~50 cols is what wrecks a
 dense layout, rotating is a free resize strategy. Rotate for width, pan for the rest.

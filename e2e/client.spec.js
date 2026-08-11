@@ -272,7 +272,7 @@ test('reconnect keeps the screen and nudges the size to force a repaint', async 
   expect(nudge[0].rows).toBe(nudge[1].rows)
 })
 
-test('the key bar stays on screen and clears the home-indicator inset', async ({ page }) => {
+test('the key bar covers the home-indicator inset, leaving no gap beneath it', async ({ page }) => {
   await ready(page)
   await page.addStyleTag({ content: '#safe-probe { padding-bottom: 34px !important; }' })
   await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')))
@@ -280,17 +280,16 @@ test('the key bar stays on screen and clears the home-indicator inset', async ({
 
   const m = await page.evaluate(() => {
     const bar = document.getElementById('bar').getBoundingClientRect()
+    const app = document.getElementById('app').getBoundingClientRect()
     const btn = document.querySelector('#bar button').getBoundingClientRect()
-    return { barTop: bar.top, barBottom: bar.bottom, barHeight: bar.height,
-             btnHeight: btn.height, visual: window.visualViewport.height }
+    return { barBottom: bar.bottom, appBottom: app.bottom, barHeight: bar.height,
+             btnBottom: btn.bottom, btnHeight: btn.height }
   })
-  // The bar is a fixed height and must be wholly on screen, clear of the inset.
-  expect(m.barHeight).toBeCloseTo(44, 0)
+  expect(m.barBottom).toBeCloseTo(m.appBottom, 0)             // nothing wasted below it
+  expect(m.barHeight).toBeCloseTo(44 + 34, 0)                 // it grew by the inset
+  expect(m.btnBottom).toBeLessThanOrEqual(m.appBottom - 33)   // keys clear the indicator
   expect(m.btnHeight).toBeGreaterThan(20)
-  expect(m.barBottom).toBeLessThanOrEqual(m.visual - 34 + 1)
-  expect(m.barTop).toBeGreaterThan(0)
 })
-
 test('the client reloads itself when the server serves a newer build', async ({ page }) => {
   await ready(page)
   const shipped = await page.evaluate(() => document.querySelector('meta[name=build]').content)
@@ -330,37 +329,6 @@ test('the document is not scrollable and the terminal claims vertical drags', as
   })
   expect(m.screenTouch).toBe('pan-y')
   expect(m.docScrollable).toBeLessThanOrEqual(0)
-})
-
-test('a three-finger tap opens the menu even if the key bar is lost', async ({ page }) => {
-  await ready(page)
-  await expect(page.locator('#menu')).toBeHidden()
-
-  // WebKit has no Touch constructor, so hand the real handler the shape it reads.
-  await page.evaluate(() => {
-    const e = new Event('touchstart', { bubbles: true })
-    Object.defineProperty(e, 'touches', { value: [0, 1, 2] })
-    document.dispatchEvent(e)
-  })
-
-  await expect(page.locator('#menu')).toBeVisible()
-  await expect(page.locator('#diag')).toContainText('insets')
-})
-
-test('losing the key bar off screen reports itself at the top', async ({ page }) => {
-  await ready(page)
-  await expect(page.locator('#diag-overlay')).toBeHidden()
-
-  // Force the failure the device is showing. It has to be something the next
-  // layout pass cannot quietly undo, or the check never sees it.
-  await page.addStyleTag({ content: '#bar { flex: 0 0 0 !important; height: 0 !important; border: 0 !important; padding: 0 !important; overflow: hidden !important; }' })
-  await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')))
-  await expect(page.locator('#diag-overlay')).toBeVisible()
-  await expect(page.locator('#diag-overlay')).toContainText('KEY BAR OFF SCREEN')
-  await expect(page.locator('#diag-overlay')).toContainText('insets')
-
-  await page.locator('#diag-overlay').tap()
-  await expect(page.locator('#diag-overlay')).toBeHidden()
 })
 
 test('a startup failure is reported on screen, not swallowed', async ({ page }) => {
