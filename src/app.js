@@ -1,6 +1,6 @@
 import { WTerm } from '@wterm/dom'
 import { TtydConnection } from './transport.js'
-import { readViewport, deriveLayout, gridFor, measureCell } from './viewport.js'
+import { readViewport, deriveLayout, gridFor, measureCell, KEY_BAR_H } from './viewport.js'
 import { keySequence } from './keys.js'
 
 const $ = id => document.getElementById(id)
@@ -61,6 +61,7 @@ window.mtty = { conn, term, state, snapshot: () => ({ ...deriveLayout(readViewpo
 function applyLayout() {
   const snap = readViewport()
   const l = deriveLayout(snap)
+  l.snapshot = snap
   app.style.height = `${l.appHeight}px`
   app.style.transform = `translateY(${snap.offsetTop}px)`
   app.style.paddingLeft = `${snap.insetLeft}px`
@@ -75,6 +76,7 @@ function applyLayout() {
   toBottom.style.bottom = `${l.keyBarHeight + 10}px`
 
   sizeScreen()
+  return l
 }
 
 /**
@@ -123,8 +125,9 @@ function setScale(scale) {
  * viewport so the keyboard opening never reflows pi; only what is visible
  * changes.
  */
-function fitGrid() {
-  const l = deriveLayout(readViewport())
+function fitGrid(l = deriveLayout(readViewport())) {
+  // Divided by the scale on purpose: at 80% zoom more grid genuinely fits the
+  // same glass, and Fit means fill what you can see.
   const { cols, rows } = gridFor(l.terminal.width / state.scale, l.stableHeight / state.scale, state.cell)
   setGrid(cols, rows)
 }
@@ -132,19 +135,20 @@ function fitGrid() {
 // visualViewport fires a burst during rotation and keyboard animation, and the
 // intermediate values are wrong. Act at once, then again once it settles.
 let settle = null
-let orientation = null
+let orientation = null   // seeded by the first layout in main()
 
 function onViewportChange() {
   applyLayout()
   clearTimeout(settle)
   settle = setTimeout(() => {
-    applyLayout()
+    const l = applyLayout()
     // Rotating is a deliberate act and landscape is worth ~2x the columns, so
     // it refits. The keyboard and browser chrome are not deliberate, and never
     // touch the grid.
-    const now = deriveLayout(readViewport()).orientation
-    if (orientation !== null && now !== orientation) fitGrid()
-    orientation = now
+    if (l.orientation !== orientation) {
+      orientation = l.orientation
+      fitGrid(l)
+    }
   }, 200)
 }
 
@@ -274,7 +278,8 @@ function buildMenu() {
     'zoom-out': () => setScale(state.scale / 1.25),
     'zoom-reset': () => setScale(1),
     reconnect: () => conn.ws.close(),
-    clear: () => term.write('\x1b[H\x1b[2J\x1b[3J'),
+    // Local only: pi's own screen is untouched and its next repaint restores it.
+    'clear-view': () => term.write('\x1b[H\x1b[2J\x1b[3J'),
     // Standalone has no browser chrome, so this is the only way to pick up a
     // new build by hand. Re-fetch past the cache first, or the reload just
     // reinstates the copy iOS is already holding.
@@ -285,8 +290,8 @@ function buildMenu() {
     },
   }
   menu.addEventListener('click', e => {
-    const act = e.target.dataset?.act
-    if (act) acts[act]()
+    const target = e.target.closest('[data-act]')
+    if (target) acts[target.dataset.act]()
     else if (e.target === menu) menu.hidden = true
   })
 }
@@ -294,7 +299,9 @@ function buildMenu() {
 // ---------------------------------------------------------------- start
 
 async function checkForNewBuild() {
-  const html = await fetch(location.pathname, { cache: 'reload' }).then(r => r.text())
+  // Best effort: a dropped tunnel is not a client fault, and an unhandled
+  // rejection here would paint the error panel over a working terminal.
+  const html = await fetch(location.pathname, { cache: 'reload' }).then(r => r.text()).catch(() => '')
   const served = buildIdOf(new DOMParser().parseFromString(html, 'text/html'))
   if (!served || served === BUILD_ID || sessionStorage.getItem('reloaded') === served) return
   sessionStorage.setItem('reloaded', served)   // one reload per served build, never a loop
@@ -308,6 +315,7 @@ async function main() {
   screen.style.setProperty('--term-font-size', `${state.fontSize}px`)
   screen.style.setProperty('--term-row-height', `${state.cell.height}px`)
 
+  document.documentElement.style.setProperty('--bar-h', `${KEY_BAR_H}px`)
   buildBar()
   buildMenu()
   $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })
@@ -321,13 +329,13 @@ async function main() {
   })
   toBottom.addEventListener('click', () => { screen.scrollTop = screen.scrollHeight })
 
-  applyLayout()
-  fitGrid()
-  orientation = deriveLayout(readViewport()).orientation
+  const first = applyLayout()
+  orientation = first.orientation
+  fitGrid(first)
   // env() insets are not resolved on the first pass, so the first fit is short
   // by the bottom inset and leaves rows permanently below the fold. Refit once
   // the real values are in.
-  requestAnimationFrame(() => { applyLayout(); fitGrid() })
+  requestAnimationFrame(() => fitGrid(applyLayout()))
   conn.connect({ cols: state.cols, rows: state.rows })
 
   checkForNewBuild()

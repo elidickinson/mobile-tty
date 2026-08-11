@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { keySequence, KEYS } from '../src/keys.js'
+import { keySequence } from '../src/keys.js'
 
 const seq = (name, opts) => keySequence(name, opts)
 
@@ -23,8 +23,17 @@ test('ctrl folds a letter to its control code', () => {
   assert.equal(seq('a', { ctrl: true }), '\x01')
 })
 
-test('alt prefixes with ESC', () => {
+test('alt prefixes with ESC, for named keys as well as letters', () => {
   assert.equal(seq('b', { alt: true }), '\x1bb')
+  assert.equal(seq('Backspace', { alt: true }), '\x1b\x7f')   // delete word backwards
+  assert.equal(seq('Escape', { alt: true }), '\x1b\x1b')
+})
+
+test('ctrl adds nothing to keys that are already control codes', () => {
+  // Ctrl-I is Tab and Ctrl-[ is Escape, so there is no distinct encoding to
+  // send without a CSI-u protocol that pi never negotiates.
+  assert.equal(seq('Tab', { ctrl: true }), '\t')
+  assert.equal(seq('Escape', { ctrl: true }), '\x1b')
 })
 
 test('ctrl+arrow sends the modifier parameter form', () => {
@@ -39,8 +48,4 @@ test('shift+tab is back-tab', () => {
 
 test('an unknown key name is a programming error, not a silent no-op', () => {
   assert.throws(() => seq('Nope'), /unknown key/i)
-})
-
-test('every key on the bar has a definition', () => {
-  for (const name of KEYS) assert.equal(typeof seq(name), 'string')
 })

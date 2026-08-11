@@ -16,9 +16,6 @@ const FIXED = {
   PageDown: `${ESC}[6~`,
 }
 
-// The order they appear on the bar.
-export const KEYS = ['Escape', 'Tab', 'Up', 'Down', 'Left', 'Right', 'PageUp', 'PageDown', 'Home', 'End']
-
 // CSI modifier parameter: 1 + shift(1) + alt(2) + ctrl(4).
 const modifierParam = ({ shift, alt, ctrl }) => 1 + (shift ? 1 : 0) + (alt ? 2 : 0) + (ctrl ? 4 : 0)
 
@@ -34,7 +31,11 @@ export function keySequence(name, opts = {}) {
     return cursorKeysApp ? `${ESC}O${final}` : `${ESC}[${final}`
   }
 
-  if (name in FIXED) return FIXED[name]
+  // Meta is an ESC prefix, the same as for a letter — alt+Backspace is
+  // delete-word-backwards. Ctrl is absent on purpose: these keys already *are*
+  // control codes (Ctrl-I is Tab, Ctrl-[ is Escape), so it has nothing to add
+  // without a CSI-u style protocol, which pi does not ask for.
+  if (name in FIXED) return alt ? ESC + FIXED[name] : FIXED[name]
 
   if (name.length === 1) {
     if (ctrl) {

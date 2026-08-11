@@ -30,7 +30,7 @@ const FIXTURES = {
   },
   'standalone landscape, kb down': {
     innerWidth: 874, innerHeight: 402, visualWidth: 874, visualHeight: 402, offsetTop: 0,
-    insetTop: 0, insetBottom: 20, insetLeft: 0, insetRight: 0, standalone: true,
+    insetTop: 0, insetBottom: 20, insetLeft: 62, insetRight: 62, standalone: true,
     expect: { keyboardHeight: 0, keyboardUp: false, orientation: 'landscape' },
   },
 }
@@ -85,13 +85,15 @@ test('the grid is sized from the layout viewport, so the keyboard never reflows 
   assert.ok(up.stableHeight > up.terminal.height, 'more grid than fits on screen — pan to the rest')
 })
 
-test('landscape is worth roughly twice the columns', () => {
+test('landscape is worth nearly twice the columns, after the side insets', () => {
   const portrait = deriveLayout(FIXTURES['standalone portrait, kb down'])
   const landscape = deriveLayout(FIXTURES['standalone landscape, kb down'])
   const p = gridFor(portrait.terminal.width, portrait.stableHeight, CELL_13PX)
   const l = gridFor(landscape.terminal.width, landscape.stableHeight, CELL_13PX)
   assert.equal(p.cols, 50)
-  assert.equal(l.cols, 108)
+  // iOS reports 62pt on *both* sides in landscape, so 874pt of glass yields 750.
+  assert.equal(landscape.terminal.width, 750)
+  assert.equal(l.cols, 93)
   assert.ok(l.rows < p.rows, 'it trades rows for columns')
 })
 
@@ -110,7 +112,7 @@ test('grid math matches the measured device numbers', () => {
   assert.deepEqual(gridFor(402, 404, CELL_13PX), { cols: 50, rows: 26 })
   assert.deepEqual(gridFor(402, 812, CELL_13PX), { cols: 50, rows: 54 })
   assert.deepEqual(gridFor(402, 498, CELL_13PX), { cols: 50, rows: 33 })
-  assert.deepEqual(gridFor(874, 402, CELL_13PX), { cols: 108, rows: 26 })
+  assert.deepEqual(gridFor(750, 402, CELL_13PX), { cols: 93, rows: 26 })
 })
 
 test('grid never collapses below a usable minimum', () => {

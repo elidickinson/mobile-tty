@@ -37,7 +37,6 @@ async function emit(js) {
 if (process.argv.includes('--watch')) {
   const ctx = await context({
     ...bundle,
-    write: false,
     plugins: [{
       name: 'emit-html',
       setup: b => b.onEnd(r => r.outputFiles?.[0] && emit(r.outputFiles[0].text)),

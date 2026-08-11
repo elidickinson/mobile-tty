@@ -1,6 +1,17 @@
 import { test, expect } from '@playwright/test'
 
 const screenText = page => page.locator('#screen').innerText()
+
+/** Rows of the live grid, excluding the scrollback rendered above it. */
+const liveRows = page => page.locator('#screen .term-row:not(.term-scrollback-row)')
+
+/** Record every frame the client puts on the wire, decoded. */
+const spySocket = page => page.evaluate(() => {
+  window.__sent = []
+  const send = WebSocket.prototype.send
+  WebSocket.prototype.send = function (d) { window.__sent.push(new TextDecoder().decode(d)); return send.call(this, d) }
+})
+const sentFrames = page => page.evaluate(() => window.__sent)
 const ready = async page => {
   await page.goto('/')
   await expect(page.locator('#screen .term-row').first()).toBeVisible()
@@ -58,20 +69,13 @@ test('the hidden input has autocorrect off — a corrected identifier is a wrong
 
 test('key bar sends the right bytes, and a sticky modifier applies once', async ({ page }) => {
   await ready(page)
-  const sent = await page.evaluate(() => {
-    const log = []
-    const orig = WebSocket.prototype.send
-    WebSocket.prototype.send = function (d) { log.push(new TextDecoder().decode(d)); return orig.call(this, d) }
-    window.__sent = log
-    return true
-  })
-  expect(sent).toBe(true)
+  await spySocket(page)
 
   await page.getByRole('button', { name: 'Up', exact: true }).tap()
   await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
   await page.getByRole('button', { name: 'Escape', exact: true }).tap()
 
-  const log = await page.evaluate(() => window.__sent)
+  const log = await sentFrames(page)
   expect(log).toContain('0\x1b[A')
   expect(log.at(-1)).toBe('0\x1b')            // ctrl+Escape is just Escape
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
@@ -82,7 +86,7 @@ test('a grid preset resizes the PTY and the client together', async ({ page }) =
   await page.getByRole('button', { name: 'menu' }).tap()
   await page.getByRole('button', { name: '120×40' }).tap()
   await expect(page.locator('#screen')).toContainText('120x40')
-  expect(await page.locator('#screen .term-row:not(.term-scrollback-row)').count()).toBe(40)
+  expect(await liveRows(page).count()).toBe(40)
 })
 
 test('a grid wider than the screen pans horizontally rather than reflowing', async ({ page }) => {
@@ -100,10 +104,10 @@ test('a grid wider than the screen pans horizontally rather than reflowing', asy
 test('zoom changes only the render scale — the PTY grid stays pinned', async ({ page }) => {
   await ready(page)
   await page.getByRole('button', { name: 'menu' }).tap()
-  const before = await page.locator('#screen .term-row:not(.term-scrollback-row)').count()
+  const before = await liveRows(page).count()
   await page.getByRole('button', { name: '−' }).tap()
   await expect(page.locator('#scale-val')).toHaveText('80%')
-  expect(await page.locator('#screen .term-row:not(.term-scrollback-row)').count()).toBe(before)
+  expect(await liveRows(page).count()).toBe(before)
   expect(await page.locator('#screen').evaluate(e => e.style.transform)).toBe('scale(0.8)')
   await page.getByRole('button', { name: '100%' }).tap()
   expect(await page.locator('#screen').evaluate(e => e.style.transform)).toBe('')
@@ -151,11 +155,7 @@ test('the paging keys scroll the view, since pi does not page itself', async ({ 
   await ready(page)
   const bottom = await fillScrollback(page)
 
-  await page.evaluate(() => {
-    window.__sent = []
-    const o = WebSocket.prototype.send
-    WebSocket.prototype.send = function (d) { window.__sent.push(new TextDecoder().decode(d)); return o.call(this, d) }
-  })
+  await spySocket(page)
 
   await page.getByRole('button', { name: 'PageUp', exact: true }).tap()
   await page.waitForTimeout(200)
@@ -163,7 +163,7 @@ test('the paging keys scroll the view, since pi does not page itself', async ({ 
   expect(up).toBeLessThan(bottom)
 
   // pi answers PageUp with a bare cursor move, so sending it would do nothing.
-  expect(await page.evaluate(() => window.__sent)).not.toContain('0\x1b[5~')
+  expect(await sentFrames(page)).not.toContain('0\x1b[5~')
 
   await page.getByRole('button', { name: 'PageDown', exact: true }).tap()
   await page.waitForTimeout(200)
@@ -250,24 +250,16 @@ test('reconnect keeps the screen and nudges the size to force a repaint', async 
   await page.locator('#screen textarea').pressSequentially('marker')
   await expect(page.locator('#screen')).toContainText('> marker')
 
-  await page.evaluate(() => {
-    window.__resizes = []
-    const orig = WebSocket.prototype.send
-    WebSocket.prototype.send = function (d) {
-      const s = new TextDecoder().decode(d)
-      if (s[0] === '1') window.__resizes.push(JSON.parse(s.slice(1)))
-      return orig.call(this, d)
-    }
-  })
+  await spySocket(page)
 
   // The socket dies but the terminal object outlives it, so the stale screen
   // stays up instead of blanking.
   await page.evaluate(() => window.mtty.conn.ws.close())
   await expect(page.locator('#screen')).toContainText('> marker')
 
-  await expect.poll(() => page.evaluate(() => window.__resizes?.length ?? 0), { timeout: 10_000 })
-    .toBeGreaterThanOrEqual(2)
-  const nudge = await page.evaluate(() => window.__resizes.slice(0, 2))
+  const resizes = () => sentFrames(page).then(f => f.filter(x => x[0] === '1').map(x => JSON.parse(x.slice(1))))
+  await expect.poll(() => resizes().then(r => r.length), { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
+  const nudge = (await resizes()).slice(0, 2)
   expect(nudge[0].columns).toBe(nudge[1].columns - 1)
   expect(nudge[0].rows).toBe(nudge[1].rows)
 })

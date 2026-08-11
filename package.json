@@ -2,9 +2,6 @@
   "name": "mobile-tty",
   "version": "0.1.0",
   "description": "TUI-friendly mobile web terminal",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "test": "node --test 'test/**/*.test.js'",
     "build": "node build.js",
@@ -12,8 +9,6 @@
     "test:e2e": "playwright test",
     "test:smoke": "playwright test -c playwright.smoke.config.js"
   },
-  "keywords": [],
-  "author": "",
   "license": "ISC",
   "type": "module",
   "devDependencies": {

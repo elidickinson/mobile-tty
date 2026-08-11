@@ -26,7 +26,7 @@ export const encodeResize = (columns, rows) => frame(RESIZE, JSON.stringify({ co
 // The handshake is a bare JSON object rather than a prefixed frame, and must be
 // the first message on the socket.
 export const encodeHandshake = (token, columns, rows) =>
-  enc.encode(JSON.stringify({ AuthToken: token ?? '', columns, rows }))
+  enc.encode(JSON.stringify({ AuthToken: token, columns, rows }))
 
 /**
  * Split a server message into its command byte and payload.

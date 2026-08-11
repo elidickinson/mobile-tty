@@ -1,4 +1,5 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig } from '@playwright/test'
+import { phone } from './playwright.base.js'
 
 // Tests against real pi under dtach. Slower and mildly flakier than the main
 // suite, so they run on their own: `npm run test:smoke`. They send no prompts,
@@ -9,14 +10,7 @@ export default defineConfig({
   expect: { timeout: 30_000 },
   workers: 1,
   reporter: 'list',
-  use: {
-    ...devices['Desktop Safari'],
-    baseURL: 'http://127.0.0.1:7692',
-    viewport: { width: 402, height: 812 },
-    deviceScaleFactor: 3,
-    hasTouch: true,
-    isMobile: true,
-  },
+  use: { ...phone, baseURL: 'http://127.0.0.1:7692' },
   webServer: {
     command: 'node build.js && ttyd -W -p 7692 --index dist/client.html dtach -A /tmp/mtty-smoke.sock -r winch -z pi',
     url: 'http://127.0.0.1:7692',
