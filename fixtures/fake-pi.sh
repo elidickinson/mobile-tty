@@ -37,14 +37,23 @@ draw() {
 # bash defers a WINCH trap until the blocking `read` returns, so the trap never
 # fires while waiting for input. Polling the size is boring and it works.
 size=$(stty size)
-skip=0
+in_esc=0       # 0 none, 1 after ESC, 2 inside a CSI/SS3 sequence
 ttyd=$PPID
 draw
 # macOS ships bash 3.2, so the poll timeout has to be a whole number of seconds.
 while true; do
   if IFS= read -rsn1 -t 1 ch; then
-    if (( skip > 0 )); then
-      skip=$((skip - 1))
+    # Escape sequences vary in length — \e[A is three bytes, \e[1;5C is six — so
+    # swallow up to the final byte instead of counting a fixed number.
+    if (( in_esc == 1 )); then
+      case "$ch" in
+        '['|O) in_esc=2 ;;
+        *) in_esc=0 ;;
+      esac
+      continue
+    fi
+    if (( in_esc == 2 )); then
+      case "$ch" in [A-Za-z@~]) in_esc=0 ;; esac
       continue
     fi
     # `read` strips the line delimiter, so Enter arrives as an empty string.
@@ -63,7 +72,7 @@ while true; do
         fi
         ;;
       $'\177') buf="${buf%?}" ;;
-      $'\033') skip=2 ;;                                  # swallow a CSI/SS3 sequence
+      $'\033') in_esc=1 ;;                                # start of an escape sequence
       *) buf+="$ch" ;;
     esac
     draw

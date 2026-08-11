@@ -443,3 +443,31 @@ test('using a modifier leaves the rest of the bar alone', async ({ page }) => {
   await page.locator('#screen textarea').pressSequentially('c')
   expect(await page.locator('#bar button.sticky').count()).toBe(0)
 })
+
+test('a modified arrow is swallowed whole by the terminal app', async ({ page }) => {
+  await ready(page)
+  // ctrl+Right is \x1b[1;5C — six bytes, not the three of a bare arrow.
+  await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
+  await page.getByRole('button', { name: 'Right', exact: true }).tap()
+  await page.waitForTimeout(400)
+
+  await page.locator('#screen textarea').pressSequentially('ok')
+  await expect(page.locator('#screen')).toContainText('> ok')
+  expect(await screenText(page)).not.toContain(';5C')
+})
+
+test('a lone shift does not stay armed after a letter', async ({ page }) => {
+  await ready(page)
+  await page.getByRole('button', { name: 'shift', exact: true }).tap()
+  await expect(page.getByRole('button', { name: 'shift', exact: true })).toHaveClass(/sticky/)
+
+  await page.locator('#screen textarea').pressSequentially('a')
+  expect(await page.locator('#bar button.sticky').count()).toBe(0)
+})
+
+test('tapping a key before the core loads does not fault', async ({ page }) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Up', exact: true }).tap()   // before init resolves
+  await expect(page.locator('#screen')).toContainText('fake-pi ready')
+  await expect(page.locator('#diag-overlay')).toBeHidden()
+})

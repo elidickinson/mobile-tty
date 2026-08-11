@@ -204,14 +204,22 @@ const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHei
  */
 function withMods(data) {
   const { ctrl, alt, shift } = state.mods
-  if (data.length !== 1 || !(ctrl || alt)) return data
+  if (data.length !== 1) return data
+  // Any single key consumes the modifiers, including a lone shift the OS
+  // keyboard already applied — otherwise it stays lit and silently lands on
+  // whatever bar key comes next.
   clearMods()
+  if (!(ctrl || alt)) return data
   return keySequence(data, { ctrl, alt, shift })
 }
 
 function sendKey(name) {
   const { ctrl, alt, shift } = state.mods
-  conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp: term.bridge.cursorKeysApp() }))
+  // The bar exists before the WASM core finishes loading, and DECCKM is reset
+  // by definition until an app sets it — so normal-mode CSI is the answer, not
+  // a crash on an early tap.
+  const cursorKeysApp = term.bridge?.cursorKeysApp() ?? false
+  conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp }))
   clearMods()
 }
 
