@@ -45,8 +45,8 @@ parser so UTF-8 never gets split across WebSocket messages in JS.
    element supplies dictation and autocorrect-off.
 5. Grid presets **and** independent pinned-grid pan/zoom. Never auto-resize. Landscape
    (108 cols) is a first-class option.
-6. Scrolling: velocity nub over the terminal's own scrollback, plus a "↓ latest" button
-   when scrolled away from the live screen.
+6. Scrolling: native touch drag over the terminal's own scrollback, ⇞/⇟ to page the view,
+   and a "↓ latest" button when scrolled away from the live screen.
 7. Layout driven by `visualViewport`, debounced. No rubber-band, no double-tap zoom.
 8. Reconnect: keep the terminal, backoff, resize-nudge (N−1 → N, 120 ms apart) to force a
    repaint.
@@ -87,7 +87,7 @@ it. The device verifies the adapter; everything after it is testable without a k
 
 | Layer | What | Notes |
 |---|---|---|
-| **Unit** | ttyd frame codec; key-encoding table; viewport math; nub curve; reconnect and backoff | UTF-8 splitting is no longer a unit concern: raw bytes go straight to the VT core, so the client has nothing to reassemble. It is asserted end to end instead, by checking box-drawing renders. |
+| **Unit** | ttyd frame codec; key-encoding table; viewport math; reconnect, backoff and the repaint nudge | UTF-8 splitting is no longer a unit concern: raw bytes go straight to the VT core, so the client has nothing to reassemble. It is asserted end to end instead, by checking box-drawing renders. |
 | **Viewport fixtures** | The five measured configurations in `docs/numbers.md`, replayed as a parametrized table | Asserts the input line stays above the keyboard, the anchor holds, and insets aren't double-counted. |
 | **Playwright** (WebKit) | e2e on `ttyd --index dist/client.html ./fake-pi.sh` — rendering, key bytes on the wire, pan clamping, reconnect repaint, `characterSet === 'UTF-8'`, autocorrect attributes | Fast, deterministic, no tokens. The main suite. |
 | **Real-pi smoke** | One test launching **real pi** under tmux: renders the startup screen, input box present, survives resize 50×30 → 120×40 → 160×50 | Catches `fake-pi.sh` drift and pi version changes. Sends no prompts, so costs no tokens. Slow and mildly flaky — one test, outside the main suite. |

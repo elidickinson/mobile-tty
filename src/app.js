@@ -2,7 +2,6 @@ import { WTerm } from '@wterm/dom'
 import { TtydConnection } from './transport.js'
 import { readViewport, deriveLayout, gridFor, measureCell } from './viewport.js'
 import { keySequence } from './keys.js'
-import { velocity } from './nub.js'
 
 const $ = id => document.getElementById(id)
 const app = $('app')
@@ -10,8 +9,6 @@ const viewport = $('viewport')
 const stage = $('stage')
 const screen = $('screen')
 const bar = $('bar')
-const nub = $('nub')
-const nubDot = $('nub-dot')
 const toBottom = $('to-bottom')
 const menu = $('menu')
 
@@ -22,7 +19,6 @@ const PRESETS = [[50, 30], [80, 40], [120, 40], [160, 50]]
 const state = {
   fontSize: 13,
   scale: 1,
-  gain: 1,
   cols: 80,
   rows: 24,
   cell: { width: 8, height: 16 },
@@ -60,9 +56,7 @@ function applyLayout() {
   app.style.paddingLeft = `${snap.insetLeft}px`
   app.style.paddingRight = `${snap.insetRight}px`
 
-  const floor = snap.insetBottom + 44 + 10
-  nub.style.bottom = `${floor}px`
-  toBottom.style.bottom = `${floor + 74}px`
+  toBottom.style.bottom = `${snap.insetBottom + 44 + 10}px`
 
   sizeScreen()
 }
@@ -133,10 +127,14 @@ const BAR = [
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
   { label: '→', key: 'Right', repeat: true },
-  { label: '⇞', key: 'PageUp', repeat: true },
-  { label: '⇟', key: 'PageDown', repeat: true },
-  { label: '≡', act: () => { menu.hidden = false } },
+  // pi answers PageUp/PageDown with a cursor move and nothing else, and history
+  // lives in the client's scrollback, so these page the view rather than the app.
+  { label: '⇞', name: 'PageUp', act: () => pageBy(-1), repeat: true },
+  { label: '⇟', name: 'PageDown', act: () => pageBy(1), repeat: true },
+  { label: '≡', name: 'menu', act: () => { menu.hidden = false } },
 ]
+
+const pageBy = direction => { screen.scrollTop += direction * screen.clientHeight * 0.9 }
 
 function sendKey(name) {
   const { ctrl, alt, shift } = state.mods
@@ -153,7 +151,7 @@ function buildBar() {
   for (const item of BAR) {
     const b = document.createElement('button')
     b.textContent = item.label
-    b.setAttribute('aria-label', item.key ?? item.mod ?? 'menu')
+    b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
     if (item.mod) {
       b.dataset.mod = item.mod
       b.addEventListener('pointerdown', e => {
@@ -161,10 +159,8 @@ function buildBar() {
         state.mods[item.mod] = !state.mods[item.mod]
         b.classList.toggle('sticky', state.mods[item.mod])
       })
-    } else if (item.act) {
-      b.addEventListener('pointerdown', e => { e.preventDefault(); item.act() })
     } else {
-      bindRepeat(b, () => sendKey(item.key), item.repeat)
+      bindRepeat(b, item.act ?? (() => sendKey(item.key)), item.repeat)
     }
     bar.appendChild(b)
   }
@@ -182,45 +178,6 @@ function bindRepeat(btn, fire, repeat) {
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) btn.addEventListener(ev, stop)
 }
 
-// ---------------------------------------------------------------- nub
-
-// Displacement sets scroll speed, not distance, so a thumb-sized pad can travel
-// the whole buffer.
-function bindNub() {
-  let dy = 0
-  let frame = null
-
-  const step = () => {
-    const v = velocity(dy, state.gain)
-    if (v !== 0) screen.scrollTop += v
-    frame = requestAnimationFrame(step)
-  }
-
-  nub.addEventListener('pointerdown', e => {
-    e.preventDefault()
-    nub.setPointerCapture(e.pointerId)
-    const originY = e.clientY
-    dy = 0
-    frame = requestAnimationFrame(step)
-
-    const move = ev => {
-      dy = ev.clientY - originY
-      nubDot.style.transform = `translateY(${Math.max(-18, Math.min(18, dy / 2))}px)`
-    }
-    const end = () => {
-      cancelAnimationFrame(frame)
-      dy = 0
-      nubDot.style.transform = ''
-      nub.removeEventListener('pointermove', move)
-      nub.removeEventListener('pointerup', end)
-      nub.removeEventListener('pointercancel', end)
-    }
-    nub.addEventListener('pointermove', move)
-    nub.addEventListener('pointerup', end)
-    nub.addEventListener('pointercancel', end)
-  })
-}
-
 // ---------------------------------------------------------------- menu
 
 function buildMenu() {
@@ -235,14 +192,6 @@ function buildMenu() {
   fit.textContent = 'Fit'
   fit.addEventListener('click', fitGrid)
   presets.appendChild(fit)
-
-  const gain = $('gain')
-  gain.value = state.gain
-  $('gain-val').textContent = state.gain.toFixed(1)
-  gain.addEventListener('input', () => {
-    state.gain = parseFloat(gain.value)
-    $('gain-val').textContent = state.gain.toFixed(1)
-  })
 
   const acts = {
     close: () => { menu.hidden = true },
@@ -270,7 +219,6 @@ async function main() {
 
   buildBar()
   buildMenu()
-  bindNub()
   setScale(1)
 
   await term.init()

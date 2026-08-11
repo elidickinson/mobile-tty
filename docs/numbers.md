@@ -41,7 +41,7 @@ Settles ~1 s. `visualViewport.offsetTop` stayed 0 throughout.
 | Alternate screen buffer | **No** | **Yes** |
 | Client scrollback | Real (61 lines) | **None** (alt screen) |
 | Mouse reporting | None | **SGR** (`mouse_any` + `mouse_sgr`) |
-| Own paging | — | Handles **PgUp/PgDn**, and says so |
+| Own paging | **None** — answers PageUp with `\e[1G\e[?25l` | Handles **PgUp/PgDn**, and says so |
 | Bottom block @50×15 | **5–6 of 15 rows** (box 3, cwd 1, status 1, spacer) | **5 of 15 rows** (box 3, blank, status) |
 | SIGWINCH | Reflows and **fully repaints** | Reflows |
 | Renders correctly at | 50×30, 120×40, 160×50 | 50×15 upward |
@@ -65,8 +65,6 @@ leave `\e[?1049h` in the stream.
 
 ## Accepted constants
 
-- **Nub:** dead zone 14 px; `v = sign(d) · min(((|d|−14)/14)^1.6 · gain, 45)` px/frame;
-  **gain 1.0**.
 - **Autocorrect:** 0 `insertReplacementText` events over 7 typed chars.
 - **Reconnect nudge gap:** 120 ms between N−1 and N. Zero gap does not repaint.
 - **Cell at 13px in the built client:** 7.83 × 16 pt (measured at runtime, not assumed).

@@ -118,19 +118,21 @@ would need the velocity routed to PageUp/PageDown or synthesised SGR wheel event
 (`numbers.md`). That is out of scope for v1, but the framing keeps it a small addition
 rather than a rewrite.
 
-Touch drag works but should not be primary — it competes with text selection, iOS edge
-gestures, and decisively with **panning the pinned grid**, which already claims the drag
-gesture. It is also poor one-handed.
+**Native touch drag is the primary control.** A velocity nub was built first, on the
+reasoning that drag would compete with panning the pinned grid. In the built client it does
+not: vertical scroll belongs to the terminal element and horizontal pan to the frame around
+it, so they are separate native scrollers and the conflict never arises. Tested on device,
+the nub earned nothing drag did not already do, so it was removed rather than kept as a
+second way to do the same thing.
 
-So the primary control is a **velocity nub**: a fixed, thumb-reachable pad where
-displacement sets scroll *speed*, not distance. Small pull creeps a line at a time, larger
-pull travels fast, release stops. Making it 2D unifies scroll and pan — the viewport
-becomes a window over a tall surface, scrollback above and live screen below, with no
-modes and no gesture conflict.
+Alongside drag: **⇞/⇟ page the view**, not the app. pi answers PageUp with `\e[1G\e[?25l`
+and nothing else, so forwarding those keys would be dead weight; history lives in the
+client's scrollback, which is what wants paging. An app that pages itself would want the
+bytes instead — a per-app decision, not a general one.
 
-Alongside it: discrete PageUp/PageDown/Home/End buttons (precise, and immune to gesture
-capture), a position indicator, and a follow-output toggle so new output does not yank you
-down mid-read.
+A **↓ latest** button appears when scrolled away from the live screen. Follow-output needs
+no toggle: wterm sticks to the bottom only when already at the bottom, so reading is never
+yanked away.
 
 ## Resizing
 

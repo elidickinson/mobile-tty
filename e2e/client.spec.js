@@ -67,13 +67,11 @@ test('key bar sends the right bytes, and a sticky modifier applies once', async 
   expect(sent).toBe(true)
 
   await page.getByRole('button', { name: 'Up', exact: true }).tap()
-  await page.getByRole('button', { name: 'PageUp', exact: true }).tap()
   await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
   await page.getByRole('button', { name: 'Escape', exact: true }).tap()
 
   const log = await page.evaluate(() => window.__sent)
   expect(log).toContain('0\x1b[A')
-  expect(log).toContain('0\x1b[5~')
   expect(log.at(-1)).toBe('0\x1b')            // ctrl+Escape is just Escape
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
 })
@@ -133,51 +131,44 @@ const settled = async page => {
   return last
 }
 
-// Enough submitted lines to push real history above the fold.
+const scrollbackCount = page => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount())
+
+// Push real history above the fold. Keep submitting until the scrollback is
+// deep enough rather than assuming a line count: how many lines it takes
+// depends on the grid, and a busy machine can drop keystrokes.
 const fillScrollback = async page => {
   const ta = page.locator('#screen textarea')
-  for (let i = 0; i < 24; i++) {
-    await ta.pressSequentially(`line${i}`)
-    await ta.press('Enter')
+  for (let batch = 0; batch < 5 && (await scrollbackCount(page)) <= 10; batch++) {
+    for (let i = 0; i < 12; i++) {
+      await ta.pressSequentially(`line${batch}_${i}`)
+      await ta.press('Enter')
+    }
   }
-  await expect.poll(() => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount()))
-    .toBeGreaterThan(10)
+  expect(await scrollbackCount(page)).toBeGreaterThan(10)
   return settled(page)
 }
 
-test('the nub scrolls back through history and stops when released', async ({ page }) => {
+test('the paging keys scroll the view, since pi does not page itself', async ({ page }) => {
   await ready(page)
   const bottom = await fillScrollback(page)
-  expect(bottom).toBeGreaterThan(0)
 
-  // Hold the nub above centre: displacement sets speed, so holding travels.
-  const box = await page.locator('#nub').boundingBox()
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 40, { steps: 4 })
-  await page.waitForTimeout(500)
-  await page.mouse.up()
+  await page.evaluate(() => {
+    window.__sent = []
+    const o = WebSocket.prototype.send
+    WebSocket.prototype.send = function (d) { window.__sent.push(new TextDecoder().decode(d)); return o.call(this, d) }
+  })
 
-  const scrolled = await scrollTop(page)
-  expect(scrolled).toBeLessThan(bottom)
+  await page.getByRole('button', { name: 'PageUp', exact: true }).tap()
+  await page.waitForTimeout(200)
+  const up = await scrollTop(page)
+  expect(up).toBeLessThan(bottom)
 
-  // Release stops it dead — no momentum to fight.
-  await page.waitForTimeout(300)
-  expect(await scrollTop(page)).toBe(scrolled)
-})
+  // pi answers PageUp with a bare cursor move, so sending it would do nothing.
+  expect(await page.evaluate(() => window.__sent)).not.toContain('0\x1b[5~')
 
-test('inside the dead zone the nub does not drift', async ({ page }) => {
-  await ready(page)
-  const before = await fillScrollback(page)
-
-  const box = await page.locator('#nub').boundingBox()
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
-  await page.mouse.down()
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - 8, { steps: 2 })
-  await page.waitForTimeout(400)
-  await page.mouse.up()
-
-  expect(await scrollTop(page)).toBe(before)
+  await page.getByRole('button', { name: 'PageDown', exact: true }).tap()
+  await page.waitForTimeout(200)
+  expect(await scrollTop(page)).toBeGreaterThan(up)
 })
 
 test('scrolling up offers a way back to the live screen', async ({ page }) => {
