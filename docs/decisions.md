@@ -109,6 +109,27 @@ The terminal object outlives the socket, so a drop leaves the stale screen up ra
 blanking. Input queues while down; resizes do not — the handshake carries the size, and
 queuing it would flush in the same tick as the nudge and collapse the gap.
 
+## Sharing the session with a desktop
+
+`dtach` multiplexes attachers, so the host joins the running session with no change to the
+stack:
+
+```
+dtach -a "${TMPDIR:-/tmp}/mobile-tty.sock" -r winch
+```
+
+Both clients see each other's input and output. What they cannot have is separate sizes:
+one PTY has one size, and whoever set it last owns it — an attaching desktop leaves the
+phone rendering a grid the PTY no longer has.
+
+Taking it back needs a *real* change. Re-sending the same numbers reaches nothing: ttyd
+finds its own PTY unchanged, raises no SIGWINCH, and dtach forwards nothing. So it is the
+nudge, it costs two redraws, and it is therefore **Fit** — a deliberate tap — rather than a
+poll. Whoever acted last owns the size; Fit is how the phone acts.
+
+Adopting an *already running* pi is not possible: reassigning a live process's controlling
+terminal needs ptrace surgery (`reptyr`), which is Linux-only. pi has to start under dtach.
+
 ## Access
 
 Cloudflare tunnel, reusing the pi-phone pattern. Tailscale needs a client on every device;

@@ -81,6 +81,24 @@ export class TtydConnection {
     else this.queue.push(frame)
   }
 
+  /**
+   * Take the shared PTY size back. One PTY has one size across every attached
+   * client, and whoever set it last owns it — so a desktop `dtach -a` at a
+   * different size leaves this client rendering a grid the PTY does not have.
+   *
+   * Re-sending the same numbers cannot do it: ttyd finds its own PTY unchanged,
+   * raises no SIGWINCH, and nothing reaches the session. It takes a real change,
+   * which is why this is the nudge and why it costs two redraws — and why it is
+   * a deliberate action rather than a poll.
+   */
+  claimSize() {
+    if (!this.connected) return
+    this.ws.send(encodeResize(this.cols - 1, this.rows))
+    this.schedule(() => {
+      if (this.connected) this.ws.send(encodeResize(this.cols, this.rows))
+    }, NUDGE_GAP)
+  }
+
   resize(cols, rows) {
     if (cols === this.cols && rows === this.rows) return
     this.cols = cols

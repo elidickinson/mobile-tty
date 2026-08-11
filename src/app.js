@@ -140,6 +140,12 @@ function fitGrid(l = deriveLayout(readViewport())) {
   setGrid(cols, rows)
 }
 
+/** Fit, and take the size back from any other client attached to the session. */
+function fitAndClaim() {
+  fitGrid()
+  conn.claimSize()
+}
+
 // visualViewport fires a burst during rotation and keyboard animation, and the
 // intermediate values are wrong. Act at once, then again once it settles.
 let settle = null
@@ -308,7 +314,7 @@ function buildMenu() {
   }
   const fit = document.createElement('button')
   fit.textContent = 'Fit'
-  fit.addEventListener('click', fitGrid)
+  fit.addEventListener('click', fitAndClaim)
   presets.appendChild(fit)
 
   const acts = {

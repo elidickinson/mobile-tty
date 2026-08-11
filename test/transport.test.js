@@ -128,6 +128,32 @@ test('backoff grows on repeated failure and resets once connected', () => {
   assert.equal(timers[0].ms, delays[0], 'a successful connection resets the backoff')
 })
 
+test('claimSize takes the shared size back with a real change, not a repeat', () => {
+  const { c, sock, flush } = setup()
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  flush()
+  const before = sock().sent.length
+
+  c.claimSize()
+  flush()
+  const sent = sock().sent.slice(before).map(text).map(b => JSON.parse(b.slice(1)))
+  // Repeating 50x30 would leave ttyd's own PTY unchanged and reach nothing.
+  assert.deepEqual(sent, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
+})
+
+test('claimSize is silent while disconnected', () => {
+  const { c, sock, flush } = setup()
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  flush()
+  sock().drop()
+  const before = sock().sent.length
+
+  c.claimSize()
+  assert.equal(sock().sent.length, before, 'nothing queued either — the handshake carries the size')
+})
+
 test('state changes are reported for the connection indicator', () => {
   const { c, events, sock } = setup()
   c.connect({ cols: 50, rows: 30 })
