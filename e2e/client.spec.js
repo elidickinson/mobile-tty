@@ -29,11 +29,13 @@ test('renders the TUI with box drawing intact', async ({ page }) => {
   expect(text).not.toContain('â')
 })
 
-test('the repaint nudge does not leave its own redraws in the scrollback', async ({ page }) => {
+test('the screen still has content a moment after attaching', async ({ page }) => {
   await ready(page)
-  // Two redraws land on every attach; on a fresh page neither is history.
-  await expect.poll(() => scrollbackCount(page), { timeout: 6_000 }).toBe(0)
-  await expect(page.locator('#to-bottom')).toBeHidden()
+  // Regression: clearing the nudge's own redraws out of the scrollback with
+  // ED 3 blanked the visible grid too, a second after every load.
+  await page.waitForTimeout(1200)
+  expect(await liveRows(page).count()).toBeGreaterThan(0)
+  await expect(page.locator('#screen')).toContainText('fake-pi ready')
 })
 
 test('the PTY grid matches what the client asked for', async ({ page }) => {

@@ -19,6 +19,13 @@ const menu = $('menu')
 const buildIdOf = doc => doc.querySelector('meta[name=build]')?.content ?? ''
 const BUILD_ID = buildIdOf(document)
 
+// Sequences written to our own terminal, never sent to pi. ED 3 is specified as
+// erasing only the saved lines, but this VT core erases the visible grid with
+// it — so it is only ever useful alongside ED 2, never on its own.
+const CURSOR_HOME = '\x1b[H'        // CUP: cursor to row 1, column 1
+const ERASE_SCREEN = '\x1b[2J'      // ED 2: erase the visible grid
+const ERASE_SAVED = '\x1b[3J'       // ED 3: erase saved lines, and here the grid too
+
 const MIN_SCALE = 0.4
 const MAX_SCALE = 3
 const PRESETS = [[50, 30], [80, 40], [120, 40], [160, 50]]
@@ -39,7 +46,7 @@ const term = new WTerm(screen, {
   rows: state.rows,
   autoResize: false,
   cursorBlink: true,
-  onData: data => { typedYet = true; conn.send(data) },
+  onData: data => conn.send(data),
 })
 
 const conn = new TtydConnection({
@@ -48,25 +55,9 @@ const conn = new TtydConnection({
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => term.write(bytes),   // raw bytes: the VT core reassembles UTF-8
   onTitle: title => { document.title = title },
-  onState: s => {
-    $('menu-state').textContent = `${s} · ${BUILD_ID}`
-    if (s === 'connected') dropAttachNoise()
-  },
+  onState: s => { $('menu-state').textContent = `${s} · ${BUILD_ID}` },
 })
 
-// The repaint nudge costs two redraws — N-1 then N — and the first scrolls off
-// into scrollback. On the first attach of a page that is all the scrollback
-// there is, so it is dropped once the redraws have landed. Later reconnects keep
-// theirs: by then it is real history.
-let firstAttach = true
-let typedYet = false
-function dropAttachNoise() {
-  if (!firstAttach) return
-  firstAttach = false
-  // Anything typed in the meantime produces scrollback worth keeping, so the
-  // moment the session is in use this stops being safe to do.
-  setTimeout(() => { if (!typedYet) term.write('\x1b[3J') }, 600)
-}
 
 // Diagnostic seam: the e2e suite and the on-device probe read the same shape.
 // Published before startup finishes so nothing has to guess when it appears.
@@ -196,7 +187,6 @@ const pageBy = direction => { screen.scrollTop += direction * screen.clientHeigh
 const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < 8
 
 function sendKey(name) {
-  typedYet = true
   const { ctrl, alt, shift } = state.mods
   conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp: term.bridge.cursorKeysApp() }))
   clearMods()
@@ -302,7 +292,7 @@ function buildMenu() {
     'zoom-reset': () => setScale(1),
     reconnect: () => conn.ws.close(),
     // Local only: pi's own screen is untouched and its next repaint restores it.
-    'clear-view': () => term.write('\x1b[H\x1b[2J\x1b[3J'),
+    'clear-view': () => term.write(CURSOR_HOME + ERASE_SCREEN + ERASE_SAVED),
     // Standalone has no browser chrome, so this is the only way to pick up a
     // new build by hand. Re-fetch past the cache first, or the reload just
     // reinstates the copy iOS is already holding.
