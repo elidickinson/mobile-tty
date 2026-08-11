@@ -26,16 +26,25 @@ consumed before the terminal gets any.
 |---|---|---|
 | Safari, keyboard **down** | 50 × **47** | measured |
 | Safari, keyboard **up** | 50 × **26** | measured — the working case |
-| Standalone, keyboard up | 50 × ~33–36 | projected: reclaims most of the 160pt, minus safe-area insets. Unconfirmed. |
+| Standalone, keyboard **down** | 50 × **54** | measured (`innerHeight` 812) |
+| Standalone, keyboard **up** | 50 × ~33 | projected from 812 − 310; still unmeasured |
 | Standalone + compact keyboard (~150pt) | 50 × ~44 | projected |
 | At 11px instead of 13px, keyboard up | 59 × 31 | measured |
 
-So the keyboard costs **21 of 47 rows**, and Safari's chrome another ~10. Recovering both
-would take the working case from 26 rows to the low 40s — still the biggest single UX
-lever, and confirming the standalone number is the cheapest next measurement.
+**Standalone is worth +7 rows, not the +10 projected.** It lifts `innerHeight` 714 → 812,
+recovering only 98 of Safari's 160pt, because safe-area insets (**62 top / 34 bottom**)
+appear once you leave Safari. Those insets are reported as 0/0 in Safari and only become
+real in standalone — so layout must handle them, and they must not be double-counted.
 
-`visualViewport.offsetTop` stayed 0 throughout, and safe-area insets reported 0/0 in
-non-standalone Safari.
+Realistic ladder for the working case: **26 rows in Safari → ~33 standalone.** Reaching
+the low 40s needs the compact custom keyboard, which is the deferred big build. Standalone
+remains the cheapest win, but it is a 27% improvement, not a transformation.
+
+**Keyboard height is not a constant.** Observed 310pt and 237pt in the same session
+(possibly with/without the predictive bar, or captured mid-animation). Never hardcode it —
+always derive from `visualViewport`, and expect intermediate values during the animation.
+
+`visualViewport.offsetTop` stayed 0 throughout.
 
 **Implementation note, learned the hard way in the probe:** sizing the app with
 `height:100%` puts the bottom of the UI *underneath* the keyboard, because that is the
