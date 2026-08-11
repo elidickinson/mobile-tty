@@ -391,3 +391,38 @@ test('a startup failure is reported on screen, not swallowed', async ({ page }) 
   await expect(page.locator('#diag-overlay')).toContainText('ERROR — boom')
   await expect(page.locator('#diag-overlay')).toContainText('insets')
 })
+
+test('the keyboard key summons and dismisses the input', async ({ page }) => {
+  await ready(page)
+  const focused = () => page.evaluate(() => document.activeElement === document.querySelector('#screen textarea'))
+  await page.evaluate(() => document.querySelector('#screen textarea').blur())
+  expect(await focused()).toBe(false)
+
+  await page.getByRole('button', { name: 'keyboard' }).tap()
+  expect(await focused()).toBe(true)
+
+  await page.getByRole('button', { name: 'keyboard' }).tap()
+  expect(await focused()).toBe(false)
+})
+
+test('a sticky modifier reaches keys typed on the software keyboard', async ({ page }) => {
+  await ready(page)
+  await spySocket(page)
+
+  // These arrive through wterm rather than the key bar, so without the modifier
+  // being applied there, Ctrl-C is unreachable from a phone.
+  await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
+  await page.locator('#screen textarea').pressSequentially('c')
+
+  expect(await sentFrames(page)).toContain('0\x03')
+  await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
+})
+
+test('using a modifier leaves the rest of the bar alone', async ({ page }) => {
+  await ready(page)
+  await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
+  await expect(page.getByRole('button', { name: 'ctrl', exact: true })).toHaveClass(/sticky/)
+
+  await page.locator('#screen textarea').pressSequentially('c')
+  expect(await page.locator('#bar button.sticky').count()).toBe(0)
+})

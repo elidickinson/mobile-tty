@@ -40,7 +40,9 @@ export function keySequence(name, opts = {}) {
   if (name.length === 1) {
     if (ctrl) {
       const code = name.toUpperCase().charCodeAt(0)
-      if (code < 0x40 || code > 0x5f) throw new Error(`keys: ${name} has no control code`)
+      // Only @ through _ have control codes. Terminals send the bare key for
+      // everything else — ctrl+1 is '1' — rather than inventing an encoding.
+      if (code < 0x40 || code > 0x5f) return name
       return String.fromCharCode(code - 0x40)
     }
     return alt ? ESC + name : name

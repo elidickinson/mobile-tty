@@ -23,6 +23,12 @@ test('ctrl folds a letter to its control code', () => {
   assert.equal(seq('a', { ctrl: true }), '\x01')
 })
 
+test('ctrl on a key with no control code sends the key itself', () => {
+  // @ through _ is the whole range; xterm sends '1' for ctrl+1.
+  assert.equal(seq('1', { ctrl: true }), '1')
+  assert.equal(seq('[', { ctrl: true }), '\x1b')
+})
+
 test('alt prefixes with ESC, for named keys as well as letters', () => {
   assert.equal(seq('b', { alt: true }), '\x1bb')
   assert.equal(seq('Backspace', { alt: true }), '\x1b\x7f')   // delete word backwards

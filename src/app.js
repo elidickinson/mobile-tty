@@ -46,7 +46,7 @@ const term = new WTerm(screen, {
   rows: state.rows,
   autoResize: false,
   cursorBlink: true,
-  onData: data => conn.send(data),
+  onData: data => conn.send(withMods(data)),
 })
 
 const conn = new TtydConnection({
@@ -176,8 +176,19 @@ const BAR = [
   // lives in the client's scrollback, so these page the view rather than the app.
   { label: '⇈', name: 'PageUp', act: () => pageBy(-1), repeat: true },
   { label: '⇊', name: 'PageDown', act: () => pageBy(1), repeat: true },
+  { label: '⌨', name: 'keyboard', act: () => toggleKeyboard() },
   { label: '≡', name: 'menu', act: () => { showDiagnostics(); menu.hidden = false } },
 ]
+
+/**
+ * Summon or dismiss the software keyboard without having to find something to
+ * tap. iOS only opens it from inside a user gesture, which a pointerdown is.
+ */
+function toggleKeyboard() {
+  const input = screen.querySelector('textarea')
+  if (document.activeElement === input) input.blur()
+  else term.focus()
+}
 
 const pageBy = direction => { screen.scrollTop += direction * screen.clientHeight * 0.9 }
 
@@ -185,6 +196,19 @@ const pageBy = direction => { screen.scrollTop += direction * screen.clientHeigh
 // re-pins after rendering, and jumps back on a keystroke. A second mechanism
 // here only fought it for the same property.
 const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < 8
+
+/**
+ * Apply a sticky modifier to a key from the software keyboard. Those arrive
+ * through wterm rather than the key bar, so without this `⌃` then `c` sends a
+ * bare `c` and Ctrl-C is unreachable. Only single characters qualify — a paste
+ * or a dictated phrase is not a chord.
+ */
+function withMods(data) {
+  const { ctrl, alt, shift } = state.mods
+  if (data.length !== 1 || !(ctrl || alt)) return data
+  clearMods()
+  return keySequence(data, { ctrl, alt, shift })
+}
 
 function sendKey(name) {
   const { ctrl, alt, shift } = state.mods
@@ -194,7 +218,9 @@ function sendKey(name) {
 
 function clearMods() {
   for (const m of Object.keys(state.mods)) state.mods[m] = false
-  for (const b of bar.children) b.classList.toggle('sticky', b.dataset.mod && state.mods[b.dataset.mod])
+  // Only the modifier keys carry the highlight. `toggle(cls, undefined)` flips
+  // rather than removes, so touching the others lit up half the bar.
+  for (const b of bar.children) if (b.dataset.mod) b.classList.remove('sticky')
 }
 
 function buildBar() {
