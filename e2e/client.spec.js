@@ -313,3 +313,21 @@ test('the menu can reload the app, since standalone has no browser chrome', asyn
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
   expect(await page.evaluate(() => sessionStorage.getItem('reloaded'))).toBeNull()
 })
+
+test('the document cannot be panned — the drag must reach the terminal', async ({ page }) => {
+  await ready(page)
+  const m = await page.evaluate(() => {
+    const s = getComputedStyle(document.documentElement)
+    const b = getComputedStyle(document.body)
+    return {
+      htmlPos: s.position, bodyPos: b.position,
+      htmlOverflow: s.overflow, bodyOverflow: b.overflow,
+      screenTouch: getComputedStyle(document.getElementById('screen')).touchAction,
+      docScrollable: document.scrollingElement.scrollHeight - document.scrollingElement.clientHeight,
+    }
+  })
+  expect(m.htmlPos).toBe('fixed')
+  expect(m.bodyPos).toBe('fixed')
+  expect(m.screenTouch).toBe('pan-y')
+  expect(m.docScrollable).toBeLessThanOrEqual(0)
+})

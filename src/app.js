@@ -163,7 +163,7 @@ const BAR = [
   // lives in the client's scrollback, so these page the view rather than the app.
   { label: '⇞', name: 'PageUp', act: () => pageBy(-1), repeat: true },
   { label: '⇟', name: 'PageDown', act: () => pageBy(1), repeat: true },
-  { label: '≡', name: 'menu', act: () => { menu.hidden = false } },
+  { label: '≡', name: 'menu', act: () => { showDiagnostics(); menu.hidden = false } },
 ]
 
 const pageBy = direction => { screen.scrollTop += direction * screen.clientHeight * 0.9 }
@@ -211,6 +211,25 @@ function bindRepeat(btn, fire, repeat) {
 }
 
 // ---------------------------------------------------------------- menu
+
+/** On-device readout. The emulator cannot report insets or a real keyboard. */
+function showDiagnostics() {
+  const s = readViewport()
+  const l = deriveLayout(s)
+  const b = term.bridge
+  $('diag').textContent = [
+    `build    ${BUILD_ID}   standalone ${s.standalone}`,
+    `inner    ${s.innerWidth}x${s.innerHeight}   visual ${Math.round(s.visualWidth)}x${Math.round(s.visualHeight)} @${s.offsetTop}`,
+    `insets   t${s.insetTop} r${s.insetRight} b${s.insetBottom} l${s.insetLeft}`,
+    `keyboard ${l.keyboardHeight} (up ${l.keyboardUp})   ${l.orientation}`,
+    `bar      ${l.keyBarHeight} (pad ${l.keyBarPadBottom})   barTop ${Math.round(bar.getBoundingClientRect().top)}`,
+    `grid     ${state.cols}x${state.rows} cell ${state.cell.width.toFixed(2)}x${state.cell.height} scale ${state.scale}`,
+    `term     ${Math.round(l.terminal.width)}x${Math.round(l.terminal.height)}  stable ${Math.round(l.stableHeight)}`,
+    `scroll   top ${screen.scrollTop} of ${screen.scrollHeight} in ${screen.clientHeight}`,
+    `sb       ${b.getScrollbackCount()} rows   domRows ${screen.querySelectorAll('.term-row').length}`,
+    `overflow ${getComputedStyle(screen).overflowY}   class ${screen.className}`,
+  ].join('\n')
+}
 
 function buildMenu() {
   const presets = $('presets')
