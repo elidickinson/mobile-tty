@@ -362,3 +362,13 @@ test('losing the key bar off screen reports itself at the top', async ({ page })
   await page.locator('#diag-overlay').tap()
   await expect(page.locator('#diag-overlay')).toBeHidden()
 })
+
+test('a startup failure is reported on screen, not swallowed', async ({ page }) => {
+  await ready(page)
+  await expect(page.locator('#diag-overlay')).toBeHidden()
+
+  await page.evaluate(() => window.dispatchEvent(new ErrorEvent('error', { message: 'boom', lineno: 42, colno: 7 })))
+  await expect(page.locator('#diag-overlay')).toBeVisible()
+  await expect(page.locator('#diag-overlay')).toContainText('ERROR — boom')
+  await expect(page.locator('#diag-overlay')).toContainText('insets')
+})

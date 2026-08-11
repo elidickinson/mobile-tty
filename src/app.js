@@ -215,6 +215,23 @@ function bindRepeat(btn, fire, repeat) {
  * the diagnostics that would explain why. Three fingers cannot happen by
  * accident while typing or scrolling.
  */
+/**
+ * Nothing on a phone shows a stack trace, so a failed startup looks like a
+ * missing key bar, or scrolling that does not scroll — symptoms with no
+ * apparent cause. Put the actual error on the screen instead.
+ */
+function reportFatal(what) {
+  const overlay = document.getElementById('diag-overlay')
+  if (!overlay) return
+  overlay.textContent = `ERROR — ${what}\n\n${safeDiagnostics()}`
+  overlay.hidden = false
+}
+
+const safeDiagnostics = () => { try { return diagnosticText() } catch (e) { return `diagnostics failed: ${e}` } }
+
+window.addEventListener('error', e => reportFatal(`${e.message} @ ${e.lineno}:${e.colno}`))
+window.addEventListener('unhandledrejection', e => reportFatal(`unhandled: ${e.reason?.message ?? e.reason}`))
+
 function bindEscapeHatch() {
   document.addEventListener('touchstart', e => {
     if (e.touches.length !== 3) return
@@ -253,9 +270,10 @@ function showDiagnostics() { $('diag').textContent = diagnosticText() }
 function checkChromeVisible() {
   const overlay = $('diag-overlay')
   const visualH = window.visualViewport.height
-  const lost = bar.getBoundingClientRect().bottom > visualH + 1 || bar.getBoundingClientRect().height < 1
+  const forced = location.search.includes('diag')
+  const lost = forced || bar.getBoundingClientRect().bottom > visualH + 1 || bar.getBoundingClientRect().height < 1
   if (!lost) { overlay.hidden = true; return }
-  overlay.textContent = `KEY BAR OFF SCREEN — tap to dismiss\n${diagnosticText()}`
+  overlay.textContent = `${forced ? 'DIAGNOSTICS' : 'KEY BAR OFF SCREEN'} — tap to dismiss\n${diagnosticText()}`
   overlay.hidden = false
 }
 
@@ -338,4 +356,4 @@ async function main() {
   window.addEventListener('orientationchange', onViewportChange)
 }
 
-main()
+main().catch(e => reportFatal(`startup: ${e?.message ?? e}`))
