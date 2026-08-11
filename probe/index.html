@@ -9,9 +9,12 @@
     --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px); }
   @media (prefers-color-scheme: dark) { :root { --fg:#eee; --bg:#111; --dim:#999; } }
   * { box-sizing: border-box; }
-  html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--fg);
-    font:13px/1.35 ui-monospace, Menlo, monospace; -webkit-text-size-adjust:100%; }
-  body { display:flex; flex-direction:column;
+  html { margin:0; height:100%; overflow:hidden; }
+  /* Sized from visualViewport, NOT height:100% — otherwise the bottom of the app
+     lands underneath the iOS keyboard. This is the whole point of the exercise. */
+  body { margin:0; position:fixed; top:0; left:0; width:100%; overflow:hidden;
+    background:var(--bg); color:var(--fg); font:13px/1.35 ui-monospace, Menlo, monospace;
+    -webkit-text-size-adjust:100%; display:flex; flex-direction:column;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
   #stats { flex:0 0 auto; padding:6px 8px; border-bottom:1px solid var(--dim); }
   #stats b { color:var(--hi); font-weight:600; }
@@ -26,7 +29,11 @@
   #caret { animation:blink 1s steps(2) infinite; }
   @keyframes blink { 50% { opacity:0 } }
   #log { flex:0 0 22%; overflow-y:auto; border-top:1px solid var(--dim); padding:4px 8px; color:var(--dim); }
-  #bar { flex:0 0 auto; display:flex; gap:6px; padding:6px 8px; border-top:1px solid var(--dim); }
+  #sens { flex:0 0 auto; display:flex; align-items:center; gap:10px; padding:4px 8px;
+    border-top:1px solid var(--dim); }
+  #sens input { flex:1; }
+  #bar { flex:0 0 auto; display:flex; gap:6px; padding:6px 8px 8px;
+    border-top:1px solid var(--dim); }
   button { flex:1; padding:10px 4px; font:inherit; background:transparent; color:var(--fg);
     border:1px solid var(--dim); border-radius:6px; }
   #nub { position:fixed; right:10px; bottom:calc(90px + env(safe-area-inset-bottom));
@@ -40,10 +47,15 @@
 <div id="scroller"></div>
 <div id="echo"><span id="echotxt"></span><span id="caret">▊</span></div>
 <div id="log"></div>
+<div id="sens">
+  <span>nub gain <b id="gv">1.0</b></span>
+  <input id="gain" type="range" min="0.2" max="3" step="0.1" value="1">
+</div>
 <div id="bar">
-  <button id="kb">focus hidden input (raise keyboard)</button>
+  <button id="kb">keyboard</button>
   <button id="blur">blur</button>
-  <button id="clr">clear log</button>
+  <button id="rep">send report</button>
+  <button id="clr">clear</button>
 </div>
 <div id="nub">nub<br>drag me</div>
 <textarea id="cap" autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off"></textarea>
@@ -81,6 +93,16 @@ function cell(px) {
 const standalone = !!navigator.standalone || matchMedia('(display-mode: standalone)').matches;
 const inset = p => getComputedStyle(document.documentElement).getPropertyValue(p) || '0px';
 
+// THE FIX: size the app to the visual viewport and follow its offset, so the bottom
+// of the UI sits above the keyboard instead of underneath it.
+function layout() {
+  const vv = window.visualViewport;
+  const h = vv ? vv.height : innerHeight;
+  const top = vv ? vv.offsetTop : 0;
+  document.body.style.height = h + 'px';
+  document.body.style.transform = `translateY(${top}px)`;
+}
+
 function render() {
   const vv = window.visualViewport;
   const iw = window.innerWidth, ih = window.innerHeight;
@@ -107,11 +129,18 @@ function render() {
 
 // --- viewport + lifecycle events -------------------------------------------
 if (window.visualViewport) {
-  visualViewport.addEventListener('resize', () => { log(`visualViewport resize h=${Math.round(visualViewport.height)}`); render(); });
-  visualViewport.addEventListener('scroll', () => { log(`visualViewport scroll offsetTop=${visualViewport.offsetTop.toFixed(1)}`); render(); });
+  visualViewport.addEventListener('resize', () => {
+    layout(); render();
+    log(`visualViewport resize h=${Math.round(visualViewport.height)}`);
+    report('vv-resize');
+  });
+  visualViewport.addEventListener('scroll', () => { layout(); render(); });
 } else log('<b>no visualViewport API</b>');
-addEventListener('resize', () => { log(`window resize ${innerWidth}×${innerHeight}`); render(); });
-addEventListener('orientationchange', () => { log('orientationchange'); setTimeout(render, 300); });
+addEventListener('resize', () => { layout(); render(); log(`window resize ${innerWidth}×${innerHeight}`); });
+addEventListener('orientationchange', () => {
+  log('orientationchange');
+  setTimeout(() => { layout(); render(); report('rotate'); }, 300);
+});
 scroller.addEventListener('scroll', render, { passive: true });
 
 // --- does the scroll container still work while the keyboard is up? --------
@@ -135,15 +164,17 @@ cap.addEventListener('blur', () => log('hidden textarea BLUR'));
 
 // --- fixed nub: does it get touches without the page/scroller moving? ------
 const nub = $('#nub');
-const DEAD = 10, MAXV = 60;           // px of slack, px/frame ceiling
-let originY = null, dy = 0, moves = 0, raf = 0;
+const DEAD = 14, MAXV = 45;           // px of slack, px/frame ceiling
+let originY = null, dy = 0, moves = 0, raf = 0, gain = 1;
 
-// Displacement sets scroll SPEED, not distance. Quadratic-ish so slow creep and
-// fast travel are both controllable from one small pad.
+$('#gain').oninput = e => { gain = +e.target.value; $('#gv').textContent = gain.toFixed(1); };
+
+// Displacement sets scroll SPEED, not distance. Softer than the first attempt:
+// bigger dead zone, larger divisor, so small pulls creep instead of launching.
 const velocity = d => {
   const m = Math.abs(d) - DEAD;
   if (m <= 0) return 0;
-  return Math.sign(d) * Math.min(Math.pow(m / 6, 1.5), MAXV);
+  return Math.sign(d) * Math.min(Math.pow(m / 14, 1.6) * gain, MAXV);
 };
 
 function tick() {
@@ -175,7 +206,45 @@ const nubEnd = e => {
 nub.addEventListener('touchend', nubEnd, { passive: false });
 nub.addEventListener('touchcancel', nubEnd, { passive: false });
 
+// --- reporting: POST metrics so they can be read off-device ----------------
+let autocorrects = 0;
+cap.addEventListener('beforeinput', e => { if (e.inputType === 'insertReplacementText') autocorrects++; });
+
+function snapshot(tag) {
+  const vv = window.visualViewport;
+  const vh = vv ? vv.height : innerHeight, vw = vv ? vv.width : innerWidth;
+  const c13 = cell(13);
+  return {
+    tag, standalone,
+    innerH: innerHeight, visualH: Math.round(vh),
+    offsetTop: vv ? +vv.offsetTop.toFixed(1) : null,
+    scale: vv ? +vv.scale.toFixed(3) : null,
+    keyboard: Math.max(0, Math.round(innerHeight - vh - (vv ? vv.offsetTop : 0))),
+    grid13: `${Math.floor(vw / c13.w)}x${Math.floor(vh / c13.h)}`,
+    cell: `${c13.w.toFixed(2)}x${c13.h.toFixed(2)}`,
+    orientation: (screen.orientation || {}).type || null,
+    dpr: devicePixelRatio, screen: `${screen.width}x${screen.height}`,
+    safeTop: inset('--sat').trim(), safeBottom: inset('--sab').trim(),
+    nubGain: gain, autocorrects, capturedLen: cap.value.length,
+    ua: navigator.userAgent,
+    log: [...logEl.querySelectorAll('div')].slice(0, 25).map(d => d.textContent),
+  };
+}
+
+function report(tag) {
+  const body = JSON.stringify(snapshot(tag));
+  // keepalive so a report fired during backgrounding still lands
+  fetch('/report', { method: 'POST', body, keepalive: true })
+    .then(() => log(`reported <b>${tag}</b>`))
+    .catch(err => log(`report FAILED ${err}`));
+}
+$('#rep').onclick = () => report('manual');
+
 log(`start standalone=${standalone} ua=${navigator.userAgent.slice(0, 60)}`);
-render();
+layout(); render();
 setInterval(render, 500);
+report('load');
+if (new URLSearchParams(location.search).has('autofocus')) {
+  setTimeout(() => { cap.focus(); log('autofocus'); }, 400);
+}
 </script>
