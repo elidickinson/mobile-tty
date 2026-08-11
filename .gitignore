@@ -4,3 +4,4 @@ dist/
 *.log
 test-results/
 research/
+cloudflared.yml

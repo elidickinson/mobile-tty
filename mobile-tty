@@ -1,69 +1,190 @@
 #!/bin/bash
-# Start a session: build the client, then serve it over a PTY that outlives the
-# connection. dtach keeps the program alive across reconnects without taking the
-# terminal's alternate screen the way tmux does, so scrollback stays in the
-# client where the renderer can scroll it natively.
+# The entry point. Everything here runs in the foreground and owns what it
+# starts, so there is nothing to track between invocations: the dtach session
+# survives on its own, which is the only state that matters.
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
 port="${PORT:-7681}"
+bind="${MTTY_BIND:-127.0.0.1}"
 socket="${MTTY_SOCKET:-${TMPDIR:-/tmp}/mobile-tty.sock}"
-user="${MTTY_USER:-pi}"
-password="${MTTY_PASSWORD:-}"
+config="$PWD/cloudflared.yml"
 
 usage() {
   cat <<'USAGE'
-Usage: mobile-tty [options] [command...]
+Usage: mobile-tty [command] [options] [program...]
 
-  --port N          port to serve on (default 7681, or $PORT)
-  --password PASS   require a password; username is "pi" unless --user is given
-  --user NAME       username for --password (default pi, or $MTTY_USER)
-  --socket PATH     dtach socket (default $TMPDIR/mobile-tty.sock, or $MTTY_SOCKET)
-  -h, --help        this
+  serve          build if stale, then serve it (default)
+  attach         attach this terminal to the same session
+  up             serve and run the tunnel, both ending together
+  tunnel         run the Cloudflare tunnel on its own
+  setup <host>   create the tunnel, DNS and Access login for a hostname
+  doctor         check the pieces, and clear a socket left by a dead session
 
-Every option also has an environment variable ($PORT, $MTTY_PASSWORD, $MTTY_USER,
-$MTTY_SOCKET) for starting this from launchd or a container, where there is no
-argv to write. Flags win. $MTTY_PASSWORD keeps the secret out of your shell
-history, but not out of `ps` — see below.
+Options
 
-Anything after the options is the command to run (default: pi). A session keeps
-running when you disconnect; attach from a terminal with:
+  --lan          short for --bind 0.0.0.0
+  --bind ADDR    listen on one address (default 127.0.0.1, or $MTTY_BIND)
+  --port N       default 7681, or $PORT
+  --socket PATH  dtach socket (default $TMPDIR/mobile-tty.sock)
 
-  dtach -a <socket> -r winch
+Loopback is the default because the tunnel reaches it from this machine. Use
+--lan to reach it from a phone on the same wifi, which puts an unauthenticated
+terminal on your network.
+
+The session holds the program and outlives every command here. serve and attach
+each start one if there is not one already, and both are only viewers onto it.
+To end it, exit the program.
+
+There is no --password: ttyd refuses the WebSocket upgrade without a basic-auth
+header and Safari does not send one on a handshake (tsl0922/ttyd#1437), so the
+page would load and the terminal would never connect. Use `setup` and let
+Cloudflare Access do the login.
 USAGE
 }
 
-need() { [[ $# -ge 2 ]] || { echo "mobile-tty: $1 needs a value" >&2; exit 2; }; }
+die() { echo "mobile-tty: $*" >&2; exit 1; }
+usage_error() { echo "mobile-tty: $*" >&2; exit 2; }
+
+cmd=serve
+case "${1:-}" in
+  serve|attach|up|tunnel|setup|doctor) cmd=$1; shift ;;
+  -h|--help|help) usage; exit 0 ;;
+  '') ;;
+  -*) ;;
+  *) usage_error "unknown command '$1' — try: mobile-tty serve $*" ;;
+esac
+
+[[ "$cmd" == setup ]] && exec scripts/cf-access.sh "$@"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --port) need "$@"; port="$2"; shift 2 ;;
-    --password) need "$@"; password="$2"; shift 2 ;;
-    --user) need "$@"; user="$2"; shift 2 ;;
-    --socket) need "$@"; socket="$2"; shift 2 ;;
-    -h|--help) usage; exit 0 ;;
+    --lan) bind=0.0.0.0; shift ;;
+    --bind) [[ $# -ge 2 ]] || usage_error "--bind needs a value"; bind=$2; shift 2 ;;
+    --port) [[ $# -ge 2 ]] || usage_error "--port needs a value"; port=$2; shift 2 ;;
+    --socket) [[ $# -ge 2 ]] || usage_error "--socket needs a value"; socket=$2; shift 2 ;;
     --) shift; break ;;
-    -*) echo "mobile-tty: unknown option $1" >&2; usage >&2; exit 2 ;;
+    -*) usage_error "unknown option $1" ;;
     *) break ;;
   esac
 done
 
-auth=()
-if [[ -n "$password" ]]; then
-  auth=(-c "$user:$password")
-  # ttyd protects /ws as well as /, and the browser replays the header on the
-  # WebSocket upgrade — so the client needs no token of its own.
-  #
-  # Two things this is not. Over plain http the credentials are base64, not
-  # encrypted. And the pair ends up in ttyd's argv either way, so anyone with a
-  # shell on this machine can read it out of `ps` — supplying it by environment
-  # only keeps it out of your own shell history. It is a lock for your LAN, not
-  # security for the internet; that is the tunnel's job.
-fi
+# Build only when the client is older than what it is built from, so someone
+# with a prebuilt dist/ needs ttyd and dtach but not node.
+build_if_stale() {
+  local stale=""
+  # package-lock stands in for node_modules: installing a different @wterm
+  # version leaves dist/ newer than src/ but built from something else.
+  [[ -f dist/client.html ]] &&
+    stale=$(find src scripts/build.js package.json package-lock.json \
+      -newer dist/client.html -print -quit 2>/dev/null || true)
+  if [[ ! -f dist/client.html || -n "$stale" ]]; then
+    command -v node >/dev/null || die "dist/client.html is out of date and node is not installed"
+    node scripts/build.js
+  fi
+}
 
-node scripts/build.js
-# `${auth[@]+...}` rather than `${auth[@]}`: macOS ships bash 3.2, where
-# expanding an empty array under `set -u` is an unbound-variable error.
-exec ttyd -W -p "$port" ${auth[@]+"${auth[@]}"} --index dist/client.html \
-  dtach -A "$socket" -r winch -z "${@:-pi}"
+# A socket file is not a session: a master that was killed leaves one behind
+# with nothing holding it. Only `doctor` asks this question, because answering
+# it costs an lsof and getting it wrong on the hot path would be worse than the
+# problem. The name lsof prints is compared with repeated slashes collapsed,
+# because $TMPDIR ends in one.
+session_alive() {
+  [[ -S "$socket" ]] || return 1
+  lsof -U 2>/dev/null | awk -v want="$socket" '
+    function flat(p) { gsub(/\/\/+/, "/", p); return p }
+    $1 == "dtach" && flat($NF) == flat(want) { found = 1 }
+    END { exit !found }'
+}
+
+# ttyd runs its command once per connection, so letting it create the session
+# would mean no session until a browser turned up, and nothing for `attach` to
+# attach to. Creating it first makes every viewer equal.
+ensure_session() {
+  [[ -S "$socket" ]] || dtach -n "$socket" -z "$@"
+}
+
+case "$cmd" in
+  serve)
+    build_if_stale
+    ensure_session "${@:-pi}"
+    echo "serving http://$bind:$port  (session at $socket)"
+    exec ttyd -W -p "$port" -i "$bind" --index dist/client.html dtach -a "$socket" -r winch
+    ;;
+  attach)
+    ensure_session "${@:-pi}"
+    echo "Ctrl-\\ detaches and leaves it running. Ctrl-C goes through to the program."
+    exec dtach -a "$socket" -r winch
+    ;;
+  up)
+    [[ -f "$config" ]] || die "no $config — run: mobile-tty setup <hostname>"
+    build_if_stale
+    ensure_session "${@:-pi}"
+    cloudflared tunnel --config "$config" run &
+    tunnel=$!
+    echo "serving http://$bind:$port  (session at $socket)"
+    # Both in the background, then wait. Not exec, which would replace this
+    # shell and take the trap with it; and not ttyd in the foreground either,
+    # because bash defers signals until the foreground command returns — so a
+    # TERM would sit unhandled and leave the tunnel behind.
+    ttyd -W -p "$port" -i "$bind" --index dist/client.html dtach -a "$socket" -r winch &
+    server=$!
+    trap 'kill $tunnel $server 2>/dev/null' EXIT INT TERM
+    status=0
+    wait $server || status=$?
+    [[ $status -eq 0 ]] || echo "mobile-tty: the server exited ($status); stopping the tunnel too" >&2
+    exit $status
+    ;;
+  tunnel)
+    [[ -f "$config" ]] || die "no $config — run: mobile-tty setup <hostname>"
+    exec cloudflared tunnel --config "$config" run
+    ;;
+  doctor)
+    ok=0
+    say() { printf '%-13s %s\n' "$1" "$2"; }
+
+    for tool in ttyd dtach; do
+      if command -v "$tool" >/dev/null; then say "$tool" "found"
+      else say "$tool" "MISSING — brew install $tool"; ok=1
+      fi
+    done
+
+    if [[ -f dist/client.html ]]; then
+      if find src scripts/build.js package.json package-lock.json -newer dist/client.html -print -quit 2>/dev/null | grep -q .; then
+        say client "out of date, will rebuild on serve"
+      else
+        say client built
+      fi
+    else
+      say client "not built, will build on serve"
+    fi
+
+    if session_alive; then
+      say session "running at $socket"
+    elif [[ -e "$socket" ]]; then
+      rm -f "$socket"
+      say session "cleared a socket left by a dead session; serve or attach starts a new one"
+    else
+      say session "none — serve or attach starts one"
+    fi
+
+    if [[ ! -f "$config" ]]; then
+      say tunnel "not set up — mobile-tty setup <hostname>"
+    else
+      host=$(sed -n 's/^ *- hostname: *//p' "$config" | head -1)
+      # `read` returns 1 at EOF without a newline, which set -e would take as failure.
+      probe=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "https://$host/" 2>/dev/null || echo '000 ')
+      code=${probe%% *}
+      redirect=${probe#* }
+      case "$code" in
+        30*) if [[ "$redirect" == *cloudflareaccess.com* ]]; then say tunnel "$host, behind an Access login"
+             else say tunnel "$host, redirects somewhere that is not Access: $redirect"; ok=1
+             fi ;;
+        200) say tunnel "$host, ANSWERING WITH NO LOGIN IN FRONT OF IT"; ok=1 ;;
+        *) say tunnel "$host, not answering ($code) — is it running?" ;;
+      esac
+    fi
+    exit $ok
+    ;;
+esac
