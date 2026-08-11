@@ -1,8 +1,17 @@
-import { defineConfig } from '@playwright/test'
-import { phone } from './playwright.base.js'
+import { defineConfig, devices } from '@playwright/test'
+
+// WebKit at the measured device size — the same engine family the phone runs,
+// minus the keyboard, the insets and touch. Shared with the smoke config.
+export const phone = {
+  ...devices['Desktop Safari'],
+  viewport: { width: 402, height: 812 },
+  deviceScaleFactor: 3,
+  hasTouch: true,
+  isMobile: true,
+}
 
 export default defineConfig({
-  testDir: 'e2e',
+  testDir: 'tests/e2e',
   timeout: 20_000,
   expect: { timeout: 8_000 },
   fullyParallel: false,
@@ -10,7 +19,7 @@ export default defineConfig({
   reporter: process.env.CI ? 'line' : 'list',
   use: { ...phone, baseURL: 'http://127.0.0.1:7690' },
   webServer: {
-    command: 'node build.js && ttyd -W -p 7690 --index dist/client.html fixtures/fake-pi.sh',
+    command: 'node scripts/build.js && ttyd -W -p 7690 --index dist/client.html tests/fixtures/fake-pi.sh',
     url: 'http://127.0.0.1:7690',
     reuseExistingServer: false,
     stdout: 'ignore',

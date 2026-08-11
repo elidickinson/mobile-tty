@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "description": "TUI-friendly mobile web terminal",
   "scripts": {
-    "test": "node --test 'test/**/*.test.js'",
-    "build": "node build.js",
-    "dev": "node build.js --watch",
+    "test": "node --test 'tests/unit/**/*.test.js'",
+    "build": "node scripts/build.js",
+    "dev": "node scripts/build.js --watch",
     "test:e2e": "playwright test",
     "test:smoke": "playwright test -c playwright.smoke.config.js"
   },

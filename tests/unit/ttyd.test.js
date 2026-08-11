@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_PREFS, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../src/ttyd.js'
+import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_PREFS, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../../src/ttyd.js'
 
 const bytes = a => new Uint8Array(a)
 const str = u => new TextDecoder().decode(u)

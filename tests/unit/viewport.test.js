@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { deriveLayout, gridFor, KEY_BAR_H } from '../src/viewport.js'
+import { deriveLayout, gridFor, KEY_BAR_H } from '../../src/viewport.js'
 
 // Production measures the cell at runtime; this is what the device reported at
 // 13px, so the grid math can be checked against the recorded configurations.

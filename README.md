@@ -7,10 +7,10 @@ PTY. It keeps the real terminal rather than replacing it with a chat UI.
 
 ```
 npm install
-./serve.sh                          # serves on :7681, runs pi
-PORT=8080 ./serve.sh                # different port
-./serve.sh bash                     # run something else
-MTTY_SOCKET=/tmp/work.sock ./serve.sh   # a second, independent session
+./mobile-tty                             # serves on :7681, runs pi
+PORT=8080 ./mobile-tty                   # different port
+./mobile-tty bash                        # run something else
+MTTY_SOCKET=/tmp/work.sock ./mobile-tty  # a second, independent session
 ```
 
 Open `http://<your-ip>:7681/` on the phone. **Add to Home Screen** and launch it from there
@@ -56,7 +56,7 @@ the desktop window to the phone's grid avoids it entirely.
 
 ```
 npm test                # 40 unit
-npm run test:e2e        # 29 WebKit at 402x812 against fixtures/fake-pi.sh
+npm run test:e2e        # 29 WebKit at 402x812 against tests/fixtures/fake-pi.sh
 npm run test:smoke      # 3 against real pi under dtach; sends no prompts, costs no tokens
 npm run build           # dist/client.html, one self-contained file
 ```
