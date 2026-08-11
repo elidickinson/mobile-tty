@@ -61,7 +61,7 @@ const conn = new TtydConnection({
 
 // Diagnostic seam: the e2e suite and the on-device probe read the same shape.
 // Published before startup finishes so nothing has to guess when it appears.
-window.mtty = { conn, term, state, checkForNewBuild, snapshot: () => ({ ...deriveLayout(readViewport()), ...state }) }
+window.mtty = { conn, term, state, checkForNewBuild }
 
 // ---------------------------------------------------------------- layout
 
@@ -69,15 +69,14 @@ window.mtty = { conn, term, state, checkForNewBuild, snapshot: () => ({ ...deriv
 function applyLayout() {
   const snap = readViewport()
   const l = deriveLayout(snap)
-  l.snapshot = snap
   app.style.height = `${l.appHeight}px`
   app.style.transform = `translateY(${snap.offsetTop}px)`
   app.style.paddingLeft = `${snap.insetLeft}px`
   app.style.paddingRight = `${snap.insetRight}px`
-  app.style.paddingBottom = '0px'
 
   // The bar covers the home-indicator inset rather than leaving a gap under it.
-  bar.style.height = `${l.keyBarHeight}px`
+  // flex-basis alone sizes a column flex item; `height` would be a third layer
+  // saying the same thing, after the CSS var that covers the first paint.
   bar.style.flexBasis = `${l.keyBarHeight}px`
   bar.style.paddingBottom = `${l.keyBarPadBottom}px`
 

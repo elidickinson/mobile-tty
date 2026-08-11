@@ -71,7 +71,6 @@ export function deriveLayout(s) {
     keyboardHeight,
     keyboardUp,
     orientation: s.innerWidth > s.innerHeight ? 'landscape' : 'portrait',
-    standalone: s.standalone,
     appHeight,
     keyBarHeight,
     keyBarPadBottom: bottomInset,

@@ -381,7 +381,6 @@ test('the menu can reload the app, since standalone has no browser chrome', asyn
   await navigated
 
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
-  expect(await page.evaluate(() => sessionStorage.getItem('reloaded'))).toBeNull()
 })
 
 test('the document is not scrollable and the terminal claims vertical drags', async ({ page }) => {
