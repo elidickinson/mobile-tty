@@ -17,18 +17,23 @@ instead, so it works for pi.dev but equally for vim, lazygit, or anything else.
 ## Stack
 
 ```
-ttyd -W --index client.html tmux new -A -s pi
+./serve.sh          # ttyd -W --index dist/client.html dtach -A <sock> -r winch -z pi
 ```
 
-One self-contained `client.html`, developed as ES modules and bundled with esbuild — the
-build step exists for testability, since `--index` serves exactly one document.
-Cloudflare tunnel for access, reusing the pi-phone pattern. No sidecar, no fork, no server
-code.
+One self-contained `client.html` (~67 KB), developed as ES modules and bundled with
+esbuild — the build step exists for testability, since `--index` serves exactly one
+document and 404s every other path. Cloudflare tunnel for access, reusing the pi-phone
+pattern. No sidecar, no fork, no server code.
 
-Renderer: **wterm** if it holds up (DOM rendering gives native scroll, selection and find;
-a ~12KB parser keeps the bundle small), **ghostty-web** as the API-compatible fallback,
-**xterm.js** as the conservative choice. Build against the xterm.js API surface so two of
-the three stay swappable.
+**dtach, not tmux.** ttyd kills its child when the socket closes, so something must hold
+the PTY. tmux would, but it takes the outer terminal's alternate screen unconditionally,
+which leaves the client with no scrollback at all. dtach only holds the PTY. See
+[`docs/numbers.md`](docs/numbers.md) for the measurements.
+
+Renderer: **wterm** (`@wterm/dom`) — DOM rendering, so momentum scroll, selection handles
+and find come free. Its Zig VT core ships as inlined base64 WASM, which is what makes the
+single-document constraint survivable, and `write(Uint8Array)` hands raw bytes to the
+parser so UTF-8 never gets split across WebSocket messages in JS.
 
 ## v1 scope
 
@@ -40,23 +45,34 @@ the three stay swappable.
    element supplies dictation and autocorrect-off.
 5. Grid presets **and** independent pinned-grid pan/zoom. Never auto-resize. Landscape
    (108 cols) is a first-class option.
-6. Scrolling: velocity nub, discrete buttons, position indicator, follow-output toggle,
-   over the terminal's own scrollback.
+6. Scrolling: velocity nub over the terminal's own scrollback, plus a "↓ latest" button
+   when scrolled away from the live screen.
 7. Layout driven by `visualViewport`, debounced. No rubber-band, no double-tap zoom.
-8. Reconnect: keep the terminal, backoff, resize-nudge (N−1 → N) to force a repaint.
+8. Reconnect: keep the terminal, backoff, resize-nudge (N−1 → N, 120 ms apart) to force a
+   repaint.
 
 Out of scope until there is evidence: custom dictionary; `tmux -CC` and pane UI; custom
 on-screen keyboard; own server, service worker, web push (use Pushover out-of-band);
 voice/TTS, recording, multi-user; **alternate-screen support** (Claude Code, vim, htop).
 
+## Running it
+
+```
+npm install
+./serve.sh                 # PORT=7681 by default
+npm test                   # 38 unit tests
+npm run test:e2e           # 14 WebKit tests at 402x812 against fake-pi.sh
+npm run test:smoke         # 2 tests against real pi under dtach; sends no prompts
+```
+
 ## Build order
 
 1. Platform probe — done, see [`docs/numbers.md`](docs/numbers.md).
-2. Adapter seam and pure logic, with unit tests alongside.
-3. Terminal and ttyd transport against `fake-pi.sh`.
-4. Key bar, then scrolling, then pan/zoom.
-5. Reconnect.
-6. Real-pi smoke test and a device pass.
+2. Adapter seam and pure logic, with unit tests alongside — done.
+3. Terminal and ttyd transport against `fake-pi.sh` — done.
+4. Key bar, then scrolling, then pan/zoom — done.
+5. Reconnect — done.
+6. Real-pi smoke test — done. **Device pass — outstanding.**
 
 ## Testing
 
@@ -71,7 +87,7 @@ it. The device verifies the adapter; everything after it is testable without a k
 
 | Layer | What | Notes |
 |---|---|---|
-| **Unit** | ttyd frame codec; key-encoding table; **UTF-8 reassembly across WS messages**; viewport math; nub curve | UTF-8 is the sharpest real bug: pi's UI is box-drawing, and a multi-byte sequence split across two messages corrupts if each is decoded independently. Split a known string at every offset. |
+| **Unit** | ttyd frame codec; key-encoding table; viewport math; nub curve; reconnect and backoff | UTF-8 splitting is no longer a unit concern: raw bytes go straight to the VT core, so the client has nothing to reassemble. It is asserted end to end instead, by checking box-drawing renders. |
 | **Viewport fixtures** | The five measured configurations in `docs/numbers.md`, replayed as a parametrized table | Asserts the input line stays above the keyboard, the anchor holds, and insets aren't double-counted. |
 | **Playwright** (WebKit) | e2e on `ttyd --index dist/client.html ./fake-pi.sh` — rendering, key bytes on the wire, pan clamping, reconnect repaint, `characterSet === 'UTF-8'`, autocorrect attributes | Fast, deterministic, no tokens. The main suite. |
 | **Real-pi smoke** | One test launching **real pi** under tmux: renders the startup screen, input box present, survives resize 50×30 → 120×40 → 160×50 | Catches `fake-pi.sh` drift and pi version changes. Sends no prompts, so costs no tokens. Slow and mildly flaky — one test, outside the main suite. |
@@ -90,10 +106,13 @@ farm unless dictation becomes a blocker.
 
 ## Open questions
 
-- Does wterm hold up in practice, or does it fall back to ghostty-web?
-- Landscape keyboard-up grid — unmeasured.
-- Dictation through a hidden capture element — untested.
+- Everything above is verified in WebKit at 402×812. **None of it is verified on a real
+  phone yet** — the keyboard, dictation and gesture feel are exactly what the emulator
+  cannot tell us.
+- Landscape keyboard-up grid — still unmeasured.
+- Dictation through wterm's hidden textarea — untested.
 - Round-trip echo latency through a tunnel.
+- Whether `fake-pi.sh` should be replaced by real pi driven by a purpose-built extension.
 
 ## Docs
 

@@ -2,7 +2,7 @@
 
 Rationale behind the plan in the README. Measured values live in `numbers.md`.
 
-## Backend: ttyd `--index` + tmux
+## Backend: ttyd `--index` + dtach
 
 ttyd is plumbing, not a terminal: it allocates a PTY, pumps raw VT bytes over a WebSocket,
 and calls `ioctl` for SIGWINCH. The protocol is five constants (`numbers.md`), so the
@@ -18,8 +18,24 @@ anyway.
 No sidecar. The two things a static-serving sidecar would buy are both reachable from the
 client: iOS standalone mode needs only meta tags, and reconnect repaint is a resize nudge.
 
-tmux earns its place for **session persistence** only — surviving a ttyd restart, and
-detach/reattach from the desktop. It is not needed for scrolling or for repaint.
+Session persistence is not optional: ttyd spawns one process per WebSocket connection and
+kills it when the socket closes, so without a session manager every reconnect starts a
+*fresh* pi.
+
+**dtach**, not tmux. Measured: tmux 3.7b always puts the outer terminal into the alternate
+screen on attach (`\e[?1049h`), and neither `alternate-screen off`, `terminal-overrides
+',*:smcup@:rmcup@'`, nor `terminal-features ',*:-alternatescreen'` stops it. The alternate
+screen has no scrollback, so under tmux the client sees `usingAltScreen() === true` and
+`getScrollbackCount() === 0` — which destroys native scrolling, selection and find, the
+entire reason for choosing a DOM renderer. Scrolling would have to be routed back through
+tmux's own copy-mode via synthesised SGR wheel events.
+
+dtach does one thing: it holds the PTY so the program outlives the socket. It emulates no
+terminal, so pi's bytes reach the client unchanged and the alternate screen stays free.
+Measured under dtach: `alt: false`, real client scrollback, and pi survives the drop.
+
+What dtach gives up is tmux's replay buffer — reattaching yields a blank screen. The
+resize nudge covers exactly that (see Reconnect), which is why it was worth building.
 
 `tmux -CC` control mode would add a session/window/pane UI in-band, but at the cost of
 writing an iTerm2-class client that demuxes `%output` per pane. Not worth it for one
@@ -90,9 +106,11 @@ entry. Deferred; the key bar covers most of the value.
 
 ## Scrolling
 
-pi does not use the alternate screen buffer, so the terminal's own scrollback holds real
-conversation history and can simply be scrolled locally. No tmux copy-mode, no synthesised
-mouse events (pi enables no mouse reporting), no `capture-pane` reader view.
+pi does not use the alternate screen buffer, and dtach does not impose one, so the
+terminal's own scrollback holds real conversation history and can simply be scrolled
+locally. No copy-mode, no synthesised mouse events (pi enables no mouse reporting), no
+`capture-pane` reader view. This only holds because the stack keeps the alternate screen
+free — it is the reason tmux is not in it.
 
 Treat the nub as a **velocity source** with a pluggable sink. Today the sink is local
 scrollback. Alternate-screen apps — Claude Code, vim, htop — have no client scrollback and
@@ -133,9 +151,15 @@ explicit user action.
 
 ## Reconnect
 
-pi fully repaints on SIGWINCH, so a **resize nudge** (send N−1 cols, then N) forces a
-complete redraw on demand. That is a free, app-agnostic reconnect repaint needing no tmux
-keybind, no control mode, and no server-side replay buffer.
+pi repaints on SIGWINCH, so a **resize nudge** (send N−1 cols, then N) forces a redraw on
+demand. That is a free, app-agnostic reconnect repaint needing no keybind, no control mode,
+and no server-side replay buffer — which is what lets dtach replace tmux despite having no
+replay buffer of its own.
+
+**The two sizes must not land in the same tick.** Sent back to back, the app reads the
+window size only after both ioctls have applied, sees the size it already had, and does
+nothing. Measured: with no gap the reattached screen stays blank; with a 120 ms gap pi
+repaints.
 
 With it: keep the terminal object across reconnects so the stale screen stays visible
 rather than blanking, reconnect with backoff, queue input while down, and show connection

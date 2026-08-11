@@ -51,11 +51,25 @@ Claude Code enters the alternate screen only once past its trust prompt.
 Full repaint on resize means a **resize nudge (N−1 → N) forces a redraw** — a free,
 app-agnostic reconnect repaint.
 
+## Session managers (measured through the client)
+
+| Stack | Alternate screen | Client scrollback | Mouse tracking | Survives reconnect |
+|---|---|---|---|---|
+| `ttyd pi` | No | Real | none | **No** — ttyd kills the child |
+| `ttyd tmux new -A pi` | **Yes** (`\e[?1049h`) | **0** | 1002 + SGR when `mouse on` | Yes |
+| `ttyd dtach -A -r winch pi` | **No** | **Real** | none | **Yes** |
+
+tmux 3.7b takes the outer alternate screen unconditionally: `set -g alternate-screen off`,
+`terminal-overrides ',*:smcup@:rmcup@'` and `terminal-features ',*:-alternatescreen'` all
+leave `\e[?1049h` in the stream.
+
 ## Accepted constants
 
 - **Nub:** dead zone 14 px; `v = sign(d) · min(((|d|−14)/14)^1.6 · gain, 45)` px/frame;
   **gain 1.0**.
 - **Autocorrect:** 0 `insertReplacementText` events over 7 typed chars.
+- **Reconnect nudge gap:** 120 ms between N−1 and N. Zero gap does not repaint.
+- **Cell at 13px in the built client:** 7.83 × 16 pt (measured at runtime, not assumed).
 
 ## ttyd protocol
 

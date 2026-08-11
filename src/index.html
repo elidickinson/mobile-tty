@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>mobile-tty</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="pi">
+<meta name="theme-color" content="#0b0b0d">
+<style>/*%CSS%*/</style>
+</head>
+<body>
+<div id="safe-probe"></div>
+<span id="cell-probe">MMMMMMMMMM</span>
+
+<div id="app">
+  <div id="viewport">
+    <div id="stage"><div id="screen"></div></div>
+  </div>
+
+  <button id="to-bottom" hidden>↓ latest</button>
+  <div id="nub"><div id="nub-dot"></div></div>
+
+  <div id="bar"></div>
+</div>
+
+<div id="menu" hidden>
+  <div class="menu-card">
+    <div class="menu-row"><span id="menu-state">connecting…</span><button data-act="close">Done</button></div>
+    <div class="menu-head">Grid</div>
+    <div class="menu-row" id="presets"></div>
+    <div class="menu-head">Zoom <span id="scale-val"></span></div>
+    <div class="menu-row">
+      <button data-act="zoom-out">−</button>
+      <button data-act="zoom-reset">100%</button>
+      <button data-act="zoom-in">+</button>
+    </div>
+    <div class="menu-head">Nub speed <span id="gain-val"></span></div>
+    <div class="menu-row"><input id="gain" type="range" min="0.4" max="3" step="0.1"></div>
+    <div class="menu-row"><button data-act="reconnect">Reconnect</button><button data-act="clear">Clear</button></div>
+  </div>
+</div>
+
+<script type="module">/*%JS%*/</script>
+</body>
+</html>
