@@ -81,7 +81,8 @@ mechanism, not a fallback.
 
 | Fix | Effect | Cost / cons |
 |---|---|---|
-| ★ **Velocity nub / hold-and-pull widget.** Fixed thumb-reachable pad; displacement sets scroll *speed*, not distance. Pull slightly to creep a line at a time, further to fly through history; release to stop. | No travel, one-handed, works with the keyboard up, conflicts with nothing. Covers both "nudge one line" and "go back 500 lines" with one control. | Non-standard affordance to learn. Needs a sane response curve and a dead zone. |
+| ★ **Velocity nub / hold-and-pull widget.** Fixed thumb-reachable pad; displacement sets scroll *speed*, not distance. Pull slightly to creep, further to fly; release to stop. | **Validated on device.** Clean `touchmove` deltas in both directions, no interference with the page or the scroll container. Covers "nudge one line" and "go back 500 lines" with one control. | Non-standard affordance. First curve was far too sensitive. |
+| | **Tuned constants (accepted):** dead zone **14px**, `v = sign(d)·min((|d|−14)/14)^1.6 · gain, 45)` px/frame, **gain 1.0**. | Second attempt; the first (dead 10, divisor 6, cap 60) launched off the screen. |
 | ★ **Make it 2D and it also does the panning.** Horizontal displacement pans across a wide pinned grid; vertical continues past the top edge into scrollback. | Unifies scroll and pan: the viewport is a window over a tall surface — scrollback above, live screen below. No modes, no gesture conflict. | Only worth it if the pinned-grid model lands. |
 | ★ **Discrete buttons alongside** — PageUp/PageDown/Home/End, jump-to-bottom | Precise and repeatable where the nub is continuous; immune to gesture capture. Directly answers "send page up/down easily". | Trivial. |
 | ★ **Position indicator** — thin rail showing where you are and how much history remains | Continuous scrolling in a terminal is disorienting without it. | Small. |

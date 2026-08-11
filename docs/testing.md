@@ -135,9 +135,24 @@ answers the open probe questions below.
 7. `/` and `@` — do pi's menus appear and remain visible?
 8. Pan to the far corner of a 160×50 grid and back to the input box.
 
+## Probe results (2026-08-10) — `probe/`
+
+Answered:
+
+- `visualViewport` tracks the iOS keyboard correctly, **but** layout must be sized from it
+  (`height:100%` puts the UI under the keyboard).
+- The scroll container keeps working with the keyboard up; touch-drag scroll is fine.
+- The velocity nub gets clean touches with no gesture conflict. Constants settled.
+- `autocorrect="off"` holds — zero `insertReplacementText` events (small sample).
+- Rotation and standalone behave, with transients that must be debounced.
+- Reporting to the server works, so device metrics can be read without screenshots.
+
+Still open: **dictation** (never exercised), **landscape keyboard-up grid**, nub feel with
+the keyboard up, and scroll feel against a real terminal rather than a `<div>` of lines.
+
 ## Front-load the platform unknowns
 
-**Do this before writing the real client.** The highest-risk assumptions are all platform
+**Mostly done — see above.** For anything new: The highest-risk assumptions are all platform
 behaviours that could force a redesign, and a throwaway probe answers them in an hour:
 
 - What does `visualViewport` actually report on keyboard open — in Safari vs standalone?
