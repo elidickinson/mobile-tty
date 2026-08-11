@@ -32,16 +32,18 @@ resize-thrash problem.
 | Fix | Effect | Cost / cons |
 |---|---|---|
 | ★ **Scrolling must keep working with the keyboard up.** Terminal is the scroll container (not the page), no auto-snap-to-bottom while scrolled up, plus explicit page/line buttons that work regardless of gesture conflicts. | This is the actual missing capability. Everything else is secondary. | Touch scroll in xterm.js is genuinely weak ([#1007](https://github.com/xtermjs/xterm.js/issues/1007)) — more reason for a DOM renderer, where it is native. Buttons are the gesture-proof fallback. |
-| ★ **Own the composer, so pi's composer doesn't have to be on screen.** Type into your own `<textarea>` above the keyboard; the terminal region is then free to show *output*, scrolled wherever you want. | Directly fixes "the visible part isn't useful". The strongest argument for the composer by far — stronger than editability or dictation. | Two input modes to manage. |
-| ★ **Occlude + pan instead of reflow.** Keep the grid pinned; the keyboard covers part of it and you pan the viewport over the unchanged screen — *the same mechanism as the pinned-grid pan/zoom in concern 3*. | One mechanism solves both problems. The full 40-row screen still exists; you choose which slice to look at, including the live tail. | pi's own composer ends up hidden under the keyboard — fine, because of the row above. Needs the composer to be worth it. |
+| ★ **Anchor the viewport to pi's input box.** Do *not* take input over client-side. | Always correct, no modes. **Measured at 50×15: pi's bottom block costs 5–6 of 15 rows** (input box 3, cwd 1, status 1, spacer), leaving 9 for content. | Only 9 content rows while typing — panning is how you cope, not how you avoid it. |
+| ~~Own the composer client-side~~ | Would reclaim those 5–6 rows, ~67% more visible output. | **Rejected.** pi's `/command` and `@file` autocomplete fires *as you type* and renders above its input box — a client composer means pi never sees the keystrokes, so no menu, and the menu's region is exactly what you'd pan away from. Row pressure and needing the box occur in the same moment. |
+| ★ **Hidden capture element** — invisible `<textarea>` forwarding keystrokes live | Dictation and explicit autocorrect-off, at zero row cost, without breaking autocomplete. | Must forward deltas faithfully, including dictation landing as a block. |
+| ★ **Occlude + pan rather than reflow.** Keep the grid pinned; pan the viewport over the unchanged screen — *the same mechanism as the pinned-grid pan/zoom in concern 3*. | One mechanism for both. The full screen still exists; you choose the slice, and can snap back to the input box. | Anchor must default to the input box, not to an arbitrary offset. |
 | **Don't summon the keyboard by default.** Terminal doesn't take focus on tap. | Removes ~320pt for the majority of the session — you are mostly reading. | Needs an obvious summon affordance. |
 | **Standalone display mode** meta tag | ~120pt ≈ 8 rows back. | One line, no downside. |
 | **Key bar** for approve/cancel/navigate/Ctrl-C | ~50pt instead of ~320pt for the commonest actions. | Doesn't help when typing prose. |
 | **Custom on-screen keyboard** | ~150pt instead of ~320pt. | Big build. Deferred. |
 
 **Net:** the fix is viewport control, not resize policy — make the terminal scrollable at
-all times, take over the composer so the scarce rows show output, and reuse the pan/zoom
-viewport so the keyboard just shrinks the window onto an unchanged screen.
+all times, keep pi's input box anchored and visible, and reuse the pan/zoom viewport so
+the keyboard just shrinks the window onto an unchanged screen.
 
 ## Concern 2 — scrolling back, page up/down
 

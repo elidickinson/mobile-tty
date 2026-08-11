@@ -48,19 +48,45 @@ Two consequences:
 Width is untouched by any of this: ~50 cols is narrow for a dense TUI and no viewport
 trick fixes it. Only decoupling grid size from render size does (§3).
 
-## 2. Two input modes, and the composer is primary
+## 2. Input goes straight to pi; a hidden element captures it
 
-For pi.dev specifically the dominant input is **prose prompts**, not keystrokes.
-Keystrokes are the minority case (approve, cancel, navigate, Ctrl-C).
+**Superseded — an earlier version of this section made a client-side composer the primary
+input. That was wrong**, for the reason in §2.1 below.
 
-- **Composer mode (default).** A real `<textarea>` above the terminal. Enter sends,
-  Shift+Enter newlines, history persists.
-- **Direct mode (toggle).** Raw keystroke streaming for interactive TUI moments, with the
-  compact key bar. Explicit, visible, and never the surprise default.
+Input is streamed to pi as you type, and **pi's own input box stays visible**. The client
+contributes a *hidden* `<input>`/`<textarea>` that exists only to capture text properly on
+mobile — it is never displayed, and its contents are forwarded as keystrokes.
 
-This is also the answer to "permanent on-screen keyboard": the permanent thing is the
-**key bar** (modifiers, arrows, Tab/Esc, PageUp/Dn), always visible and cheap in pixels.
-The full keyboard — OS or custom — is summoned, not resident.
+- **Hidden capture element.** Buys dictation and lets autocorrect be switched off
+  explicitly. Costs zero rows, because pi's box provides the visuals.
+- **Key bar (permanent).** Modifiers, arrows, Tab/Esc, PageUp/Dn/Home/End. This is the
+  answer to "permanent on-screen keyboard" — always visible, cheap in pixels. The full
+  keyboard, OS or custom, is summoned rather than resident.
+- **Long-prompt composer (optional, explicit).** A real textarea for dictating or editing
+  a paragraph, invoked deliberately and dismissed. Not a mode you can be in by accident.
+
+### 2.1 Why the composer cannot be the default
+
+pi's autocomplete — `/commands`, `@file` references — fires **as you type**, and its menu
+renders directly above pi's input box. A client-side composer breaks both: pi never
+receives the keystrokes, so no menu appears; and the menu's screen region is exactly what
+a composer-first layout wants to pan away from.
+
+The row pressure and the need to see pi's box also arrive at the same moment, so trading
+one for the other does not work:
+
+- **Keyboard up → you are typing → you need pi's box and its menus.** Accept the ~9
+  content rows; pan up with the scroll widget for context and snap back.
+- **Keyboard down → you are reading.** Full rows, free panning, input box irrelevant.
+
+Measured at 50×15 (the keyboard-up case): pi's fixed bottom block costs **5–6 of 15 rows**
+— 3 for the input box, 1 cwd, 1 status, plus a blank spacer — leaving 9 for content.
+Reclaiming those rows would be worth ~67% more visible output, which is why this looked
+attractive; the autocomplete breakage is why it isn't.
+
+**Consequence:** anchor the viewport to pi's input box by default. Panning is how you cope
+with 9 rows, not something that lets you avoid them — which puts more weight on the scroll
+widget (§5) and less on input handling.
 
 ### Autocorrect is a liability here, not a benefit
 
@@ -69,33 +95,34 @@ names. iOS autocorrect mangles exactly those. The asymmetry is what settles it: 
 prose is something the model infers straight through, whereas a *corrected* identifier
 silently points the agent at the wrong file. Wrong-but-plausible beats misspelled.
 
-So turn it off, explicitly, on the element itself (iOS does not inherit these from
+So turn it off, explicitly, on the hidden capture element (iOS does not inherit these from
 parents):
 
 ```html
 <textarea autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off">
 ```
 
-The composer's real value was never autocorrect. It is:
+This is the main reason the hidden element exists at all: raw key capture on a canvas
+gives you no control over autocorrect, and no dictation.
 
-1. **Editability.** Touch cursor placement, selection handles, the magnifier, cut/paste.
-   Editing a long prompt in a raw terminal with arrow keys is agony; in a textarea it is
-   ordinary. This alone justifies the mode.
-2. **Review before send.** Nothing reaches the TUI until you commit it. No half-typed
-   prompts, no accidental interrupts.
-3. **Dictation** — kept, but scoped: good for prose intent ("figure out why the token
-   refresh is failing"), useless for `kubectl get pods -n kube-system`. It must land *in
-   the composer for editing*, never send directly. And it cannot work against a canvas
-   terminal capturing raw keys, so it requires the composer regardless.
+**Dictation** is the other reason, and it is scoped: good for prose intent ("figure out
+why the token refresh is failing"), useless for `kubectl get pods -n kube-system`. It
+cannot work against a terminal capturing raw keys, so it needs a real text element
+regardless of whether that element is visible.
+
+**Editability and review-before-send** — touch cursor placement, selection handles,
+cut/paste, nothing reaching pi until you commit — are real, but they now belong to the
+*optional* long-prompt composer, not to the default path. Editing in pi's own box with the
+key bar's arrows is the everyday case.
 
 **No custom dictionary or completion engine.** Harvesting identifiers from scrollback and
 ranking them is a speculative feature with real complexity; autocorrect-off plus ordinary
 typing is the simple answer, and jargon typed literally is jargon typed correctly.
 
-**Tap-to-insert** stays, because it is not a dictionary — tap a word in the output, it
-lands in the composer. Against DOM-rendered output that is a click handler plus word-
-boundary expansion; against a canvas it would mean glyph hit-testing, which is another
-point for wterm in §6. If it turns out to be fiddly, cut it; nothing depends on it.
+**Tap-to-insert** stays, because it is not a dictionary — tap a word in the output and it
+is typed into pi's input box. Against DOM-rendered output that is a click handler plus
+word-boundary expansion; against a canvas it would mean glyph hit-testing, which is
+another point for wterm in §6. If it turns out fiddly, cut it; nothing depends on it.
 
 ## 3. Reflow and zoom are different operations; expose both
 
@@ -116,9 +143,10 @@ Phones lock, switch networks, and evict background tabs constantly. Coming back 
 or dead terminal is the failure that makes people abandon a tool — it outranks every
 feature in this document.
 
-Requirements: auto-reconnect with backoff, a **server-side output ring buffer replayed on
-reconnect**, input queued while disconnected, and a visible but non-intrusive connection
-state. Mosh solved this in 2012; no web terminal has copied it. tmux gets it for free via
+Requirements: auto-reconnect with backoff, a **resize nudge (N−1 → N) to force a full
+repaint** — measured to work, since pi repaints on SIGWINCH — input queued while
+disconnected, and a visible but non-intrusive connection state. A server-side ring buffer
+is the heavier alternative and is not needed here. tmux also gets a redraw for free via
 redraw-on-attach, which is why every mobile project in the survey leans on tmux.
 
 ## 5. Smaller things that are already solved — just implement them
