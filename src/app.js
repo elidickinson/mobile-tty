@@ -211,17 +211,25 @@ const BAR = [
   { label: '↑', key: 'Up', repeat: true },
   { label: '→', key: 'Right', repeat: true },
   { label: '⌨', name: 'keyboard', act: () => toggleKeyboard() },
-  { label: '≡', name: 'menu', act: () => { showDiagnostics(); menu.hidden = false } },
+  { label: '≡', name: 'menu', act: openMenu },
 ]
+
+const terminalInput = () => screen.querySelector('textarea')
 
 /**
  * Summon or dismiss the software keyboard without having to find something to
  * tap. iOS only opens it from inside a user gesture, which a pointerdown is.
  */
 function toggleKeyboard() {
-  const input = screen.querySelector('textarea')
-  if (document.activeElement === input) input.blur()
+  if (document.activeElement === terminalInput()) terminalInput().blur()
   else term.focus()
+}
+
+/** The keyboard would cover most of the menu, so it goes away first. */
+function openMenu() {
+  terminalInput().blur()
+  showDiagnostics()
+  menu.hidden = false
 }
 
 /**

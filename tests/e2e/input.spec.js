@@ -137,3 +137,16 @@ test('backspace is on the bar and repeats when held', async ({ page }) => {
   await page.mouse.up()
   await expect(page.locator('#screen')).not.toContainText('> abcde')
 })
+
+test('opening the menu puts the keyboard away', async ({ page }) => {
+  await ready(page)
+  const focused = () => page.evaluate(() => document.activeElement === document.querySelector('#screen textarea'))
+  await page.evaluate(() => document.querySelector('#screen textarea').blur())
+  await page.getByRole('button', { name: 'keyboard' }).tap()
+  expect(await focused()).toBe(true)
+
+  // It would otherwise cover most of what it just opened.
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await expect(page.locator('#menu')).toBeVisible()
+  expect(await focused()).toBe(false)
+})
