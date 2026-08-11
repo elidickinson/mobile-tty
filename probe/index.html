@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -20,7 +21,11 @@
   #scroller { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
     background:color-mix(in srgb, var(--fg) 4%, transparent); }
   #scroller div { padding:1px 8px; }
-  #log { flex:0 0 26%; overflow-y:auto; border-top:1px solid var(--dim); padding:4px 8px; color:var(--dim); }
+  #echo { flex:0 0 auto; padding:6px 8px; border-top:2px solid var(--hi); min-height:2.2em;
+    word-break:break-all; background:color-mix(in srgb, var(--hi) 10%, transparent); }
+  #caret { animation:blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity:0 } }
+  #log { flex:0 0 22%; overflow-y:auto; border-top:1px solid var(--dim); padding:4px 8px; color:var(--dim); }
   #bar { flex:0 0 auto; display:flex; gap:6px; padding:6px 8px; border-top:1px solid var(--dim); }
   button { flex:1; padding:10px 4px; font:inherit; background:transparent; color:var(--fg);
     border:1px solid var(--dim); border-radius:6px; }
@@ -33,6 +38,7 @@
 
 <div id="stats"></div>
 <div id="scroller"></div>
+<div id="echo"><span id="echotxt"></span><span id="caret">▊</span></div>
 <div id="log"></div>
 <div id="bar">
   <button id="kb">focus hidden input (raise keyboard)</button>
@@ -120,26 +126,54 @@ cap.addEventListener('beforeinput', e => {
   const warn = e.inputType === 'insertReplacementText';
   log(`${warn ? '<b class="w">AUTOCORRECT</b> ' : ''}beforeinput type=<b>${e.inputType}</b> data=${JSON.stringify(e.data)}`);
 });
-cap.addEventListener('input', e => log(`input type=${e.inputType} value=${JSON.stringify(cap.value.slice(-40))}`));
+cap.addEventListener('input', e => {
+  $('#echotxt').textContent = cap.value.slice(-160);
+  log(`input type=${e.inputType} len=${cap.value.length}`);
+});
 cap.addEventListener('focus', () => log('hidden textarea FOCUS'));
 cap.addEventListener('blur', () => log('hidden textarea BLUR'));
 
 // --- fixed nub: does it get touches without the page/scroller moving? ------
 const nub = $('#nub');
-let origin = null, moves = 0;
+const DEAD = 10, MAXV = 60;           // px of slack, px/frame ceiling
+let originY = null, dy = 0, moves = 0, raf = 0;
+
+// Displacement sets scroll SPEED, not distance. Quadratic-ish so slow creep and
+// fast travel are both controllable from one small pad.
+const velocity = d => {
+  const m = Math.abs(d) - DEAD;
+  if (m <= 0) return 0;
+  return Math.sign(d) * Math.min(Math.pow(m / 6, 1.5), MAXV);
+};
+
+function tick() {
+  const v = velocity(dy);
+  if (v) scroller.scrollTop += v;
+  nub.innerHTML = `dy ${dy}<br>${v ? (v > 0 ? '▼' : '▲') + Math.abs(Math.round(v)) : '·'}`;
+  raf = requestAnimationFrame(tick);
+}
+
 nub.addEventListener('touchstart', e => {
   e.preventDefault();
-  origin = e.touches[0]; moves = 0;
-  log('nub touchstart (preventDefault)');
+  originY = e.touches[0].clientY; dy = 0; moves = 0;
+  if (!raf) raf = requestAnimationFrame(tick);
+  log('nub touchstart');
 }, { passive: false });
+
 nub.addEventListener('touchmove', e => {
   e.preventDefault();
-  const dy = Math.round(e.touches[0].clientY - origin.clientY);
-  const dx = Math.round(e.touches[0].clientX - origin.clientX);
-  nub.innerHTML = `dx ${dx}<br>dy ${dy}`;
-  if (++moves % 8 === 0) log(`nub move dx=${dx} dy=${dy}`);
+  dy = Math.round(e.touches[0].clientY - originY);
+  if (++moves % 12 === 0) log(`nub dy=${dy} v=${velocity(dy).toFixed(1)}`);
 }, { passive: false });
-nub.addEventListener('touchend', e => { e.preventDefault(); log(`nub touchend after ${moves} moves`); nub.innerHTML = 'nub<br>drag me'; }, { passive: false });
+
+const nubEnd = e => {
+  e.preventDefault();
+  cancelAnimationFrame(raf); raf = 0; dy = 0;
+  nub.innerHTML = 'nub<br>drag me';
+  log(`nub end after ${moves} moves`);
+};
+nub.addEventListener('touchend', nubEnd, { passive: false });
+nub.addEventListener('touchcancel', nubEnd, { passive: false });
 
 log(`start standalone=${standalone} ua=${navigator.userAgent.slice(0, 60)}`);
 render();
