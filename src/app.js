@@ -74,6 +74,7 @@ function applyLayout() {
   toBottom.style.bottom = `${l.keyBarHeight + 10}px`
 
   sizeScreen()
+  checkChromeVisible()
 }
 
 /**
@@ -212,23 +213,54 @@ function bindRepeat(btn, fire, repeat) {
 
 // ---------------------------------------------------------------- menu
 
+/**
+ * A three-finger tap opens the menu from anywhere. The menu button lives in the
+ * key bar, so if the bar itself is mislaid there is otherwise no way to reach
+ * the diagnostics that would explain why. Three fingers cannot happen by
+ * accident while typing or scrolling.
+ */
+function bindEscapeHatch() {
+  document.addEventListener('touchstart', e => {
+    if (e.touches.length !== 3) return
+    showDiagnostics()
+    menu.hidden = false
+  }, { passive: true })
+}
+
 /** On-device readout. The emulator cannot report insets or a real keyboard. */
-function showDiagnostics() {
+function diagnosticText() {
   const s = readViewport()
   const l = deriveLayout(s)
   const b = term.bridge
-  $('diag').textContent = [
+  const sb = b ? `${b.getScrollbackCount()} rows` : 'no core'
+  return [
     `build    ${BUILD_ID}   standalone ${s.standalone}`,
     `inner    ${s.innerWidth}x${s.innerHeight}   visual ${Math.round(s.visualWidth)}x${Math.round(s.visualHeight)} @${s.offsetTop}`,
     `insets   t${s.insetTop} r${s.insetRight} b${s.insetBottom} l${s.insetLeft}`,
     `keyboard ${l.keyboardHeight} (up ${l.keyboardUp})   ${l.orientation}`,
-    `bar      ${l.keyBarHeight} (pad ${l.keyBarPadBottom})   barTop ${Math.round(bar.getBoundingClientRect().top)}`,
+    `bar      ${l.keyBarHeight} (pad ${l.keyBarPadBottom})  rect ${JSON.stringify(bar.getBoundingClientRect().toJSON().top)}..${Math.round(bar.getBoundingClientRect().bottom)}`,
+    `app      ${Math.round(app.getBoundingClientRect().top)}..${Math.round(app.getBoundingClientRect().bottom)}  screen ${window.screen.width}x${window.screen.height}`,
     `grid     ${state.cols}x${state.rows} cell ${state.cell.width.toFixed(2)}x${state.cell.height} scale ${state.scale}`,
     `term     ${Math.round(l.terminal.width)}x${Math.round(l.terminal.height)}  stable ${Math.round(l.stableHeight)}`,
     `scroll   top ${screen.scrollTop} of ${screen.scrollHeight} in ${screen.clientHeight}`,
-    `sb       ${b.getScrollbackCount()} rows   domRows ${screen.querySelectorAll('.term-row').length}`,
+    `sb       ${sb}   domRows ${screen.querySelectorAll('.term-row').length}`,
     `overflow ${getComputedStyle(screen).overflowY}   class ${screen.className}`,
   ].join('\n')
+}
+
+function showDiagnostics() { $('diag').textContent = diagnosticText() }
+
+/**
+ * If the key bar is not on screen there is no way to open the menu, and no way
+ * to find out why. Say so where nothing can cover it.
+ */
+function checkChromeVisible() {
+  const overlay = $('diag-overlay')
+  const visualH = window.visualViewport.height
+  const lost = bar.getBoundingClientRect().bottom > visualH + 1 || bar.getBoundingClientRect().height < 1
+  if (!lost) { overlay.hidden = true; return }
+  overlay.textContent = `KEY BAR OFF SCREEN — tap to dismiss\n${diagnosticText()}`
+  overlay.hidden = false
 }
 
 function buildMenu() {
@@ -286,6 +318,8 @@ async function main() {
 
   buildBar()
   buildMenu()
+  bindEscapeHatch()
+  $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })
   setScale(1)
 
   await term.init()

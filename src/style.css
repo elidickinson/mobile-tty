@@ -133,6 +133,22 @@ html, body {
    invisible overlay would still swallow every tap. */
 [hidden] { display: none !important; }
 
+/* Anchored to the top, because it exists to explain a broken bottom. */
+#diag-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 0;
+  padding: 8px;
+  background: #2b1416;
+  border-bottom: 1px solid #7a2b32;
+  color: #e8c8cc;
+  font: 11px/1.45 var(--font);
+  white-space: pre-wrap;
+}
+
 #menu {
   position: fixed;
   inset: 0;

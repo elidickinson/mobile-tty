@@ -331,3 +331,34 @@ test('the document cannot be panned — the drag must reach the terminal', async
   expect(m.screenTouch).toBe('pan-y')
   expect(m.docScrollable).toBeLessThanOrEqual(0)
 })
+
+test('a three-finger tap opens the menu even if the key bar is lost', async ({ page }) => {
+  await ready(page)
+  await expect(page.locator('#menu')).toBeHidden()
+
+  // WebKit has no Touch constructor, so hand the real handler the shape it reads.
+  await page.evaluate(() => {
+    const e = new Event('touchstart', { bubbles: true })
+    Object.defineProperty(e, 'touches', { value: [0, 1, 2] })
+    document.dispatchEvent(e)
+  })
+
+  await expect(page.locator('#menu')).toBeVisible()
+  await expect(page.locator('#diag')).toContainText('insets')
+})
+
+test('losing the key bar off screen reports itself at the top', async ({ page }) => {
+  await ready(page)
+  await expect(page.locator('#diag-overlay')).toBeHidden()
+
+  // Force the failure the device is showing. It has to be something the next
+  // layout pass cannot quietly undo, or the check never sees it.
+  await page.addStyleTag({ content: '#bar { flex: 0 0 0 !important; height: 0 !important; border: 0 !important; padding: 0 !important; overflow: hidden !important; }' })
+  await page.evaluate(() => window.dispatchEvent(new Event('orientationchange')))
+  await expect(page.locator('#diag-overlay')).toBeVisible()
+  await expect(page.locator('#diag-overlay')).toContainText('KEY BAR OFF SCREEN')
+  await expect(page.locator('#diag-overlay')).toContainText('insets')
+
+  await page.locator('#diag-overlay').tap()
+  await expect(page.locator('#diag-overlay')).toBeHidden()
+})
