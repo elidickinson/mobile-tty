@@ -29,6 +29,13 @@ test('renders the TUI with box drawing intact', async ({ page }) => {
   expect(text).not.toContain('â')
 })
 
+test('the repaint nudge does not leave its own redraws in the scrollback', async ({ page }) => {
+  await ready(page)
+  // Two redraws land on every attach; on a fresh page neither is history.
+  await expect.poll(() => scrollbackCount(page), { timeout: 6_000 }).toBe(0)
+  await expect(page.locator('#to-bottom')).toBeHidden()
+})
+
 test('the PTY grid matches what the client asked for', async ({ page }) => {
   await ready(page)
   const rows = await page.evaluate(() => document.querySelectorAll('#screen .term-row:not(.term-scrollback-row)').length)
@@ -170,6 +177,51 @@ test('the paging keys scroll the view, since pi does not page itself', async ({ 
   expect(await scrollTop(page)).toBeGreaterThan(up)
 })
 
+test('output that redraws the bottom block does not shake the view loose', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+  await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
+
+  // pi rewrites its whole bottom block as you type; the fixture does the same.
+  const ta = page.locator('#screen textarea')
+  for (const word of ['one', 'two', 'three']) {
+    await ta.pressSequentially(word)
+    await ta.press('Enter')
+    await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
+  }
+  await expect(page.locator('#to-bottom')).toBeHidden()
+})
+
+test('typing jumps back to the live screen', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+
+  await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
+  await expect(page.locator('#to-bottom')).toBeVisible()
+
+  // Reading history is one mode, typing is another; a keystroke means you want
+  // the input box back.
+  await page.locator('#screen textarea').pressSequentially('x')
+  await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
+})
+
+test('server output while reading history does not yank the view down', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+
+  await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
+  await expect(page.locator('#to-bottom')).toBeVisible()
+  const parked = await scrollTop(page)
+
+  // Straight down the write path, so it is output arriving rather than a
+  // keystroke — pi finishing a long answer while you read back over an earlier one.
+  await page.evaluate(() => window.mtty.term.write('a line from the server\r\n'))
+  await page.waitForTimeout(500)
+
+  expect(await scrollTop(page)).toBe(parked)
+  await expect(page.locator('#to-bottom')).toBeVisible()
+})
+
 test('scrolling up offers a way back to the live screen', async ({ page }) => {
   await ready(page)
   await fillScrollback(page)
@@ -282,19 +334,24 @@ test('the key bar covers the home-indicator inset, leaving no gap beneath it', a
   expect(m.btnBottom).toBeLessThanOrEqual(m.appBottom - 33)   // keys clear the indicator
   expect(m.btnHeight).toBeGreaterThan(20)
 })
-test('the client reloads itself when the server serves a newer build', async ({ page }) => {
+test('a current build does not reload, and a newer one is fetched past the cache', async ({ page }) => {
   await ready(page)
-  const shipped = await page.evaluate(() => document.querySelector('meta[name=build]').content)
-  expect(shipped).toMatch(/^[0-9a-z]+$/)
+  expect(await page.evaluate(() => document.querySelector('meta[name=build]').content)).toMatch(/^[0-9a-z]+$/)
 
-  // Same build served: it must not reload, or a stale cache becomes a loop.
-  const reloads = []
-  page.on('framenavigated', f => reloads.push(f.url()))
-  await page.evaluate(() => window.mtty && null)
-  await page.waitForTimeout(1000)
-  expect(reloads).toHaveLength(0)
+  // Same build served: it must sit still, or a stale cache becomes a loop.
+  await page.evaluate(() => window.mtty.checkForNewBuild())
+  await page.waitForTimeout(500)
+  expect(new URL(page.url()).search).toBe('')
+
+  // Newer build served: go to a URL the cache cannot answer from. `location.reload()`
+  // is routinely handed the same stale document, which is why this is a navigation.
+  await page.route(page.url(), route =>
+    route.fulfill({ contentType: 'text/html', body: '<meta name="build" content="zzz9">' }))
+  await Promise.all([
+    page.waitForURL(/\?b=zzz9$/),
+    page.evaluate(() => window.mtty.checkForNewBuild()),
+  ])
 })
-
 test('the menu can reload the app, since standalone has no browser chrome', async ({ page }) => {
   await ready(page)
   await page.getByRole('button', { name: 'menu' }).tap()

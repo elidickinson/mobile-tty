@@ -39,7 +39,7 @@ const term = new WTerm(screen, {
   rows: state.rows,
   autoResize: false,
   cursorBlink: true,
-  onData: data => conn.send(data),
+  onData: data => { typedYet = true; conn.send(data) },
 })
 
 const conn = new TtydConnection({
@@ -48,12 +48,29 @@ const conn = new TtydConnection({
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => term.write(bytes),   // raw bytes: the VT core reassembles UTF-8
   onTitle: title => { document.title = title },
-  onState: s => { $('menu-state').textContent = `${s} · ${BUILD_ID}` },
+  onState: s => {
+    $('menu-state').textContent = `${s} · ${BUILD_ID}`
+    if (s === 'connected') dropAttachNoise()
+  },
 })
+
+// The repaint nudge costs two redraws — N-1 then N — and the first scrolls off
+// into scrollback. On the first attach of a page that is all the scrollback
+// there is, so it is dropped once the redraws have landed. Later reconnects keep
+// theirs: by then it is real history.
+let firstAttach = true
+let typedYet = false
+function dropAttachNoise() {
+  if (!firstAttach) return
+  firstAttach = false
+  // Anything typed in the meantime produces scrollback worth keeping, so the
+  // moment the session is in use this stops being safe to do.
+  setTimeout(() => { if (!typedYet) term.write('\x1b[3J') }, 600)
+}
 
 // Diagnostic seam: the e2e suite and the on-device probe read the same shape.
 // Published before startup finishes so nothing has to guess when it appears.
-window.mtty = { conn, term, state, snapshot: () => ({ ...deriveLayout(readViewport()), ...state }) }
+window.mtty = { conn, term, state, checkForNewBuild, snapshot: () => ({ ...deriveLayout(readViewport()), ...state }) }
 
 // ---------------------------------------------------------------- layout
 
@@ -173,7 +190,13 @@ const BAR = [
 
 const pageBy = direction => { screen.scrollTop += direction * screen.clientHeight * 0.9 }
 
+// wterm owns sticking to the bottom: it checks the position before each write,
+// re-pins after rendering, and jumps back on a keystroke. A second mechanism
+// here only fought it for the same property.
+const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < 8
+
 function sendKey(name) {
+  typedYet = true
   const { ctrl, alt, shift } = state.mods
   conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp: term.bridge.cursorKeysApp() }))
   clearMods()
@@ -283,11 +306,7 @@ function buildMenu() {
     // Standalone has no browser chrome, so this is the only way to pick up a
     // new build by hand. Re-fetch past the cache first, or the reload just
     // reinstates the copy iOS is already holding.
-    reload: async () => {
-      sessionStorage.removeItem('reloaded')
-      await fetch(location.pathname, { cache: 'reload' })
-      location.reload()
-    },
+    reload: () => location.replace(`${location.pathname}?b=${Date.now().toString(36)}`),
   }
   menu.addEventListener('click', e => {
     const target = e.target.closest('[data-act]')
@@ -303,9 +322,11 @@ async function checkForNewBuild() {
   // rejection here would paint the error panel over a working terminal.
   const html = await fetch(location.pathname, { cache: 'reload' }).then(r => r.text()).catch(() => '')
   const served = buildIdOf(new DOMParser().parseFromString(html, 'text/html'))
-  if (!served || served === BUILD_ID || sessionStorage.getItem('reloaded') === served) return
-  sessionStorage.setItem('reloaded', served)   // one reload per served build, never a loop
-  location.reload()
+  if (!served || served === BUILD_ID) return
+  // Go to a URL iOS has no cached copy of. `location.reload()` is routinely
+  // served the same stale document, and the id in the query means the page that
+  // arrives already matches — so this cannot loop and needs no guard.
+  location.replace(`${location.pathname}?b=${served}`)
 }
 
 async function main() {
@@ -323,10 +344,7 @@ async function main() {
 
   await term.init()
 
-  screen.addEventListener('scroll', () => {
-    const atBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight < 8
-    toBottom.hidden = atBottom
-  })
+  screen.addEventListener('scroll', () => { toBottom.hidden = atBottom() })
   toBottom.addEventListener('click', () => { screen.scrollTop = screen.scrollHeight })
 
   const first = applyLayout()
