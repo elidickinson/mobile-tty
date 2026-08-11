@@ -79,8 +79,6 @@ export function deriveLayout(s) {
     // less of it — occlude and pan, rather than reflowing pi mid-sentence.
     stableHeight: s.innerHeight - s.insetBottom - KEY_BAR_H,
     terminal: {
-      top: 0,
-      left: s.insetLeft,
       width,
       height: appHeight - keyBarHeight,
     },

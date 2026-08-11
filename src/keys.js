@@ -1,4 +1,10 @@
-// Key-bar names to the bytes a terminal expects.
+// Key names to the bytes a terminal expects.
+//
+// A complete table on purpose, not a mirror of the key bar: the bar currently
+// reaches only the arrows, Tab and Escape. The rest are here because the
+// encodings are the part worth getting right — Home/End are \e[H and \e[F
+// rather than \e[1~ and \e[4~, and Delete is \e[3~ rather than \x7f. Keys
+// typed on the software keyboard never come through here; wterm encodes those.
 
 const ESC = '\x1b'
 

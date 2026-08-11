@@ -56,7 +56,6 @@ test('the top inset is already excluded from the viewport, so subtracting it wou
   // Standalone reports a 62pt top inset but its viewport is already 98pt taller
   // than Safari's. Honouring the inset again would erase that win.
   assert.ok(standalone.terminal.height > safari.terminal.height)
-  assert.equal(standalone.terminal.top, 0)
 })
 
 test('with the keyboard down the key bar covers the bottom inset', () => {
