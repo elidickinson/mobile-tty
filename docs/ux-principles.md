@@ -27,7 +27,8 @@ consumed before the terminal gets any.
 | Safari, keyboard **down** | 50 × **47** | measured |
 | Safari, keyboard **up** | 50 × **26** | measured — the working case |
 | Standalone, keyboard **down** | 50 × **54** | measured (`innerHeight` 812) |
-| Standalone, keyboard **up** | 50 × ~33 | projected from 812 − 310; still unmeasured |
+| Standalone, keyboard **up** | 50 × **33** | measured (kb 314) — **the real working case** |
+| Standalone **landscape**, keyboard down | **108** × 26 | measured — cols more than double |
 | Standalone + compact keyboard (~150pt) | 50 × ~44 | projected |
 | At 11px instead of 13px, keyboard up | 59 × 31 | measured |
 
@@ -36,13 +37,31 @@ recovering only 98 of Safari's 160pt, because safe-area insets (**62 top / 34 bo
 appear once you leave Safari. Those insets are reported as 0/0 in Safari and only become
 real in standalone — so layout must handle them, and they must not be double-counted.
 
-Realistic ladder for the working case: **26 rows in Safari → ~33 standalone.** Reaching
-the low 40s needs the compact custom keyboard, which is the deferred big build. Standalone
-remains the cheapest win, but it is a 27% improvement, not a transformation.
+Realistic ladder for the working case: **26 rows in Safari → 33 standalone** (confirmed).
+Reaching the low 40s needs the compact custom keyboard, the deferred big build. Standalone
+is the cheapest win, but a 27% improvement rather than a transformation.
 
-**Keyboard height is not a constant.** Observed 310pt and 237pt in the same session
-(possibly with/without the predictive bar, or captured mid-animation). Never hardcode it —
-always derive from `visualViewport`, and expect intermediate values during the animation.
+### Landscape is a free answer to the width problem
+
+| Orientation | Keyboard | Grid |
+|---|---|---|
+| Portrait | down | 50 × 54 |
+| Portrait | **up** | 50 × 33 |
+| Landscape | down | **108** × 26 |
+| Landscape | up | 108 × ~13 (unmeasured) |
+
+Landscape trades rows for columns almost exactly, and **108 cols is near-desktop** — more
+than double portrait's 50. Since ~50 cols is what wrecks a dense TUI layout, rotating is a
+legitimate and completely free "resize" strategy, and should be treated as a first-class
+option rather than an afterthought. It pairs naturally with a pinned grid: rotate for
+width, pan for the rest.
+
+Safe-area insets **differ by orientation**: 62/34 portrait, 0/20 landscape.
+
+**Nothing here is a constant; debounce and re-measure.** Keyboard observed at 310, 314 and
+237pt; `innerHeight` observed at 874, 812 and 402 during rotation, settling ~1s later.
+Never hardcode, always derive from `visualViewport`, and expect transient intermediate
+values mid-animation.
 
 `visualViewport.offsetTop` stayed 0 throughout.
 
