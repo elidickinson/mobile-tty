@@ -51,12 +51,14 @@ test('output frames arrive as raw bytes', () => {
 })
 
 test('input typed while disconnected is queued and flushed on reconnect', () => {
-  const { c, sock, timers } = setup()
+  const { c, sock, timers, flush } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
+  flush()                            // drain the attach nudge
   sock().drop()
+  const before = sock().sent.length
   c.send('hello')
-  assert.equal(sock().sent.length, 1, 'nothing goes out on a dead socket')
+  assert.equal(sock().sent.length, before, 'nothing goes out on a dead socket')
 
   timers.shift().fn()                // the scheduled retry
   sock().open()
@@ -69,6 +71,7 @@ test('reconnect nudges the size N-1 then N to force a full repaint', () => {
   const { c, sock, timers, flush } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
+  flush()                            // drain the attach nudge
   sock().drop()
   timers.shift().fn()
   sock().open()
@@ -83,11 +86,28 @@ test('reconnect nudges the size N-1 then N to force a full repaint', () => {
   assert.deepEqual(resizes, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
 })
 
-test('the first connection does not nudge — there is nothing stale to repaint', () => {
-  const { c, sock } = setup()
+test('even a first connection nudges — the session outlives the page', () => {
+  // dtach keeps the program running with no replay buffer, so a freshly loaded
+  // client can attach to an already-running pi and get a blank screen.
+  const { c, sock, flush } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
-  assert.equal(sock().sent.map(text).filter(b => b[0] === '1').length, 0)
+  flush()
+  const resizes = sock().sent.map(text).filter(b => b[0] === '1').map(b => JSON.parse(b.slice(1)))
+  assert.deepEqual(resizes, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
+})
+
+test('a resize while disconnected is not queued — it would collapse the nudge gap', () => {
+  const { c, sock, flush } = setup()
+  c.resize(50, 30)                   // the initial fit, before the socket exists
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+
+  const immediate = sock().sent.map(text).filter(b => b[0] === '1')
+  assert.equal(immediate.length, 1, 'only the first half of the nudge lands in this tick')
+  flush()
+  const resizes = sock().sent.map(text).filter(b => b[0] === '1').map(b => JSON.parse(b.slice(1)))
+  assert.deepEqual(resizes, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
 })
 
 test('backoff grows on repeated failure and resets once connected', () => {
@@ -96,6 +116,7 @@ test('backoff grows on repeated failure and resets once connected', () => {
   const delays = []
   c.connect({ cols: 50, rows: 30 })
   sock().open()
+  flush()                            // drain the attach nudge
   sock().drop(); delays.push(timers[0].ms); retry()
   sock().drop(); delays.push(timers[0].ms); retry()
   sock().drop(); delays.push(timers[0].ms); retry()
@@ -116,9 +137,10 @@ test('state changes are reported for the connection indicator', () => {
 })
 
 test('resize sends the new size and remembers it for the next reconnect', () => {
-  const { c, sock, timers } = setup()
+  const { c, sock, timers, flush } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
+  flush()                            // drain the attach nudge
   c.resize(120, 40)
   assert.deepEqual(JSON.parse(text(sock().sent.at(-1)).slice(1)), { columns: 120, rows: 40 })
 

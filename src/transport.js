@@ -27,7 +27,6 @@ export class TtydConnection {
     this.ws = null
     this.queue = []
     this.backoff = BACKOFF_MIN
-    this.everConnected = false
   }
 
   get connected() { return this.ws?.readyState === 1 }
@@ -45,18 +44,19 @@ export class TtydConnection {
     this.ws = ws
 
     ws.onopen = () => {
-      // Reattaching gives a blank screen with no replay, so the size is nudged
-      // to make the app repaint. The two sizes need a gap between them: sent
-      // back to back the app can read the window size only after both ioctls
-      // and see no change at all.
+      // Attaching gives a blank screen with no replay, so the size is nudged to
+      // make the app repaint. This runs on *every* attach, not just after a
+      // drop: dtach sessions outlive the page, so even a first connection from
+      // a freshly loaded client can be landing on an already-running program.
+      //
+      // The two sizes need a gap between them. Sent back to back, the app reads
+      // the window size only after both ioctls have applied, sees the size it
+      // already had, and does nothing.
       ws.send(encodeHandshake(this.token, this.cols, this.rows))
-      if (this.everConnected) {
-        ws.send(encodeResize(this.cols - 1, this.rows))
-        this.schedule(() => {
-          if (this.ws === ws && ws.readyState === 1) ws.send(encodeResize(this.cols, this.rows))
-        }, NUDGE_GAP)
-      }
-      this.everConnected = true
+      ws.send(encodeResize(this.cols - 1, this.rows))
+      this.schedule(() => {
+        if (this.ws === ws && ws.readyState === 1) ws.send(encodeResize(this.cols, this.rows))
+      }, NUDGE_GAP)
       this.backoff = BACKOFF_MIN
       for (const frame of this.queue.splice(0)) ws.send(frame)
       this.onState?.('connected')
@@ -75,17 +75,19 @@ export class TtydConnection {
     }
   }
 
-  _write(frame) {
+  send(text) {
+    const frame = encodeInput(text)
     if (this.connected) this.ws.send(frame)
     else this.queue.push(frame)
   }
-
-  send(text) { this._write(encodeInput(text)) }
 
   resize(cols, rows) {
     if (cols === this.cols && rows === this.rows) return
     this.cols = cols
     this.rows = rows
-    this._write(encodeResize(cols, rows))
+    // Nothing to send while disconnected: the next attach carries the size in
+    // its handshake. Queuing it would also flush in the same tick as the
+    // repaint nudge and collapse the gap the nudge depends on.
+    if (this.connected) this.ws.send(encodeResize(cols, rows))
   }
 }

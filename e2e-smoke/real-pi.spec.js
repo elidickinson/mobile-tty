@@ -44,3 +44,15 @@ test('pi keeps a real scrollback — dtach leaves the alternate screen alone', a
   await expect.poll(() => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount()))
     .toBeGreaterThan(0)
 })
+
+test('a fresh page attaching to a running session gets a painted screen', async ({ page }) => {
+  // dtach has no replay buffer, so this is only ever correct because every
+  // attach nudges the size. It cannot be caught against a program the test
+  // itself just started.
+  await page.goto('/')
+  await expect(page.locator('#screen')).toContainText('(auto)', { timeout: 60_000 })
+
+  await page.reload()
+  await expect(page.locator('#screen')).toContainText('(auto)')
+  await expect(page.locator('#screen')).toContainText('mobile-tty')
+})
