@@ -1,0 +1,147 @@
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>mobile-tty probe</title>
+
+<style>
+  :root { color-scheme: light dark; --fg:#111; --bg:#fff; --dim:#666; --hi:#0a7; --warn:#c40;
+    --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px); }
+  @media (prefers-color-scheme: dark) { :root { --fg:#eee; --bg:#111; --dim:#999; } }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--fg);
+    font:13px/1.35 ui-monospace, Menlo, monospace; -webkit-text-size-adjust:100%; }
+  body { display:flex; flex-direction:column;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  #stats { flex:0 0 auto; padding:6px 8px; border-bottom:1px solid var(--dim); }
+  #stats b { color:var(--hi); font-weight:600; }
+  #stats .w { color:var(--warn); }
+  .row { display:flex; justify-content:space-between; gap:8px; }
+  .row span:first-child { color:var(--dim); }
+  #scroller { flex:1 1 auto; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    background:color-mix(in srgb, var(--fg) 4%, transparent); }
+  #scroller div { padding:1px 8px; }
+  #log { flex:0 0 26%; overflow-y:auto; border-top:1px solid var(--dim); padding:4px 8px; color:var(--dim); }
+  #bar { flex:0 0 auto; display:flex; gap:6px; padding:6px 8px; border-top:1px solid var(--dim); }
+  button { flex:1; padding:10px 4px; font:inherit; background:transparent; color:var(--fg);
+    border:1px solid var(--dim); border-radius:6px; }
+  #nub { position:fixed; right:10px; bottom:calc(90px + env(safe-area-inset-bottom));
+    width:74px; height:74px; border-radius:50%; border:2px solid var(--hi);
+    background:color-mix(in srgb, var(--hi) 18%, transparent); touch-action:none;
+    display:flex; align-items:center; justify-content:center; font-size:11px; text-align:center; }
+  #cap { position:absolute; left:-9999px; top:0; width:200px; height:40px; }
+</style>
+
+<div id="stats"></div>
+<div id="scroller"></div>
+<div id="log"></div>
+<div id="bar">
+  <button id="kb">focus hidden input (raise keyboard)</button>
+  <button id="blur">blur</button>
+  <button id="clr">clear log</button>
+</div>
+<div id="nub">nub<br>drag me</div>
+<textarea id="cap" autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off"></textarea>
+
+<script>
+const $ = s => document.querySelector(s);
+const stats = $('#stats'), logEl = $('#log'), scroller = $('#scroller'), cap = $('#cap');
+
+// Fill the scroller so we can see whether scrolling still works with the keyboard up.
+for (let i = 1; i <= 300; i++) {
+  const d = document.createElement('div');
+  d.textContent = String(i).padStart(3, '0') + '  ' + '─'.repeat(8) + ' line ' + i;
+  scroller.appendChild(d);
+}
+scroller.scrollTop = scroller.scrollHeight;
+
+let logN = 0;
+function log(msg) {
+  const t = (performance.now() / 1000).toFixed(2);
+  logEl.insertAdjacentHTML('afterbegin', `<div>${t} ${msg}</div>`);
+  if (++logN > 120) logEl.lastElementChild?.remove();
+}
+
+// Measure one monospace cell so we can report achievable cols/rows.
+function cell(px) {
+  const s = document.createElement('span');
+  s.style.cssText = `position:absolute;visibility:hidden;font:${px}px/1.2 ui-monospace,Menlo,monospace`;
+  s.textContent = 'M'.repeat(100);
+  document.body.appendChild(s);
+  const r = s.getBoundingClientRect();
+  s.remove();
+  return { w: r.width / 100, h: r.height };
+}
+
+const standalone = !!navigator.standalone || matchMedia('(display-mode: standalone)').matches;
+const inset = p => getComputedStyle(document.documentElement).getPropertyValue(p) || '0px';
+
+function render() {
+  const vv = window.visualViewport;
+  const iw = window.innerWidth, ih = window.innerHeight;
+  const vh = vv ? vv.height : ih, vw = vv ? vv.width : iw;
+  // Keyboard estimate: layout viewport minus visual viewport minus how far it was offset.
+  const kb = Math.max(0, Math.round(ih - vh - (vv ? vv.offsetTop : 0)));
+  const c13 = cell(13), c11 = cell(11);
+  const cols = n => Math.floor(vw / n.w), rows = n => Math.floor(vh / n.h);
+
+  const r = (a, b, cls) => `<div class="row"><span>${a}</span><span class="${cls||''}">${b}</span></div>`;
+  stats.innerHTML =
+    r('standalone', `<b>${standalone}</b>`) +
+    r('innerHeight / visual.height', `${ih} / <b>${Math.round(vh)}</b>`) +
+    r('visual offsetTop / pageTop', `${vv ? vv.offsetTop.toFixed(1) : '-'} / ${vv ? vv.pageTop.toFixed(1) : '-'}`) +
+    r('visual scale', vv ? vv.scale.toFixed(3) : '-') +
+    r('KEYBOARD (derived)', `<b>${kb}px</b>`, kb ? '' : 'w') +
+    r('safe-area t/b', `${inset('--sat').trim()||'0px'} / ${inset('--sab').trim()||'0px'}`) +
+    r('screen / dpr', `${screen.width}×${screen.height} @${devicePixelRatio}`) +
+    r('orientation', (screen.orientation||{}).type || (innerWidth>innerHeight?'landscape':'portrait')) +
+    r('grid @13px', `<b>${cols(c13)}×${rows(c13)}</b>  (cell ${c13.w.toFixed(2)}×${c13.h.toFixed(2)})`) +
+    r('grid @11px', `${cols(c11)}×${rows(c11)}`) +
+    r('scroller scrollTop', `${Math.round(scroller.scrollTop)} / ${scroller.scrollHeight}`);
+}
+
+// --- viewport + lifecycle events -------------------------------------------
+if (window.visualViewport) {
+  visualViewport.addEventListener('resize', () => { log(`visualViewport resize h=${Math.round(visualViewport.height)}`); render(); });
+  visualViewport.addEventListener('scroll', () => { log(`visualViewport scroll offsetTop=${visualViewport.offsetTop.toFixed(1)}`); render(); });
+} else log('<b>no visualViewport API</b>');
+addEventListener('resize', () => { log(`window resize ${innerWidth}×${innerHeight}`); render(); });
+addEventListener('orientationchange', () => { log('orientationchange'); setTimeout(render, 300); });
+scroller.addEventListener('scroll', render, { passive: true });
+
+// --- does the scroll container still work while the keyboard is up? --------
+let lastTouch = 0;
+scroller.addEventListener('touchmove', () => { if (Date.now() - lastTouch > 500) { log('scroller touchmove'); lastTouch = Date.now(); } }, { passive: true });
+
+// --- hidden capture element: dictation + autocorrect ------------------------
+$('#kb').onclick = () => { cap.focus(); log('focus() on hidden textarea'); };
+$('#blur').onclick = () => { cap.blur(); log('blur()'); };
+$('#clr').onclick = () => { logEl.innerHTML = ''; logN = 0; };
+cap.addEventListener('beforeinput', e => {
+  const warn = e.inputType === 'insertReplacementText';
+  log(`${warn ? '<b class="w">AUTOCORRECT</b> ' : ''}beforeinput type=<b>${e.inputType}</b> data=${JSON.stringify(e.data)}`);
+});
+cap.addEventListener('input', e => log(`input type=${e.inputType} value=${JSON.stringify(cap.value.slice(-40))}`));
+cap.addEventListener('focus', () => log('hidden textarea FOCUS'));
+cap.addEventListener('blur', () => log('hidden textarea BLUR'));
+
+// --- fixed nub: does it get touches without the page/scroller moving? ------
+const nub = $('#nub');
+let origin = null, moves = 0;
+nub.addEventListener('touchstart', e => {
+  e.preventDefault();
+  origin = e.touches[0]; moves = 0;
+  log('nub touchstart (preventDefault)');
+}, { passive: false });
+nub.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const dy = Math.round(e.touches[0].clientY - origin.clientY);
+  const dx = Math.round(e.touches[0].clientX - origin.clientX);
+  nub.innerHTML = `dx ${dx}<br>dy ${dy}`;
+  if (++moves % 8 === 0) log(`nub move dx=${dx} dy=${dy}`);
+}, { passive: false });
+nub.addEventListener('touchend', e => { e.preventDefault(); log(`nub touchend after ${moves} moves`); nub.innerHTML = 'nub<br>drag me'; }, { passive: false });
+
+log(`start standalone=${standalone} ua=${navigator.userAgent.slice(0, 60)}`);
+render();
+setInterval(render, 500);
+</script>
