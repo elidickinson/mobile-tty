@@ -40,15 +40,14 @@ the three stay swappable.
    element supplies dictation and autocorrect-off.
 5. Grid presets **and** independent pinned-grid pan/zoom. Never auto-resize. Landscape
    (108 cols) is a first-class option.
-6. Scrolling: velocity nub, discrete buttons, position indicator, follow-output toggle.
-   Buffer-aware — local scrollback on the normal screen (pi), PageUp/Dn or SGR wheel
-   events on the alternate screen (Claude Code).
+6. Scrolling: velocity nub, discrete buttons, position indicator, follow-output toggle,
+   over the terminal's own scrollback.
 7. Layout driven by `visualViewport`, debounced. No rubber-band, no double-tap zoom.
 8. Reconnect: keep the terminal, backoff, resize-nudge (N−1 → N) to force a repaint.
 
 Out of scope until there is evidence: custom dictionary; `tmux -CC` and pane UI; custom
 on-screen keyboard; own server, service worker, web push (use Pushover out-of-band);
-voice/TTS, recording, multi-user.
+voice/TTS, recording, multi-user; **alternate-screen support** (Claude Code, vim, htop).
 
 ## Build order
 
@@ -101,4 +100,3 @@ farm unless dictation becomes a blocker.
 - [`docs/decisions.md`](docs/decisions.md) — the design decisions and their rationale
 - [`docs/numbers.md`](docs/numbers.md) — every measured value, one page
 - [`docs/landscape.md`](docs/landscape.md) — survey of prior art
-</content>

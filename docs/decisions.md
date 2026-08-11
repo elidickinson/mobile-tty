@@ -90,21 +90,15 @@ entry. Deferred; the key bar covers most of the value.
 
 ## Scrolling
 
-The two target apps are opposites, so scrolling is **mode-dependent** and the client must
-detect the active buffer (the renderer exposes this; xterm.js has `buffer.active.type` and
-`onBufferChange`).
+pi does not use the alternate screen buffer, so the terminal's own scrollback holds real
+conversation history and can simply be scrolled locally. No tmux copy-mode, no synthesised
+mouse events (pi enables no mouse reporting), no `capture-pane` reader view.
 
-- **Normal screen (pi)** — the terminal's own scrollback holds real conversation history.
-  Scroll it locally.
-- **Alternate screen (Claude Code)** — client scrollback is empty. Send **PageUp/PageDown**
-  to the app, which handles paging itself, or synthesise **SGR wheel events**, which land
-  because it enables mouse reporting.
-
-The clean framing: the nub is a **velocity source**, and the sink depends on the buffer —
-local scrollback, or synthesised keys and wheel events to the app. Same gesture, same
-curve, different destination.
-
-tmux copy-mode and a `capture-pane` reader view remain unnecessary for both.
+Treat the nub as a **velocity source** with a pluggable sink. Today the sink is local
+scrollback. Alternate-screen apps — Claude Code, vim, htop — have no client scrollback and
+would need the velocity routed to PageUp/PageDown or synthesised SGR wheel events instead
+(`numbers.md`). That is out of scope for v1, but the framing keeps it a small addition
+rather than a rewrite.
 
 Touch drag works but should not be primary — it competes with text selection, iOS edge
 gestures, and decisively with **panning the pinned grid**, which already claims the drag
@@ -153,4 +147,3 @@ Cloudflare tunnel, reusing the pi-phone pattern — no account needed for quick 
 a static hostname is available. Tailscale is the private-mesh alternative but needs a
 client on every device. LAN-only defeats the purpose; public-plus-auth means hosting an
 authenticated shell on the internet.
-</content>
