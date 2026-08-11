@@ -162,8 +162,8 @@ const BAR = [
   { label: '→', key: 'Right', repeat: true },
   // pi answers PageUp/PageDown with a cursor move and nothing else, and history
   // lives in the client's scrollback, so these page the view rather than the app.
-  { label: '⇞', name: 'PageUp', act: () => pageBy(-1), repeat: true },
-  { label: '⇟', name: 'PageDown', act: () => pageBy(1), repeat: true },
+  { label: '▲', name: 'PageUp', act: () => pageBy(-1), repeat: true },
+  { label: '▼', name: 'PageDown', act: () => pageBy(1), repeat: true },
   { label: '≡', name: 'menu', act: () => { showDiagnostics(); menu.hidden = false } },
 ]
 
@@ -185,6 +185,7 @@ function buildBar() {
     const b = document.createElement('button')
     b.textContent = item.label
     b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
+    if (item.name === 'PageUp' || item.name === 'PageDown') b.classList.add('page')
     if (item.mod) {
       b.dataset.mod = item.mod
       b.addEventListener('pointerdown', e => {
