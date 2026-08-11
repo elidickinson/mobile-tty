@@ -29,5 +29,6 @@ Research only. See `docs/`.
 - [`docs/ttyd-notes.md`](docs/ttyd-notes.md) — ttyd protocol + what `--index` can and can't do
 - [`docs/design-notes.md`](docs/design-notes.md) — patterns worth stealing, open problems, build options
 - [`docs/ux-principles.md`](docs/ux-principles.md) — UX-first derivation of the architecture
+- [`docs/numbers.md`](docs/numbers.md) — all measured numbers, one page
 - [`docs/concerns.md`](docs/concerns.md) — **start here**: the three concerns, measured against pi 0.84.1
 - [`docs/options.md`](docs/options.md) — all options per decision axis, with pros/cons
