@@ -1,14 +1,69 @@
 #!/bin/bash
-# Start a session: build the client, then serve it over a PTY that outlives
-# the connection. dtach keeps pi alive across reconnects without taking the
+# Start a session: build the client, then serve it over a PTY that outlives the
+# connection. dtach keeps the program alive across reconnects without taking the
 # terminal's alternate screen the way tmux does, so scrollback stays in the
 # client where the renderer can scroll it natively.
 set -euo pipefail
 
 cd "$(dirname "$0")"
+
 port="${PORT:-7681}"
 socket="${MTTY_SOCKET:-${TMPDIR:-/tmp}/mobile-tty.sock}"
+user="${MTTY_USER:-pi}"
+password="${MTTY_PASSWORD:-}"
+
+usage() {
+  cat <<'USAGE'
+Usage: mobile-tty [options] [command...]
+
+  --port N          port to serve on (default 7681, or $PORT)
+  --password PASS   require a password; username is "pi" unless --user is given
+  --user NAME       username for --password (default pi, or $MTTY_USER)
+  --socket PATH     dtach socket (default $TMPDIR/mobile-tty.sock, or $MTTY_SOCKET)
+  -h, --help        this
+
+Every option also has an environment variable ($PORT, $MTTY_PASSWORD, $MTTY_USER,
+$MTTY_SOCKET) for starting this from launchd or a container, where there is no
+argv to write. Flags win. $MTTY_PASSWORD keeps the secret out of your shell
+history, but not out of `ps` — see below.
+
+Anything after the options is the command to run (default: pi). A session keeps
+running when you disconnect; attach from a terminal with:
+
+  dtach -a <socket> -r winch
+USAGE
+}
+
+need() { [[ $# -ge 2 ]] || { echo "mobile-tty: $1 needs a value" >&2; exit 2; }; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --port) need "$@"; port="$2"; shift 2 ;;
+    --password) need "$@"; password="$2"; shift 2 ;;
+    --user) need "$@"; user="$2"; shift 2 ;;
+    --socket) need "$@"; socket="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) echo "mobile-tty: unknown option $1" >&2; usage >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+
+auth=()
+if [[ -n "$password" ]]; then
+  auth=(-c "$user:$password")
+  # ttyd protects /ws as well as /, and the browser replays the header on the
+  # WebSocket upgrade — so the client needs no token of its own.
+  #
+  # Two things this is not. Over plain http the credentials are base64, not
+  # encrypted. And the pair ends up in ttyd's argv either way, so anyone with a
+  # shell on this machine can read it out of `ps` — supplying it by environment
+  # only keeps it out of your own shell history. It is a lock for your LAN, not
+  # security for the internet; that is the tunnel's job.
+fi
 
 node scripts/build.js
-exec ttyd -W -p "$port" --index dist/client.html \
+# `${auth[@]+...}` rather than `${auth[@]}`: macOS ships bash 3.2, where
+# expanding an empty array under `set -u` is an unbound-variable error.
+exec ttyd -W -p "$port" ${auth[@]+"${auth[@]}"} --index dist/client.html \
   dtach -A "$socket" -r winch -z "${@:-pi}"

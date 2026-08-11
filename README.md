@@ -8,10 +8,23 @@ PTY. It keeps the real terminal rather than replacing it with a chat UI.
 ```
 npm install
 ./mobile-tty                             # serves on :7681, runs pi
-PORT=8080 ./mobile-tty                   # different port
+./mobile-tty --port 8080                 # different port
+./mobile-tty --password hunter2          # require a password (username: pi)
+./mobile-tty --socket /tmp/work.sock     # a second, independent session
 ./mobile-tty bash                        # run something else
-MTTY_SOCKET=/tmp/work.sock ./mobile-tty  # a second, independent session
+./mobile-tty --help                      # all of it
 ```
+
+`--password` turns on ttyd's basic auth, which covers the WebSocket as well as the page, so
+the browser handles it once and the client needs no token. Two caveats worth stating: over
+plain http the credentials are base64 rather than encrypted, and the pair sits in ttyd's
+argv, so anyone with a shell on the host can read it from `ps`. It is a lock for your LAN,
+not security for the internet — that is the tunnel's job.
+
+Every flag has an environment variable too (`PORT`, `MTTY_PASSWORD`, `MTTY_USER`,
+`MTTY_SOCKET`), for starting this under launchd or in a container where there is no argv to
+write. Flags win when both are set. `MTTY_PASSWORD` keeps the secret out of your shell
+history, but not out of `ps`.
 
 Open `http://<your-ip>:7681/` on the phone. **Add to Home Screen** and launch it from there
 — standalone mode drops Safari's chrome and is worth about 7 extra rows.
