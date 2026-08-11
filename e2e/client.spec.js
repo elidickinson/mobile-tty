@@ -299,3 +299,15 @@ test('the client reloads itself when the server serves a newer build', async ({ 
   await page.waitForTimeout(1000)
   expect(reloads).toHaveLength(0)
 })
+
+test('the menu can reload the app, since standalone has no browser chrome', async ({ page }) => {
+  await ready(page)
+  await page.getByRole('button', { name: 'menu' }).tap()
+
+  const navigated = page.waitForNavigation()
+  await page.getByRole('button', { name: 'Reload app' }).tap()
+  await navigated
+
+  await expect(page.locator('#screen')).toContainText('fake-pi ready')
+  expect(await page.evaluate(() => sessionStorage.getItem('reloaded'))).toBeNull()
+})

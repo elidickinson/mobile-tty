@@ -229,6 +229,14 @@ function buildMenu() {
     'zoom-reset': () => setScale(1),
     reconnect: () => conn.ws.close(),
     clear: () => term.write('\x1b[H\x1b[2J\x1b[3J'),
+    // Standalone has no browser chrome, so this is the only way to pick up a
+    // new build by hand. Re-fetch past the cache first, or the reload just
+    // reinstates the copy iOS is already holding.
+    reload: async () => {
+      sessionStorage.removeItem('reloaded')
+      await fetch(location.pathname, { cache: 'reload' })
+      location.reload()
+    },
   }
   menu.addEventListener('click', e => {
     const act = e.target.dataset?.act
