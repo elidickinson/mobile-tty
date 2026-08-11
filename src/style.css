@@ -1,3 +1,5 @@
+/* The whole UI: a terminal that fills the visual viewport, a key bar under it,
+   and a sheet menu over both. */
 :root {
   --bg: #0b0b0d;
   --fg: #d8d8dc;
@@ -107,6 +109,28 @@ html, body {
 #bar button:active { background: #33333c; }
 #bar button.word { font-size: 14px; }
 #bar button.sticky { background: var(--accent); color: #001; }
+
+/* Only ever visible when the socket is not up. A frozen terminal otherwise
+   looks exactly like a busy one. Kept clear of the notch in landscape. */
+#conn {
+  position: fixed;
+  top: calc(env(safe-area-inset-top) + 6px);
+  right: calc(env(safe-area-inset-right) + 8px);
+  z-index: 8;
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(58, 36, 22, .9);
+  color: #f0c48a;
+  font-size: 12px;
+  line-height: 1;
+  animation: conn-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes conn-pulse { 50% { opacity: .35; } }
 
 #to-bottom {
   position: fixed;

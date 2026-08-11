@@ -55,9 +55,18 @@ const conn = new TtydConnection({
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => term.write(bytes),   // raw bytes: the VT core reassembles UTF-8
   onTitle: title => { document.title = title },
-  onState: s => { $('menu-state').textContent = `${s} · ${BUILD_ID}` },
+  onState: showConnection,
 })
 
+/** The menu is hidden by default, so connection state has to live outside it. */
+function showConnection(status) {
+  $('menu-state').textContent = `${status} · ${BUILD_ID}`
+  const bolt = $('conn')
+  bolt.textContent = '⚡'
+  bolt.setAttribute('aria-label', status)
+  bolt.title = status
+  bolt.hidden = status === 'connected'
+}
 
 // Diagnostic seam: the e2e suite and the on-device probe read the same shape.
 // Published before startup finishes so nothing has to guess when it appears.
