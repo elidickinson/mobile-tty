@@ -1,3 +1,4 @@
+// ttyd frame encoding and decoding.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_PREFS, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../../src/ttyd.js'

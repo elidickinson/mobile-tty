@@ -1,3 +1,5 @@
+// The client: wires the terminal to the socket, and owns the layout, the key
+// bar, the menu and the on-screen diagnostics.
 import { WTerm } from '@wterm/dom'
 import { TtydConnection } from './transport.js'
 import { readViewport, deriveLayout, gridFor, measureCell, KEY_BAR_H } from './viewport.js'
@@ -28,6 +30,10 @@ const ERASE_SAVED = '\x1b[3J'       // ED 3: erase saved lines, and here the gri
 
 const MIN_SCALE = 0.4
 const MAX_SCALE = 3
+const ZOOM_STEP = 1.25
+const SETTLE_MS = 200          // viewport values are wrong mid-rotation and mid-keyboard
+const REPEAT_AFTER_MS = 400    // hold an arrow this long before it repeats
+const REPEAT_EVERY_MS = 60
 const PRESETS = [[50, 30], [80, 40], [120, 40], [160, 50]]
 
 const state = {
@@ -176,8 +182,17 @@ function onViewportChange() {
       orientation = l.orientation
       fitGrid(l)
     }
-  }, 200)
+  }, SETTLE_MS)
 }
+
+// ---------------------------------------------------------------- scrolling
+
+// wterm owns sticking to the bottom: it checks the position before each write,
+// re-pins after rendering, and jumps back on a keystroke. This only decides
+// whether to offer the way back, and uses wterm's own tolerance so the two
+// cannot disagree about whether you are on the live screen.
+const AT_BOTTOM_PX = 5
+const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < AT_BOTTOM_PX
 
 // ---------------------------------------------------------------- key bar
 
@@ -204,13 +219,6 @@ function toggleKeyboard() {
   if (document.activeElement === input) input.blur()
   else term.focus()
 }
-
-// wterm owns sticking to the bottom: it checks the position before each write,
-// re-pins after rendering, and jumps back on a keystroke. A second mechanism
-// here only fought it for the same property.
-// Matches wterm's own at-bottom test, so the button and follow-output cannot
-// disagree about whether you are on the live screen.
-const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < 5
 
 /**
  * Apply a sticky modifier to a key from the software keyboard. Those arrive
@@ -273,7 +281,7 @@ function bindRepeat(btn, fire, repeat) {
   btn.addEventListener('pointerdown', e => {
     e.preventDefault()
     fire()
-    if (repeat) delay = setTimeout(() => { timer = setInterval(fire, 60) }, 400)
+    if (repeat) delay = setTimeout(() => { timer = setInterval(fire, REPEAT_EVERY_MS) }, REPEAT_AFTER_MS)
   })
   for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) btn.addEventListener(ev, stop)
 }
@@ -320,6 +328,7 @@ function diagnosticText() {
 
 function showDiagnostics() { $('diag').textContent = diagnosticText() }
 
+// ---------------------------------------------------------------- menu
 
 function buildMenu() {
   const presets = $('presets')
@@ -336,8 +345,8 @@ function buildMenu() {
 
   const acts = {
     close: () => { menu.hidden = true },
-    'zoom-in': () => setScale(state.scale * 1.25),
-    'zoom-out': () => setScale(state.scale / 1.25),
+    'zoom-in': () => setScale(state.scale * ZOOM_STEP),
+    'zoom-out': () => setScale(state.scale / ZOOM_STEP),
     'zoom-reset': () => setScale(1),
     top: () => { screen.scrollTop = 0; menu.hidden = true },
     bottom: () => { screen.scrollTop = screen.scrollHeight; menu.hidden = true },

@@ -1,3 +1,4 @@
+// Layout maths, checked against the five configurations measured on device.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { deriveLayout, gridFor, KEY_BAR_H } from '../../src/viewport.js'

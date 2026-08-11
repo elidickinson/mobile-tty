@@ -1,3 +1,4 @@
+// Connection behaviour: handshake, queueing, backoff, and the repaint nudge.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { TtydConnection } from '../../src/transport.js'

@@ -1,3 +1,4 @@
+// The ttyd connection: framing, reconnect, and the size games a shared PTY needs.
 import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE } from './ttyd.js'
 
 const BACKOFF_MIN = 500

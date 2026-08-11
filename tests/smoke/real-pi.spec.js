@@ -1,3 +1,5 @@
+// Against real pi under dtach. Renders and reflows only — sends no prompts,
+// so it costs no tokens.
 import { test, expect } from '@playwright/test'
 
 // The widest run of box-drawing dashes on screen — pi's horizontal rules span
