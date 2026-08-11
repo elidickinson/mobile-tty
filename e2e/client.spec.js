@@ -66,21 +66,21 @@ test('key bar sends the right bytes, and a sticky modifier applies once', async 
   })
   expect(sent).toBe(true)
 
-  await page.getByRole('button', { name: '↑', exact: true }).tap()
-  await page.getByRole('button', { name: 'pgup', exact: true }).tap()
-  await page.getByRole('button', { name: '⌃', exact: true }).tap()
-  await page.getByRole('button', { name: 'esc', exact: true }).tap()
+  await page.getByRole('button', { name: 'Up', exact: true }).tap()
+  await page.getByRole('button', { name: 'PageUp', exact: true }).tap()
+  await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
+  await page.getByRole('button', { name: 'Escape', exact: true }).tap()
 
   const log = await page.evaluate(() => window.__sent)
   expect(log).toContain('0\x1b[A')
   expect(log).toContain('0\x1b[5~')
   expect(log.at(-1)).toBe('0\x1b')            // ctrl+Escape is just Escape
-  await expect(page.getByRole('button', { name: '⌃', exact: true })).not.toHaveClass(/sticky/)
+  await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
 })
 
 test('a grid preset resizes the PTY and the client together', async ({ page }) => {
   await ready(page)
-  await page.getByRole('button', { name: '≡' }).tap()
+  await page.getByRole('button', { name: 'menu' }).tap()
   await page.getByRole('button', { name: '120×40' }).tap()
   await expect(page.locator('#screen')).toContainText('120x40')
   expect(await page.locator('#screen .term-row:not(.term-scrollback-row)').count()).toBe(40)
@@ -88,7 +88,7 @@ test('a grid preset resizes the PTY and the client together', async ({ page }) =
 
 test('a grid wider than the screen pans horizontally rather than reflowing', async ({ page }) => {
   await ready(page)
-  await page.getByRole('button', { name: '≡' }).tap()
+  await page.getByRole('button', { name: 'menu' }).tap()
   await page.getByRole('button', { name: '160×50' }).tap()
   await page.getByRole('button', { name: 'Done' }).tap()
   const m = await page.evaluate(() => {
@@ -100,7 +100,7 @@ test('a grid wider than the screen pans horizontally rather than reflowing', asy
 
 test('zoom changes only the render scale — the PTY grid stays pinned', async ({ page }) => {
   await ready(page)
-  await page.getByRole('button', { name: '≡' }).tap()
+  await page.getByRole('button', { name: 'menu' }).tap()
   const before = await page.locator('#screen .term-row:not(.term-scrollback-row)').count()
   await page.getByRole('button', { name: '−' }).tap()
   await expect(page.locator('#scale-val')).toHaveText('80%')

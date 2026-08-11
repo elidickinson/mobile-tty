@@ -7,7 +7,7 @@ const ruleWidth = page => page.evaluate(() =>
     .map(r => (r.innerText.match(/─+/g) ?? ['']).reduce((a, b) => (b.length > a.length ? b : a), '').length)))
 
 const setGrid = async (page, label, cols) => {
-  await page.getByRole('button', { name: '≡' }).tap()
+  await page.getByRole('button', { name: 'menu' }).tap()
   await page.getByRole('button', { name: label }).tap()
   await page.getByRole('button', { name: 'Done' }).tap()
   await expect.poll(() => ruleWidth(page)).toBe(cols)
@@ -38,7 +38,7 @@ test('pi keeps a real scrollback — dtach leaves the alternate screen alone', a
 
   // Shrinking the grid pushes the startup banner into client scrollback rather
   // than destroying it, which is what makes local scrolling the right model.
-  await page.getByRole('button', { name: '≡' }).tap()
+  await page.getByRole('button', { name: 'menu' }).tap()
   await page.getByRole('button', { name: '50×30' }).tap()
   await page.getByRole('button', { name: 'Done' }).tap()
   await expect.poll(() => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount()))

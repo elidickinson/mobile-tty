@@ -125,8 +125,8 @@ const BAR = [
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
   { label: '→', key: 'Right', repeat: true },
-  { label: 'pgup', key: 'PageUp', repeat: true },
-  { label: 'pgdn', key: 'PageDown', repeat: true },
+  { label: '⇞', key: 'PageUp', repeat: true },
+  { label: '⇟', key: 'PageDown', repeat: true },
   { label: '≡', act: () => { menu.hidden = false } },
 ]
 
@@ -145,6 +145,7 @@ function buildBar() {
   for (const item of BAR) {
     const b = document.createElement('button')
     b.textContent = item.label
+    b.setAttribute('aria-label', item.key ?? item.mod ?? 'menu')
     if (item.mod) {
       b.dataset.mod = item.mod
       b.addEventListener('pointerdown', e => {
