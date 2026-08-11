@@ -119,3 +119,21 @@ test('tapping a key before the core loads does not fault', async ({ page }) => {
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
   await expect(page.locator('#diag-overlay')).toBeHidden()
 })
+
+test('backspace is on the bar and repeats when held', async ({ page }) => {
+  await ready(page)
+  await page.locator('#screen textarea').pressSequentially('abcdefgh')
+  await expect(page.locator('#screen')).toContainText('> abcdefgh')
+
+  const key = page.getByRole('button', { name: 'Backspace', exact: true })
+  await key.tap()
+  await expect(page.locator('#screen')).toContainText('> abcdefg')
+
+  // Held, it should eat several more rather than one per tap.
+  const box = await key.boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.waitForTimeout(900)
+  await page.mouse.up()
+  await expect(page.locator('#screen')).not.toContainText('> abcde')
+})

@@ -33,10 +33,13 @@ pi keeps running when you close the page; reopening reattaches to the same sessi
 
 ## Use it
 
-**Key bar**, left to right: `⌃ ⌥ ⇧` are sticky — tap one, then the next key you press
+**Key bar**, left to right: `⌃ ⇧` are sticky — tap one, then the next key you press
 (including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then
-`esc`, `⇥` tab, arrows (hold to repeat), `⌨` to summon or dismiss the keyboard, and `≡` for
-the menu.
+`esc`, `⇥` tab, `⌫` backspace, arrows, `⌨` to summon or dismiss the keyboard, and `≡` for
+the menu. Backspace and the arrows repeat when held — the software keyboard's own backspace
+does not, because the field it types into is emptied after every keystroke.
+
+There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes as alt+b.
 
 **Scrolling** is a normal drag. When you scroll away from the live screen a **↓ latest**
 button appears; typing also jumps you back. New output while you're reading history leaves

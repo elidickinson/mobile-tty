@@ -196,12 +196,16 @@ const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHei
 
 // ---------------------------------------------------------------- key bar
 
+// No ⌥: meta is an ESC prefix, so `esc` then `b` is byte-identical to alt+b and
+// readline cannot tell them apart. Backspace has no such substitute.
 const BAR = [
   { label: '⌃', mod: 'ctrl' },
-  { label: '⌥', mod: 'alt' },
   { label: '⇧', mod: 'shift' },
   { label: 'esc', key: 'Escape' },
   { label: '⇥', key: 'Tab' },
+  // The software keyboard will not repeat its own backspace: wterm empties the
+  // hidden field after every keystroke, so iOS sees nothing left to delete.
+  { label: '⌫', key: 'Backspace', repeat: true },
   { label: '←', key: 'Left', repeat: true },
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
