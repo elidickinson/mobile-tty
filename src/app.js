@@ -90,10 +90,13 @@ function sizeScreen() {
   // with pi's input box pushed out of sight underneath.
   const fromBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight
 
+  // iOS will not drag-scroll reliably inside a transformed overflow container,
+  // and at 100% the transform buys nothing, so leave it off entirely.
+  const scaled = state.scale !== 1
   const naturalW = state.cols * state.cell.width
   screen.style.width = `${naturalW}px`
   screen.style.height = `${boxH / state.scale}px`
-  screen.style.transform = `scale(${state.scale})`
+  screen.style.transform = scaled ? `scale(${state.scale})` : ''
   stage.style.width = `${naturalW * state.scale}px`
   stage.style.height = `${boxH}px`
 

@@ -68,6 +68,9 @@ html, body {
   transform-origin: 0 0;
   overflow-y: auto;
   overflow-x: hidden;
+  /* Say so explicitly: a vertical drag here scrolls, it is not a gesture for
+     the horizontal scroller wrapped around it to claim. */
+  touch-action: pan-y;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }

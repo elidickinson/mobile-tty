@@ -105,6 +105,8 @@ test('zoom changes only the render scale — the PTY grid stays pinned', async (
   await expect(page.locator('#scale-val')).toHaveText('80%')
   expect(await page.locator('#screen .term-row:not(.term-scrollback-row)').count()).toBe(before)
   expect(await page.locator('#screen').evaluate(e => e.style.transform)).toBe('scale(0.8)')
+  await page.getByRole('button', { name: '100%' }).tap()
+  expect(await page.locator('#screen').evaluate(e => e.style.transform)).toBe('')
 })
 
 test('the page itself never scrolls — only the terminal does', async ({ page }) => {
