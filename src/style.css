@@ -109,9 +109,9 @@ html, body {
   touch-action: none;
 }
 
-/* Solid triangles for paging: a different shape from the line arrows beside
-   them, rather than a heavier version of the same one. */
-#bar button.page { font-size: 11px; }
+/* Paired arrows for paging. Two shafts read as "more than one line" next to the
+   single arrows, which a heavier single arrow would not. */
+#bar button.page { font-size: 16px; }
 
 #bar button:active { background: #33333c; }
 #bar button.sticky { background: var(--accent); color: #001; }

@@ -162,8 +162,8 @@ const BAR = [
   { label: '→', key: 'Right', repeat: true },
   // pi answers PageUp/PageDown with a cursor move and nothing else, and history
   // lives in the client's scrollback, so these page the view rather than the app.
-  { label: '▲', name: 'PageUp', act: () => pageBy(-1), repeat: true },
-  { label: '▼', name: 'PageDown', act: () => pageBy(1), repeat: true },
+  { label: '⇈', name: 'PageUp', act: () => pageBy(-1), repeat: true },
+  { label: '⇊', name: 'PageDown', act: () => pageBy(1), repeat: true },
   { label: '≡', name: 'menu', act: () => { showDiagnostics(); menu.hidden = false } },
 ]
 
