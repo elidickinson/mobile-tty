@@ -16,6 +16,28 @@ Organised by problem rather than by architecture layer. Measurements below were 
 scrolls off naturally and the TUI is really a repainted block at the bottom. Everything
 below follows from that.
 
+### Device measurements (iPhone, iOS Safari, 402×874 @3x, via `probe/`)
+
+| Quantity | Measured |
+|---|---|
+| Safari chrome | **160 pt** (`innerHeight` 714 of 874) |
+| Keyboard | **310 pt** (`visualViewport.height` drops 714 → 404) |
+| Grid @13px, keyboard down | **50 × 47** (cell 8.04 × 15.00) |
+| Grid @13px, keyboard up | **50 × 26** |
+| Grid @11px, keyboard up | 59 × 31 |
+| `visualViewport.offsetTop` | 0 throughout |
+
+The keyboard costs **21 of 47 rows**. `visualViewport` tracks it correctly on iOS, so the
+API is usable — but sizing with `height:100%` puts the UI *under* the keyboard, because
+that is the layout viewport (714), not the visual one (404).
+
+Two bugs the probe caught on first contact, both relevant to the real client:
+
+- **Mojibake on box-drawing characters** — no `<meta charset="utf-8">` and no charset in
+  the server's `Content-Type`, so iOS Safari fell back to Latin-1 where desktop guessed
+  right. pi's UI is box-drawing; declare the charset explicitly.
+- **UI under the keyboard** — as above. Drive layout from `visualViewport`.
+
 ---
 
 ## Concern 1 — the keyboard hides most of the screen

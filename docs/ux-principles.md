@@ -12,38 +12,35 @@ architecture — and they pick a different one than "start with ttyd" did.
 A phone is not a small desktop terminal. The binding constraint is screen area, and it is
 consumed before the terminal gets any.
 
-Rough portrait figures for a ~393×852pt phone (iOS logical px; treat as approximate, the
-ratios are the robust part):
+**Measured on device** (iPhone, iOS Safari, screen 402×874 @3x, 2026-08-10) via
+`probe/index.html` — these replace the earlier estimates:
 
-| Consumer | Cost |
+| Quantity | Measured |
 |---|---|
-| Browser chrome (Safari top + bottom bars) | ~120pt |
-| OS keyboard + predictive/accessory bar | ~320pt |
-| **Left for terminal** | **~410pt** |
+| Screen | 402×874 pt |
+| `innerHeight` (Safari, chrome visible) | 714 pt → **Safari chrome costs 160 pt** |
+| `visualViewport.height`, keyboard up | 404 pt → **keyboard costs 310 pt** |
+| Cell at 13px monospace | 8.04 × 15.00 pt |
 
-At a readable 13px monospace / 1.2 line-height (~15.6pt per row):
-
-| Configuration | Usable rows | Cols |
+| Configuration | Cols × rows | Note |
 |---|---|---|
-| Naive web terminal in Safari, keyboard up | **~26** | ~50 |
-| + PWA standalone (kills browser chrome) | ~34 | ~50 |
-| + compact custom keyboard (~120pt not ~320pt) | **~47** | ~50 |
+| Safari, keyboard **down** | 50 × **47** | measured |
+| Safari, keyboard **up** | 50 × **26** | measured — the working case |
+| Standalone, keyboard up | 50 × ~33–36 | projected: reclaims most of the 160pt, minus safe-area insets. Unconfirmed. |
+| Standalone + compact keyboard (~150pt) | 50 × ~44 | projected |
+| At 11px instead of 13px, keyboard up | 59 × 31 | measured |
 
-**Roughly doubling the usable rows is available purely from viewport decisions.** That is
-a bigger UX win than anything in the renderer, the protocol, or the key bar.
+So the keyboard costs **21 of 47 rows**, and Safari's chrome another ~10. Recovering both
+would take the working case from 26 rows to the low 40s — still the biggest single UX
+lever, and confirming the standalone number is the cheapest next measurement.
 
-Two consequences:
+`visualViewport.offsetTop` stayed 0 throughout, and safe-area insets reported 0/0 in
+non-standalone Safari.
 
-- **Standalone display mode is not optional** — it is the cheapest ~30% row increase
-  available. Crucially it does **not** require a manifest or a service worker: on iOS,
-  `<meta name="apple-mobile-web-app-capable" content="yes">` alone turns on standalone
-  mode, and as of iOS 26 home-screen sites default to web-app mode anyway. This works from
-  a **single self-contained HTML file**, so `ttyd --index` can do it. See §6.
-- **The OS keyboard is a UX liability, not the input method.** It costs ~40% of the
-  screen, cannot chord, and injects predictive text that corrupts terminal input
-  (xterm.js [#2403](https://github.com/xtermjs/xterm.js/issues/2403)). claude-web-terminal
-  independently reached the same conclusion — it makes the terminal read-only on mobile so
-  tapping never raises the keyboard at all.
+**Implementation note, learned the hard way in the probe:** sizing the app with
+`height:100%` puts the bottom of the UI *underneath* the keyboard, because that is the
+*layout* viewport (714) not the visual one (404). Size from `visualViewport.height` and
+translate by `offsetTop`, updating on its `resize` and `scroll` events.
 
 Width is untouched by any of this: ~50 cols is narrow for a dense TUI and no viewport
 trick fixes it. Only decoupling grid size from render size does (§3).
