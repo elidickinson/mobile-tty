@@ -1,85 +1,54 @@
 # mobile-tty
 
-A **TUI-friendly mobile web terminal** — a browser client for driving full-screen terminal
-apps (pi.dev in particular) from a phone, over a WebSocket-attached PTY.
+A TUI-friendly mobile web terminal: drive pi.dev (or anything full-screen) from a phone
+over a WebSocket-attached PTY. A level below pi-phone / Happy / Omnara — those replace the
+TUI with a chat UI; this keeps the real terminal and fixes the *mobile terminal*.
 
-Deliberately a level *below* pi-phone / Happy / Omnara. Those replace the TUI with a
-bespoke chat UI. This keeps the real terminal and fixes the *mobile terminal* instead.
+It exists to fix three things: the keyboard hides most of the screen, you can't scroll back,
+and ~50 columns wrecks a dense layout.
 
-## The three problems
-
-1. **The keyboard hides most of the screen** — 26 usable rows of 47 in Safari.
-2. **You can't scroll back**, or page easily.
-3. **You can't resize flexibly** — ~50 cols wrecks a dense TUI layout.
-
-## Running it
+## Run
 
 ```
 npm install
-./serve.sh                 # ttyd -W --index dist/client.html dtach -A <sock> -r winch -z pi
-npm test                   # 36 unit tests
-npm run test:e2e           # 22 WebKit tests at 402x812 against fixtures/fake-pi.sh
-npm run test:smoke         # 3 tests against real pi under dtach; sends no prompts
+./serve.sh              # ttyd --index dist/client.html dtach -A <sock> -r winch -z pi
 ```
 
-One self-contained `dist/client.html` (~70 KB), developed as ES modules and bundled with
-esbuild — the build step exists for testability, since `--index` serves exactly one
-document and 404s every other path. Cloudflare tunnel for access. No sidecar, no fork, no
-server code.
+Then open it on the phone, or add it to the Home Screen for +7 rows. To watch or type from
+the desktop at the same time:
 
-**dtach, not tmux**, and **wterm** for DOM rendering — see
-[`docs/decisions.md`](docs/decisions.md).
+```
+dtach -a "$TMPDIR/mobile-tty.sock" -r winch      # Ctrl-\ detaches, Ctrl-C goes to pi
+```
 
-## What it does
+## Test
 
-1. ttyd WS protocol and terminal widget; iOS standalone meta tags (+7 rows).
-2. Key bar: sticky modifiers, arrows with repeat-on-hold, Tab/Esc, paging.
-3. Input goes straight to pi with its own box visible; autocorrect off.
-4. Grid presets and Fit, plus independent render scale. Rotation refits; the keyboard
-   never does.
-5. Native scrollback drag, ⇈/⇊ to page the view, **↓ latest** when scrolled away.
-6. Layout from `visualViewport`, pinned to the bottom so the keyboard cannot hide pi's
-   input box.
-7. Reconnect: keep the terminal, backoff, resize-nudge to force a repaint.
-8. Errors paint a red panel at the top; `≡` carries a live viewport/grid/scroll readout.
-   Both exist because a phone shows no stack trace.
+```
+npm test                # 40 unit
+npm run test:e2e        # 29 WebKit at 402x812 against fixtures/fake-pi.sh
+npm run test:smoke      # 3 against real pi under dtach; sends no prompts, costs no tokens
+```
 
-Out of scope until there is evidence: custom dictionary; `tmux -CC` and pane UI; custom
-on-screen keyboard; own server, service worker, web push; voice/TTS, recording,
-multi-user; **alternate-screen support** (Claude Code, vim, htop).
+Anything mechanisable is a pure function; the device verifies the viewport adapter and
+everything downstream of it is testable without a keyboard. Not doing visual regression —
+goldens would churn while the design moves.
 
-## Testing
+## Shape
 
-The hard parts — iOS keyboard geometry, gesture arbitration, "is the useful part visible"
-— resist CI. So: push everything mechanisable into pure functions, keep the platform
-unknowns cheap to re-probe on device, and don't build an automation cathedral for one HTML
-file.
+One self-contained `dist/client.html` (~70 KB), bundled by esbuild because ttyd's `--index`
+serves exactly one document and 404s everything else. No sidecar, no fork, no server code.
 
-**The seam:** one adapter turns `visualViewport` plus insets into a layout, and everything
-sits downstream of it. The device verifies the adapter; the rest is testable without a
-keyboard.
+- **dtach, not tmux** — tmux takes the terminal's alternate screen, which zeroes client
+  scrollback and would delete the reason for a DOM renderer.
+- **wterm** for the terminal — DOM rendering, inlined WASM core, raw bytes in.
+- **Errors paint a red panel** at the top and `≡` carries a live readout: a phone shows no
+  stack trace, and that blind spot has cost more debugging time than any bug.
 
-| Layer | What |
-|---|---|
-| **Unit** | ttyd frame codec; key encoding; viewport math against the five measured configurations; reconnect, backoff and the repaint nudge |
-| **Playwright** (WebKit) | e2e on `ttyd --index dist/client.html fixtures/fake-pi.sh` — rendering, key bytes on the wire, paging, rotation refit, bottom pinning, reconnect repaint. The main suite |
-| **Real-pi smoke** | Three tests against real pi under dtach: startup screen, reflow across presets, real scrollback, and repaint when a fresh page attaches to a running session. Sends no prompts, so costs no tokens |
-| **Manual** | Dictation; scroll and key-bar *feel* against a real terminal |
+Why each of those, and every measured number behind them:
+[`docs/decisions.md`](docs/decisions.md) · [`docs/numbers.md`](docs/numbers.md).
 
-`fake-pi.sh` reproduces pi's *shape* — bordered input box, cwd line, status line, scrolling
-output — plus `/lines` to make scrollback deterministically.
+## Known gaps
 
-Not doing: visual regression (goldens would churn while the design moves); cloud device
-farm unless dictation becomes a blocker.
-
-## Open questions
-
-- Dictation through wterm's hidden textarea — untested.
-
-- Round-trip echo latency through a tunnel.
-- Whether `fake-pi.sh` should be replaced by real pi driven by a purpose-built extension.
-
-## Docs
-
-- [`docs/decisions.md`](docs/decisions.md) — why the thing is shaped this way
-- [`docs/numbers.md`](docs/numbers.md) — every measured value, one page
+- Dictation is untested; alternate-screen apps (Claude Code, vim) are out of scope.
+- One PTY means one size: whoever acted last owns it, and `Fit` is how the phone acts.
+- `fake-pi.sh` may be worth replacing with real pi driven by a purpose-built extension.
