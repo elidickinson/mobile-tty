@@ -4,7 +4,7 @@
 // pick, so tests never collide on a port still in TIME_WAIT.
 import { test as base, expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -38,6 +38,7 @@ export const test = base.extend({
       await use(`http://127.0.0.1:${port}`)
     } finally {
       server.kill('SIGKILL')
+      rmSync(agentDir, { recursive: true, force: true })
     }
   },
 })

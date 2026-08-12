@@ -91,20 +91,24 @@ const settle = () => new Promise(resolve => setTimeout(resolve, 500))
 test('the narrowest viewer sets the grid, and leaving hands it back', async () => {
   const { server, url } = await start()
   const wide = viewer(url, 100, 30)
-  await settle()
-  assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'alone, a viewer gets what it asked for')
+  let narrow
+  try {
+    await settle()
+    assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'alone, a viewer gets what it asked for')
 
-  const narrow = viewer(url, 40, 12)
-  await settle()
-  assert.deepEqual(narrow.seen.at(-1), { columns: 40, rows: 12 })
-  assert.deepEqual(wide.seen.at(-1), { columns: 40, rows: 12 }, 'the wide viewer is told it lost')
+    narrow = viewer(url, 40, 12)
+    await settle()
+    assert.deepEqual(narrow.seen.at(-1), { columns: 40, rows: 12 })
+    assert.deepEqual(wide.seen.at(-1), { columns: 40, rows: 12 }, 'the wide viewer is told it lost')
 
-  narrow.close()
-  await settle()
-  assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'and told again when it wins it back')
-
-  wide.close()
-  await server.close()
+    narrow.close()
+    await settle()
+    assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'and told again when it wins it back')
+  } finally {
+    narrow?.close()
+    wide.close()
+    await server.close()
+  }
 })
 
 /** Render everything a viewer is sent, the way the phone's core would. */
@@ -134,31 +138,34 @@ test('a resize leaves every viewer with the same history, whenever it joined', a
   const lines = Array.from({ length: 60 }, (_, n) => `L${String(n).padStart(3, '0')}:${'x'.repeat(70)}`)
   const { server, url } = await start('sh', ['-c', `printf '%s\\n' ${lines.join(' ')}; sleep 30`])
 
-  const early = await rendering(url)
-  await settle()
+  let narrow, early, late
+  try {
+    early = await rendering(url)
+    await settle()
 
-  // A narrower viewer takes the grid. The client core mangles its own history on
-  // a column shrink, so a viewer left to reflow diverges from one sent the screen.
-  const narrow = viewer(url, 50, 20)
-  await settle()
-  await settle()
+    // A narrower viewer takes the grid. The client core mangles its own history on
+    // a column shrink, so a viewer left to reflow diverges from one sent the screen.
+    narrow = viewer(url, 50, 20)
+    await settle()
+    await settle()
 
-  const late = await rendering(url)
+    late = await rendering(url)
 
-  // Poll rather than sample: both viewers are being served through the same
-  // serialized queue, so agreement is what matters, not the instant it arrives.
-  const deadline = Date.now() + 5_000
-  while (Date.now() < deadline) {
-    try {
-      assert.deepEqual(early.history(), late.history())
-      break
-    } catch {
-      await new Promise(resolve => setTimeout(resolve, 200))
+    // Poll rather than sample: both viewers are being served through the same
+    // serialized queue, so agreement is what matters, not the instant it arrives.
+    const deadline = Date.now() + 5_000
+    while (Date.now() < deadline) {
+      try {
+        assert.deepEqual(early.history(), late.history())
+        break
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
     }
+    assert.deepEqual(early.history(), late.history(),
+      'a viewer resized into the grid and one that arrived at it never agree')
+  } finally {
+    narrow?.close(); early?.close(); late?.close()
+    await server.close()
   }
-  assert.deepEqual(early.history(), late.history(),
-    'a viewer resized into the grid and one that arrived at it never agree')
-
-  narrow.close(); early.close(); late.close()
-  await server.close()
 })

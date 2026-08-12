@@ -10,6 +10,7 @@ import { phone } from './playwright.config.js'
 // so no tokens.
 export default defineConfig({
   testDir: 'tests/smoke',
+  globalSetup: './tests/e2e/build.js',
   timeout: 90_000,
   expect: { timeout: 30_000 },
   workers: 1,

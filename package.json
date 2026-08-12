@@ -5,6 +5,7 @@
   "scripts": {
     "test": "node --test 'tests/unit/**/*.test.js'",
     "test:integrity": "node --test 'tests/integrity/*.test.js'",
+    "test:real-pi": "node --test 'tests/real-pi/*.test.js'",
     "build": "node scripts/build.js",
     "dev": "node scripts/build.js --watch",
     "test:e2e": "playwright test",
