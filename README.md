@@ -49,6 +49,8 @@ cloudflared tunnel login                 # once, opens a browser
 
 The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
 
+Whatever is in front of it, a WebSocket is refused unless its `Origin` is the address it connected to — otherwise any page you visit could open a terminal on your loopback, which nothing in the browser prevents. Reaching it **by address** needs nothing. Reaching it **by name** — a Cloudflare hostname, MagicDNS, any reverse proxy — needs that name declared: `--hostname pi.example.com`, or `$MTTY_HOSTNAME`. Without it the page loads and the terminal never connects, and the server says so on stderr.
+
 The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though, and **the narrowest viewer wins** — this is meant to be read on a phone, and a desktop showing a phone-width column is legible where the reverse is not. The server tells every viewer the size it actually picked.
 
 ## Test

@@ -173,3 +173,13 @@ server. A restart therefore ends it, which is why the default program is
 
 Cloudflare tunnel, reusing the pi-phone pattern. Tailscale needs a client on every device;
 LAN-only defeats the purpose; public-plus-auth means an authenticated shell on the internet.
+
+**Origin is checked on the handshake.** A WebSocket handshake ignores the same-origin policy
+and has no preflight, so loopback protects nothing: a page on any site you visit can open
+`ws://127.0.0.1:7681/ws` and type into pi. Matching `Origin` against `Host` is not enough on
+its own either — DNS rebinding gets both to say the same attacker-owned name — so the Host
+has to be an address, which cannot be rebound to, or the one name given with `--hostname`.
+That name is declared and never inferred, because a hostname is trustworthy exactly when the
+operator asserted it. A request with no Origin is allowed: only browsers send it and only
+browsers are bound by it, `attach` is one of the clients that does not, and anything hostile
+that is not a browser forges headers freely.

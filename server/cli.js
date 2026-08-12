@@ -26,13 +26,14 @@ const number = (name, fallback) => {
 
 const [command, ...args] = rest()
 if (!command) {
-  console.error('usage: node server/cli.js --port N --bind ADDR --scrollback N -- <command...>')
+  console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME --scrollback N -- <command...>')
   process.exit(2)
 }
 
 const server = createTerminalServer({
   port: number('--port', 7681),
   bind: arg('--bind') ?? '127.0.0.1',
+  hostname: arg('--hostname'),
   scrollback: number('--scrollback', 500),
   command,
   args,

@@ -21,6 +21,9 @@ port="${PORT:-7681}"
 # transcript, so this is the only way to read back through a conversation.
 scrollback="${MTTY_SCROLLBACK:-500}"
 bind="${MTTY_BIND:-127.0.0.1}"
+# The one hostname a proxy in front of this may present. Only needed when you
+# reach it by name rather than by address; see --hostname in the usage.
+hostname="${MTTY_HOSTNAME:-}"
 config="$PWD/cloudflared.yml"
 
 # A restart kills the program, so the default one is told to come back to the
@@ -46,6 +49,8 @@ Options
   --port N       default 7681, or $PORT
   --scrollback N lines of history a reconnecting viewer gets back
                  (default 500, or $MTTY_SCROLLBACK)
+  --hostname NAME the name a proxy in front of this presents, e.g. the
+                 Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
 
 Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
@@ -59,6 +64,10 @@ the session, exit the program or run `down`.
 There is no --password: Safari does not send basic-auth on a WebSocket
 handshake, so the page would load and the terminal would never connect. Use
 `setup` and let Cloudflare Access do the login.
+
+A page on any site you visit can open a WebSocket to this server, so sockets
+are refused unless their Origin matches the address they connected to. Reaching
+it by address needs nothing; reaching it by name needs that name in --hostname.
 USAGE
 }
 
@@ -77,6 +86,7 @@ take_options() {
       --bind) [[ $# -ge 2 ]] || usage_error "--bind needs a value"; bind=$2; shift 2 ;;
       --port) [[ $# -ge 2 ]] || usage_error "--port needs a value"; port=$2; shift 2 ;;
       --scrollback) [[ $# -ge 2 ]] || usage_error "--scrollback needs a value"; scrollback=$2; shift 2 ;;
+      --hostname) [[ $# -ge 2 ]] || usage_error "--hostname needs a value"; hostname=$2; shift 2 ;;
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
@@ -98,12 +108,16 @@ set -- ${REST[@]+"${REST[@]}"}
 # the tunnel it writes points at the right place.
 [[ "$cmd" == setup ]] && exec env PORT="$port" scripts/cf-access.sh "$@"
 
+# Empty unless a name was given, so the flag is absent rather than blank.
+host_args=()
+[[ -n "$hostname" ]] && host_args=(--hostname "$hostname")
+
 case "$cmd" in
   serve)
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
     echo "serving http://$bind:$port"
     exec node server/cli.js --port "$port" --bind "$bind" \
-      --scrollback "$scrollback" -- "$@"
+      ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@"
     ;;
   attach)
     echo "Ctrl-] detaches and leaves it running. Ctrl-C goes through to the program."
@@ -137,7 +151,7 @@ case "$cmd" in
     # either, because bash defers signals until the foreground command returns
     # — so a TERM would sit unhandled and leave the tunnel behind.
     node server/cli.js --port "$port" --bind "$bind" \
-      --scrollback "$scrollback" -- "$@" &
+      ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@" &
     server=$!
     status=0
     wait $server || status=$?

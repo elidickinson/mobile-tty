@@ -186,3 +186,17 @@ test('the document validates against its build id, so an unchanged client costs 
     await server.close()
   }
 })
+
+test('a socket from another origin never reaches the session', async () => {
+  const { server, url } = await start()
+  try {
+    const outcome = await new Promise(resolve => {
+      const ws = new WebSocket(url, ['tty'], { origin: 'http://evil.example' })
+      ws.on('open', () => resolve('opened'))
+      ws.on('error', () => resolve('refused'))
+    })
+    assert.equal(outcome, 'refused', 'a hostile page got a terminal')
+  } finally {
+    await server.close()
+  }
+})

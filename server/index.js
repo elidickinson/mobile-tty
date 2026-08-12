@@ -6,6 +6,7 @@
 import { createServer } from 'node:http'
 import { WebSocketServer } from 'ws'
 import { buildClient } from './client.js'
+import { isAddress, originAllowed } from './origin.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
@@ -29,7 +30,7 @@ const MAX_FRAME = 1024 * 1024
  * about 37 KB per connect, against a pi transcript re-render that starts at
  * 12 KB and grows with every turn.
  */
-export function createTerminalServer({ port, bind, command, args = [], scrollback = 500, onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, command, args = [], scrollback = 500, onListen, onExit }) {
   const session = new Session({ command, args })
   const mirror = new Mirror({ ...session.size, scrollback })
   const viewers = new Set()
@@ -156,7 +157,26 @@ export function createTerminalServer({ port, bind, command, args = [], scrollbac
     res.writeHead(200, { ...headers, 'content-type': 'text/html' }).end(client.page)
   })
 
-  const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: MAX_FRAME, handleProtocols: () => 'tty' })
+  const wss = new WebSocketServer({
+    server: http,
+    path: '/ws',
+    maxPayload: MAX_FRAME,
+    handleProtocols: () => 'tty',
+    // Refused at the handshake rather than after the socket is up. Said out
+    // loud because the other way to land here is a proxy that was never named
+    // with --hostname, and a socket that silently will not open is a mystery.
+    verifyClient: ({ req }) => {
+      const { origin, host } = req.headers
+      if (originAllowed({ origin, host, hostname })) return true
+      // Only where it is the likely explanation: arriving under a name nobody
+      // declared. A hostile page reaching the address direct is not a setup
+      // mistake and must not be answered with advice.
+      const undeclared = !hostname && host && !isAddress(host)
+      console.error(`server: refused a socket from ${origin} for host ${host}` +
+        `${undeclared ? ' — a proxy in front of this needs --hostname' : ''}`)
+      return false
+    },
+  })
 
   wss.on('connection', ws => {
     const viewer = new Viewer(ws)
