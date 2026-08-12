@@ -18,6 +18,9 @@ const PING_MS = 30_000
 // A resize costs pi a full transcript re-render, so viewers that flap their size
 // are made to settle before anyone pays for it.
 const RESIZE_COALESCE_MS = 100
+// Generous for a paste, far short of what it takes to matter. Without it a
+// viewer could hand the PTY a hundred megabytes in one frame.
+const MAX_FRAME = 1024 * 1024
 
 export function createTerminalServer({ port, bind, index, command, args = [], onListen, onExit }) {
   const session = new Session({ command, args })
@@ -88,7 +91,7 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
     }
   })
 
-  const wss = new WebSocketServer({ server: http, path: '/ws', handleProtocols: () => 'tty' })
+  const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: MAX_FRAME, handleProtocols: () => 'tty' })
 
   wss.on('connection', ws => {
     const viewer = new Viewer(ws)
@@ -104,7 +107,9 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
         viewer.size = size
         viewer.title(command)
         viewer.prefs({})
-        admit(viewer)
+        // Nothing about one viewer's admission may reach another, so a failure
+        // here costs that viewer its connection and nothing else.
+        admit(viewer).catch(() => viewer.close(1011, 'could not send the screen'))
         return
       }
       if (buf.length === 0) return
