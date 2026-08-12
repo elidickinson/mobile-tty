@@ -109,6 +109,17 @@ which makes the common case free, since the phone is already the narrowest.
 Adopting an *already running* pi needs ptrace surgery (`reptyr`) and is Linux-only, so a restart
 ends the session and starts a fresh conversation, unless pi is given one to resume.
 
+## Development
+
+Editing `server/` needs a restart, which kills the program; editing the client (`src/`) does not,
+since the document is built per request. The tests: `npm test` for unit (including the snapshot
+round-trip gate), `npx playwright test` for WebKit at the measured device size,
+`npm run test:integrity` for the gate that no viewer is ever sent a gap, and `npm run test:smoke`
+against real pi, which sends no prompts and costs no tokens. Testing philosophy: anything
+mechanisable is a pure function, the device verifies the viewport adapter, everything downstream
+is testable without a keyboard, and there is no visual regression because goldens would churn
+while the design moves.
+
 ## Access
 
 Cloudflare tunnel, reusing the pi-phone pattern. Tailscale needs a client on every device, and
@@ -121,10 +132,25 @@ trust: a login page and a random token held in memory, invalidated by the restar
 already killed the program. `attach` does the same login rather than taking a bypass, since
 trusting loopback would trust the whole internet through cloudflared. One or the other, not both.
 
+The threat under examination is narrow: a page in some other site your browser visits must not
+get the terminal, not that the server is a web application with a public permission model. That
+is the only adversary a loopback tool can honestly name, and the mechanism is chosen for it,
+which is why its limits matter less than its fit.
+
 **Origin is checked on the handshake**, which ignores the same-origin policy and has no
 preflight: any page you visit could otherwise open `ws://127.0.0.1:7681/ws` and type into pi.
 Matching `Origin` against `Host` is not enough, since rebinding gets both to say the same
 attacker-owned name, so Host must be an address, which cannot be rebound to, or the one name
 given with `--hostname`. Declared, never inferred: a hostname is trustworthy exactly when the
-operator asserted it. No Origin is allowed, since only browsers send it and only browsers are
-bound by it.
+operator asserted it. A request with no Origin is allowed: only browsers send it, `attach` and
+curl send none, and anything hostile that is not a browser forges headers freely, so refusing it
+costs those clients and buys nothing. Scheme is not compared, so an attacker-controlled http
+endpoint on the same declared hostname could pass a wss:// handshake; that needs a foothold the
+page-on-another-site threat under examination does not have, and it names the real limit of what
+the check can promise.
+
+**An expired or invalidated login leaves an already-open client wedged.** The build-stamp check
+fetches and gets back the login page, which has no build meta, so it treats that as a failed
+check and stays on the old app while the socket is refused. The fix is the menu's **Reload app**,
+not a redirect: the greeting that is about the socket will still be honest after the cookie has
+turned.

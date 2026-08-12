@@ -38,6 +38,11 @@ export function originAllowed({ origin, host, hostname }) {
   // own: rebinding makes both of them say evil.com.
   if (!isAddress(host) && withoutPort(host) !== hostname) return false
 
+  // Scheme is deliberately not compared. `URL.host` drops default ports, so
+  // http://name and https://name both reduce to `name`; a page on plain http
+  // could then pass a wss:// handshake to the terminal. That needs an
+  // attacker-controlled http endpoint on the same declared hostname, which the
+  // threat this check addresses (a page on some other site) does not have.
   try {
     return new URL(origin).host === host
   } catch {

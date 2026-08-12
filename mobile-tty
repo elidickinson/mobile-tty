@@ -50,9 +50,10 @@ Options
   --hostname NAME the name a proxy in front of this presents, e.g. the
                  Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
   --tunnel       run the Cloudflare tunnel alongside the server
-  --attach       also attach this terminal to the server it starts. Ctrl-]
-                 detaches and leaves it serving the phone; `down` ends it.
-                 Closing the terminal ends it too, as with plain serve.
+  --attach       also attach this terminal to the server it starts, over
+                 loopback. Ctrl-] detaches and leaves it serving the phone;
+                 `down` ends it. Closing the terminal ends it too, as with
+                 plain serve.
 
 Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
@@ -134,6 +135,10 @@ case "$cmd" in
     # Attached, nothing else may write to this terminal: a line from the server
     # or the tunnel would land in the middle of pi's screen.
     if [[ -n "$with_attach" ]]; then
+      # Attaching is a loopback-only act: it connects to 127.0.0.1, so binding
+      # somewhere else would only leave the readiness probe unable to find the
+      # server it just started.
+      case "$bind" in 127.0.0.1|localhost) ;; *) die "--attach needs --bind to stay on loopback" ;; esac
       log="${TMPDIR:-/tmp}/mobile-tty.log"
       echo "logging to $log"
     fi

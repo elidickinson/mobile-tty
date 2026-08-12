@@ -3,6 +3,7 @@
 // viewer could take the rest down with it.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import http from 'node:http'
 import { WebSocket } from 'ws'
 import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
@@ -224,4 +225,35 @@ test('a password puts a login in front of both the page and the socket', async (
   } finally {
     await server.close()
   }
+})
+
+test('/login is a 404 when no password is set, and must not reach the compare', async () => {
+  const { server, page } = await start()
+  try {
+    const res = await fetch(`${page}login`, { method: 'POST', body: new URLSearchParams({ password: 'x' }) })
+    assert.equal(res.status, 404)
+  } finally {
+    await server.close()
+  }
+})
+
+test('a client that abandons its login body costs that connection, not the server', async (t) => {
+  const { server, page } = await start(undefined, [], { password: 'hunter2' })
+  t.after(() => server.close().catch(() => {}))
+  const { port } = server.http.address()
+
+  // Declare a body, send part of it, reset the socket. A phone sleeping
+  // mid-login does this; the server must shrug it off, not fall over.
+  await new Promise(resolve => {
+    const req = http.request({ method: 'POST', port, path: '/login', headers: { 'content-length': 100 }, keepAlive: true })
+    req.write('password=hun')
+    req.on('socket', () => setTimeout(() => req.destroy(new Error('simulated drop')), 50))
+    req.on('error', () => resolve())
+    setTimeout(resolve, 600)
+  })
+
+  assert.equal(server.http.listening, true, 'a dropped login crashed the server')
+  // Reset and recovered: a real one right after is still let in.
+  const res = await fetch(`${page}login`, { method: 'POST', body: new URLSearchParams({ password: 'hunter2' }), redirect: 'manual' })
+  assert.equal(res.status, 303)
 })

@@ -150,8 +150,12 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
   const http = createServer(async (req, res) => {
     const path = req.url?.split('?')[0]
 
-    if (path === '/login' && req.method === 'POST') {
-      const attempt = await submittedPassword(req)
+    // /login answers only when there is a password to log in with. Rejecting
+    // it when there is not matters beyond tidiness: `accepts` would compare
+    // against nothing, and a client that goes away mid-body is an ordinary
+    // event for a phone, not a fault worth ending a terminal over.
+    if (path === '/login' && req.method === 'POST' && auth.required) {
+      const attempt = await submittedPassword(req).catch(() => null)
       if (!attempt || !auth.accepts(attempt)) return void res.writeHead(401, loginHeaders).end(loginPage(true))
       // Secure only where the connection actually was: on `--lan` it is plain
       // http, and a cookie the browser refuses to send is a login that loops.
