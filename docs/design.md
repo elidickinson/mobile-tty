@@ -11,8 +11,10 @@ client parses it in ~30 lines.
 - **One PTY, N viewers.** The server is the session: everyone sees the same stream, and ending
   the server ends the program. An `@xterm/headless` mirror holds the current screen, so a new
   viewer is sent a picture instead of making pi redraw for one.
-- **One document**, CSS and JS inline. No service worker (they cannot register from `data:`
-  URLs), costing offline support, which is meaningless for a terminal.
+- **One document**, CSS and JS inline, so that the cache has a single yes-or-no to get right: a
+  stale document is merely old, where one stale module out of a dozen is broken. It also spares
+  the phone a five-deep import waterfall on every cold load. No service worker (they cannot
+  register from `data:` URLs), costing offline support, which is meaningless for a terminal.
 - **No build step.** esbuild runs inside the request, not into a `dist/`. A document built from
   the source on disk when it is asked for cannot be stale, and the client can be edited without
   the restart that would kill pi. ~50 ms, on a route asked for a few times a day.
