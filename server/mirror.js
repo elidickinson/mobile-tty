@@ -22,8 +22,9 @@ const PREAMBLE = '\x1b[?2004h\x1b[>7u'
 const RESET = '\x1bc'
 
 export class Mirror {
-  constructor({ cols, rows }) {
-    this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback: 0 })
+  constructor({ cols, rows, scrollback = 0 }) {
+    this.scrollback = scrollback
+    this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback })
     this.serializer = new SerializeAddon()
     this.term.loadAddon(this.serializer)
   }
@@ -38,13 +39,14 @@ export class Mirror {
   get size() { return { cols: this.term.cols, rows: this.term.rows } }
 
   /**
-   * The current screen as bytes a terminal can apply.
+   * The screen, and the history above it, as bytes a terminal can apply.
    *
-   * Only the visible grid: the client's scrollback is a lossy duplicate of pi's
-   * own transcript, and pi is the real record of the conversation.
+   * The history is not a luxury: pi renders inline and does not page itself, so
+   * the terminal's scrollback is the only way to read back through a
+   * conversation, and a snapshot without it makes every reload amnesiac.
    */
   snapshot() {
-    return RESET + PREAMBLE + this.serializer.serialize({ scrollback: 0 })
+    return RESET + PREAMBLE + this.serializer.serialize({ scrollback: this.scrollback })
   }
 
   /**

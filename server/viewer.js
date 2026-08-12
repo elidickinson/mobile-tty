@@ -18,6 +18,8 @@ export class Viewer {
     this.ws = ws
     this.size = { cols: 0, rows: 0 }
     this.started = false
+    // Cleared before each ping and set by the pong that answers it.
+    this.alive = true
     // undefined until the snapshot has been taken — output before that is
     // already inside it. An array while the snapshot is in flight. null once
     // this viewer is live.

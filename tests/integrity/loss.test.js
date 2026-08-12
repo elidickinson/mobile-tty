@@ -77,7 +77,7 @@ const gaps = bytes => {
 }
 
 test('a rogue viewer costs the well-behaved ones nothing', async () => {
-  const stack = await startStack({ port: 7695, command: 'tests/fixtures/counter.sh' })
+  const stack = await startStack({ command: 'tests/fixtures/counter.sh' })
   try {
     const rogue = new Viewer(stack.url, { rogue: true })
     await rogue.opened
@@ -104,7 +104,7 @@ test('a rogue viewer costs the well-behaved ones nothing', async () => {
 })
 
 test('a viewer joining mid-stream gets the screen and then every byte after it', async () => {
-  const stack = await startStack({ port: 7698, command: 'tests/fixtures/counter.sh' })
+  const stack = await startStack({ command: 'tests/fixtures/counter.sh' })
   try {
     // Join repeatedly while the session is at full rate: each snapshot has to
     // split the stream exactly, with nothing lost or repeated at the seam.

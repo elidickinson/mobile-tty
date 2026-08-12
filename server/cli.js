@@ -29,12 +29,6 @@ const server = createTerminalServer({
   onExit: ({ exitCode }) => server.close().then(() => process.exit(exitCode ?? 0)),
 })
 
-// A viewer must never be able to take the session down with it, so the last
-// line of defence is here rather than in the connection handler.
-process.on('uncaughtException', err => {
-  console.error('server: uncaught', err)
-})
-
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => server.close().then(() => process.exit(0)))
 }

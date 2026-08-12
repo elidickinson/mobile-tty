@@ -1,5 +1,5 @@
 // Losing and regaining the socket, and picking up a new build.
-import { test, expect, spySocket, sentFrames, ready } from './helpers.js'
+import { test, expect, spySocket, sentFrames, ready, fillScrollback, scrollbackCount } from './helpers.js'
 
 test('reconnect keeps the screen up, and rejoins the same session', async ({ page }) => {
   await ready(page)
@@ -81,4 +81,17 @@ test('losing the connection is visible without opening anything', async ({ page 
   expect(await page.locator('#conn').getAttribute('aria-label')).toMatch(/disconnected|connecting/)
 
   await expect(page.locator('#conn')).toBeHidden({ timeout: 10_000 })
+})
+
+test('reloading keeps the history above the screen, not just the screen', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+  const before = await scrollbackCount(page)
+  expect(before).toBeGreaterThan(10)
+
+  // A reload is a fresh terminal with nothing in it, so whatever comes back has
+  // to arrive in the snapshot. pi cannot page itself; this is the only history.
+  await page.reload()
+  await ready(page)
+  await expect.poll(() => scrollbackCount(page)).toBeGreaterThan(10)
 })

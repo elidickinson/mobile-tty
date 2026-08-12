@@ -132,8 +132,10 @@ cheap — it renders relatively and re-draws its **entire transcript** on SIGWIN
 12 KB after one turn and growing linearly, so the old attach paid a redraw proportional to
 the whole conversation.
 
-The snapshot is the visible grid only. Terminal scrollback is not restored: it was only ever
-a lossy duplicate of pi's transcript, and pi is the real record.
+The snapshot carries the screen and 500 lines of history above it. That history is not a
+luxury: pi renders inline and does not page itself — PageUp gets `\e[1G\e[?25l` and nothing
+else — so the terminal's scrollback is the only way to read back through a conversation.
+About 37 KB, against a transcript re-render that starts at 12 KB and grows every turn.
 
 The terminal object outlives the socket, so a drop leaves the stale screen up rather than
 blanking. Input queues while down; resizes do not, since the handshake carries the size.

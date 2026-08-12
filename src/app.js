@@ -460,7 +460,7 @@ async function main() {
   // by the bottom inset and leaves rows permanently below the fold. Refit once
   // the real values are in.
   requestAnimationFrame(() => fitGrid(applyLayout()))
-  conn.connect({ cols: state.cols, rows: state.rows })
+  conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
 
   checkForNewBuild()
 
