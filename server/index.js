@@ -4,8 +4,8 @@
 // the unwritten tail of a read whenever a client socket filled, which is where
 // the corrupt escape sequences came from; nothing here may repeat that.
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
 import { WebSocketServer } from 'ws'
+import { buildClient } from './client.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
@@ -29,7 +29,7 @@ const MAX_FRAME = 1024 * 1024
  * about 37 KB per connect, against a pi transcript re-render that starts at
  * 12 KB and grows with every turn.
  */
-export function createTerminalServer({ port, bind, index, command, args = [], scrollback = 500, onListen, onExit }) {
+export function createTerminalServer({ port, bind, command, args = [], scrollback = 500, onListen, onExit }) {
   const session = new Session({ command, args })
   const mirror = new Mirror({ ...session.size, scrollback })
   const viewers = new Set()
@@ -133,14 +133,27 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
     fitTimer.unref()
   }
 
+  // The query is ignored: `?b=<id>` is only there to give the client a URL iOS
+  // has no cached copy of, and what it gets back is whatever is current. It must
+  // not be cached any harder than `/` either — the home screen launches a fixed
+  // URL, so pinning that one would strand the phone on an old build for good.
   const http = createServer(async (req, res) => {
     if (req.url?.split('?')[0] !== '/') return void res.writeHead(404).end()
+    let client
     try {
-      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' })
-        .end(await readFile(index))
-    } catch {
-      res.writeHead(500).end('cannot read the client')
+      client = await buildClient()
+    } catch (err) {
+      // A phone has no console, so a build that fails has to be legible in the
+      // page. The server stays up: fix the source and reload.
+      return void res.writeHead(500, { 'content-type': 'text/plain' }).end(String(err.message ?? err))
     }
+    // `no-cache` is revalidate, not don't-store. An unchanged client costs a
+    // conditional request instead of the whole document, and the build-id check
+    // at startup covers the platforms that revalidate only when they feel like
+    // it — which is iOS standalone, the one that matters.
+    const headers = { etag: client.etag, 'cache-control': 'no-cache' }
+    if (req.headers['if-none-match'] === client.etag) return void res.writeHead(304, headers).end()
+    res.writeHead(200, { ...headers, 'content-type': 'text/html' }).end(client.page)
   })
 
   const wss = new WebSocketServer({ server: http, path: '/ws', maxPayload: MAX_FRAME, handleProtocols: () => 'tty' })

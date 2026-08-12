@@ -10,6 +10,12 @@ client is a single self-contained file — all CSS and JS inline, no service wor
 cannot register from `data:` URLs). That costs offline support, meaningless for a terminal,
 and web push, which belongs on Pushover anyway.
 
+**No build step.** esbuild runs inside the request rather than into a `dist/`. A document
+built from the source on disk at the moment it is asked for cannot be stale, so there is no
+staleness to detect and no artifact to invalidate; it also means the client can be edited
+without restarting the server, which would kill pi. It costs ~50 ms on a route asked for a
+handful of times a day.
+
 **One PTY, N viewers.** The server is the session: every viewer sees the same stream and
 writes into the same PTY, and ending the server ends the program. It keeps the current
 screen in an `@xterm/headless` mirror so a new viewer is sent a picture instead of making
@@ -90,7 +96,10 @@ surviving rows go to its own input box and that window cannot be moved.
   the viewport, and only when the keyboard is down — with it up the home indicator sits
   over the keyboard. The key bar grows to cover it rather than leaving a gap.
 - **Standalone** via `apple-mobile-web-app-capable`, worth +7 rows. iOS caches the launch
-  document regardless of `no-store`, so the page compares a build stamp and reloads itself.
+  document whatever the headers say, so freshness is the page's job, not the cache's: it
+  compares a build stamp — a hash of the document, which is also its ETag — and reloads
+  itself past the cache. Since that check is what actually works, the header is `no-cache`
+  rather than `no-store`, and an unchanged client costs a 304 instead of the whole document.
 
 ## Scrolling
 

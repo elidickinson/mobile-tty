@@ -26,7 +26,7 @@ test('reconnect keeps the screen up, and rejoins the same session', async ({ pag
 
 test('a current build does not reload, and a newer one is fetched past the cache', async ({ page }) => {
   await ready(page)
-  expect(await page.evaluate(() => document.querySelector('meta[name=build]').content)).toMatch(/^[0-9a-z]+$/)
+  expect(await page.evaluate(() => document.querySelector('meta[name=build]').content)).toMatch(/^[\w-]{12}$/)
 
   // Same build served: it must sit still, or a stale cache becomes a loop.
   await page.evaluate(() => window.mtty.checkForNewBuild())

@@ -11,7 +11,6 @@ export const phone = {
 }
 
 export default defineConfig({
-  globalSetup: './tests/e2e/build.js',
   testDir: 'tests/e2e',
   timeout: 20_000,
   expect: { timeout: 8_000 },

@@ -18,7 +18,7 @@ export const test = base.extend({
     // machine's aliases must never leak into a fixture run.
     const agentDir = mkdtempSync(join(tmpdir(), 'mobile-tty-smoke-'))
     const server = spawn('node', [
-      'server/cli.js', '--port', '0', '--index', 'dist/client.html',
+      'server/cli.js', '--port', '0',
       '--', 'pi',
       '-ne', '--offline', '--no-session', '--no-builtin-tools', '--no-skills',
       '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-approve',

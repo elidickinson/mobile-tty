@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Resolve through symlinks so ~/bin/mobile-tty -> repo/mobile-tty still finds
-# scripts/, dist/ and cloudflared.yml.
+# server/, scripts/ and cloudflared.yml.
 self=$0
 while [[ -L "$self" ]]; do
   self_dir=$(cd -P "$(dirname "$self")" && pwd)
@@ -14,7 +14,7 @@ while [[ -L "$self" ]]; do
 done
 root=$(cd -P "$(dirname "$self")" && pwd)
 cd "$root" || { echo "mobile-tty: cannot enter $root" >&2; exit 1; }
-[[ -f scripts/build.js ]] || { echo "mobile-tty: $root does not look like the mobile-tty checkout" >&2; exit 1; }
+[[ -f server/cli.js ]] || { echo "mobile-tty: $root does not look like the mobile-tty checkout" >&2; exit 1; }
 
 port="${PORT:-7681}"
 # Lines of history a reconnecting viewer gets back. pi does not page its own
@@ -32,7 +32,7 @@ usage() {
   cat <<'USAGE'
 Usage: mobile-tty [command] [options] [program...]
 
-  serve          build if stale, then serve it (default)
+  serve          serve the terminal (default)
   attach         attach this terminal to a running server
   up             serve and run the tunnel, both ending together
   tunnel         run the Cloudflare tunnel on its own
@@ -98,27 +98,11 @@ set -- ${REST[@]+"${REST[@]}"}
 # the tunnel it writes points at the right place.
 [[ "$cmd" == setup ]] && exec env PORT="$port" scripts/cf-access.sh "$@"
 
-# Build only when the client is older than what it is built from. The server is
-# node either way, so this only saves the build, not the dependency.
-build_if_stale() {
-  local stale=""
-  # package-lock stands in for node_modules: installing a different @wterm
-  # version leaves dist/ newer than src/ but built from something else.
-  [[ -f dist/client.html ]] &&
-    stale=$(find src scripts/build.js package.json package-lock.json \
-      -newer dist/client.html -print -quit 2>/dev/null || true)
-  if [[ ! -f dist/client.html || -n "$stale" ]]; then
-    command -v node >/dev/null || die "dist/client.html is out of date and node is not installed"
-    node scripts/build.js
-  fi
-}
-
 case "$cmd" in
   serve)
-    build_if_stale
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
     echo "serving http://$bind:$port"
-    exec node server/cli.js --port "$port" --bind "$bind" --index dist/client.html \
+    exec node server/cli.js --port "$port" --bind "$bind" \
       --scrollback "$scrollback" -- "$@"
     ;;
   attach)
@@ -139,7 +123,6 @@ case "$cmd" in
       200) echo "WARNING: $host answers with no login in front of it" ;;
       *) echo "$host is not answering yet (${probe%% *})" ;;
     esac
-    build_if_stale
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
     cloudflared tunnel --config "$config" run &
     tunnel=$!
@@ -153,7 +136,7 @@ case "$cmd" in
     # shell and take the trap with it; and not the server in the foreground
     # either, because bash defers signals until the foreground command returns
     # — so a TERM would sit unhandled and leave the tunnel behind.
-    node server/cli.js --port "$port" --bind "$bind" --index dist/client.html \
+    node server/cli.js --port "$port" --bind "$bind" \
       --scrollback "$scrollback" -- "$@" &
     server=$!
     status=0

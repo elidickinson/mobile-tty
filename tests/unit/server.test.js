@@ -8,11 +8,10 @@ import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
 
 const start = async (command = 'tests/fixtures/fake-pi.sh', args = []) => {
-  const server = createTerminalServer({
-    port: 0, bind: '127.0.0.1', index: 'dist/client.html', command, args,
-  })
+  const server = createTerminalServer({ port: 0, bind: '127.0.0.1', command, args })
   await new Promise(r => server.http.on('listening', r))
-  return { server, url: `ws://127.0.0.1:${server.http.address().port}/ws` }
+  const { port } = server.http.address()
+  return { server, url: `ws://127.0.0.1:${port}/ws`, page: `http://127.0.0.1:${port}/` }
 }
 
 /** Connect, handshake, and report how much screen arrived before it settled. */
@@ -166,6 +165,24 @@ test('a resize leaves every viewer with the same history, whenever it joined', a
       'a viewer resized into the grid and one that arrived at it never agree')
   } finally {
     narrow?.close(); early?.close(); late?.close()
+    await server.close()
+  }
+})
+
+test('the document validates against its build id, so an unchanged client costs a 304', async () => {
+  const { server, page } = await start()
+  try {
+    const first = await fetch(page)
+    const etag = first.headers.get('etag')
+    assert.equal(first.status, 200)
+    assert.ok(etag, 'the document carries a validator')
+    // One value does both jobs: what the cache validates against is what the
+    // client compares itself to.
+    assert.match(await first.text(), new RegExp(`<meta name="build" content="${etag.slice(1, -1)}">`))
+
+    const again = await fetch(page, { headers: { 'if-none-match': etag } })
+    assert.equal(again.status, 304)
+  } finally {
     await server.close()
   }
 })

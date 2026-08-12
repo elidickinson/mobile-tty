@@ -6,8 +6,6 @@
     "test": "node --test 'tests/unit/**/*.test.js'",
     "test:integrity": "node --test 'tests/integrity/*.test.js'",
     "test:real-pi": "node --test 'tests/real-pi/*.test.js'",
-    "build": "node scripts/build.js",
-    "dev": "node scripts/build.js --watch",
     "test:e2e": "playwright test",
     "test:smoke": "playwright test -c playwright.smoke.config.js",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
@@ -15,13 +13,13 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
-    "esbuild": "^0.28.2"
+    "@playwright/test": "^1.62.1"
   },
   "dependencies": {
     "@wterm/dom": "^0.3.3",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
+    "esbuild": "^0.28.2",
     "node-pty": "1.1.0",
     "ws": "^8.21.3"
   }

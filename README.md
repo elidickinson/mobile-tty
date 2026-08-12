@@ -19,7 +19,7 @@ It listens on **loopback by default**, because that is all the tunnel needs. `--
 
 The **server** holds the program: one PTY, and every viewer looks at the same screen. It keeps that screen, so opening the page gets it back instantly instead of making the program redraw, and closing the last tab kills nothing. `attach` joins a server that is already running rather than starting one. To end the session, exit the program or run `down`.
 
-Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. The build is skipped when `dist/client.html` is newer than `src/` and the lockfile, though the server is node either way.
+Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. There is no build step: the server bundles the client when the page is asked for, so an edit needs a reload and nothing else — notably not a restart, which would kill the program.
 
 `down` ends everything — server, tunnel, and the program. The default program is `pi --session-id mobile-tty`, so starting again rejoins the same conversation and only work in flight is lost. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
@@ -58,7 +58,6 @@ npm test                # unit, including the snapshot round-trip gate
 npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.sh
 npm run test:integrity  # that no viewer is ever sent a gap
 npm run test:smoke      # against real pi; sends no prompts, costs no tokens
-npm run build           # dist/client.html, one self-contained file
 ```
 
 Anything mechanisable is a pure function; the device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. Not doing visual regression — goldens would churn while the design moves.

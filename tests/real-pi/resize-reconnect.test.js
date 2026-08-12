@@ -103,7 +103,6 @@ test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_
     server = createTerminalServer({
       port: 0,
       bind: '127.0.0.1',
-      index: 'dist/client.html',
       scrollback: 500,
       command: process.env.MOBILE_TTY_PI ?? 'pi',
       args: [

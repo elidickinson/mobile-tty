@@ -15,7 +15,7 @@ export { expect }
 export const test = base.extend({
   baseURL: async ({}, use) => {
     const server = spawn('node',
-      ['server/cli.js', '--port', '0', '--index', 'dist/client.html', '--', 'tests/fixtures/fake-pi.sh'],
+      ['server/cli.js', '--port', '0', '--', 'tests/fixtures/fake-pi.sh'],
       { stdio: ['ignore', 'pipe', 'inherit'] })
     const port = await new Promise((resolve, reject) => {
       server.stdout.on('data', d => {
