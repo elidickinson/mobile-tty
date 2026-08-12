@@ -22,8 +22,8 @@ export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chu
 
 // The chord is the one thing a viewer cannot discover on its own, so say it
 // once on the way in. Long enough to read, short enough not to be in the way.
-const BANNER = 'mobile-tty — press Ctrl-] to disconnect\r\nCtrl-C and Ctrl-Z go through to the program.'
-const BANNER_MS = 2000
+const BANNER = '\r\n\r\n    [mobile-tty] You can press Ctrl-] to disconnect this terminal when done\r\n\r\n'
+const BANNER_MS = 4000
 
 const frame = (cmd, text) => Buffer.concat([Buffer.from([cmd]), Buffer.from(text)])
 
