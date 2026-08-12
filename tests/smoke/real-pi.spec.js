@@ -167,8 +167,10 @@ test('a resize does not dump a reader at the live edge', async ({ page }) => {
   await setGrid(page, '120×40', 120)
 
   // The reader's relative position survives the reflow, within the rounding a
-  // coarser row grid introduces — not just "not dumped exactly to the bottom".
-  await expect.poll(() => readingShare(page), { timeout: 2_000 })
-    .toBeGreaterThan(before - 0.1)
+  // coarser row grid introduces. A one-sided "not less than" bound would still
+  // pass a regression that clamps to the very top (share → 1), which is
+  // exactly the failure this test exists to catch, so it checks both sides.
+  await expect.poll(async () => Math.abs((await readingShare(page)) - before), { timeout: 2_000 })
+    .toBeLessThan(0.1)
   await expect.poll(() => fixtureIds(page)).toEqual(allIds)
 })

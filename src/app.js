@@ -206,7 +206,11 @@ function keepReading(share) {
   let last = -1
   let frames = 0
   const cancel = () => {
-    stopReading = () => {}
+    // A stale cancel firing after a newer resize has already taken over must
+    // not clear that newer one's ownership — checked, not assumed, because a
+    // resize landing before the next frame calls this twice: once directly,
+    // once from its own step's guard.
+    if (stopReading === cancel) stopReading = () => {}
     screen.removeEventListener('pointerdown', cancel)
     screen.removeEventListener('wheel', cancel)
   }
