@@ -31,8 +31,7 @@ const setup = (opts = {}) => {
     ...opts,
   })
   // Run everything currently pending, including anything it schedules in turn.
-  const flush = () => { while (timers.length) timers.shift().fn() }
-  return { c, events, timers, flush, sock: () => FakeSocket.last }
+  return { c, events, timers, sock: () => FakeSocket.last }
 }
 
 test('connects with the tty subprotocol and sends the handshake first', () => {
@@ -52,7 +51,7 @@ test('output frames arrive as raw bytes', () => {
 })
 
 test('input typed while disconnected is queued and flushed on reconnect', () => {
-  const { c, sock, timers, flush } = setup()
+  const { c, sock, timers } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
   sock().drop()
@@ -68,7 +67,7 @@ test('input typed while disconnected is queued and flushed on reconnect', () => 
 })
 
 test('backoff grows on repeated failure and resets once connected', () => {
-  const { c, sock, timers, flush } = setup()
+  const { c, sock, timers } = setup()
   const retry = () => timers.shift().fn()
   const delays = []
   c.connect({ cols: 50, rows: 30 })

@@ -123,12 +123,7 @@ export class Mirror {
     if (cut > 0) this.term.write(buf.subarray(0, cut))
   }
 
-  resize(cols, rows) {
-    if (cols === this.term.cols && rows === this.term.rows) return
-    this.term.resize(cols, rows)
-  }
-
-  get size() { return { cols: this.term.cols, rows: this.term.rows } }
+  resize(cols, rows) { this.term.resize(cols, rows) }
 
   /**
    * The screen, and the history above it, as bytes a terminal can apply.

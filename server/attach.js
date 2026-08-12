@@ -6,18 +6,13 @@
 // whatever happens, SIGWINCH forwarded, and Ctrl-C and Ctrl-Z passed through to
 // the far side rather than acted on here.
 import { WebSocket } from 'ws'
+import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
 // and not Ctrl-C or Ctrl-Z, which are the whole point of passing through.
 const DETACH = 0x1d
 
-const INPUT = '0'
-const RESIZE = '1'
-const OUTPUT = 0x30
-const SET_TITLE = 0x31
-const SET_SIZE = 0x33
-
-const frame = (cmd, text) => Buffer.concat([Buffer.from(cmd), Buffer.from(text)])
+const frame = (cmd, text) => Buffer.concat([Buffer.from([cmd]), Buffer.from(text)])
 
 export function attach({ url }) {
   const { stdin, stdout } = process

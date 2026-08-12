@@ -9,7 +9,7 @@ import { WebSocketServer } from 'ws'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
-import { INPUT, RESIZE, decodeHandshake, decodeResize } from './protocol.js'
+import { INPUT, RESIZE, decodeSize } from './protocol.js'
 
 // Cloudflare drops idle sockets and the phone sleeps, so the socket has to be
 // spoken to even when pi is silent. ttyd did this and it is why `up` survived a
@@ -132,7 +132,7 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
     ws.on('message', data => {
       const buf = Buffer.from(data)
       if (!viewer.started) {
-        const size = decodeHandshake(buf)
+        const size = decodeSize(buf)
         if (!size) return void viewer.close(1002, 'bad handshake')
         viewer.started = true
         viewer.size = size
@@ -151,7 +151,7 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
           session.write(buf.subarray(1))
           break
         case RESIZE: {
-          const size = decodeResize(buf.subarray(1))
+          const size = decodeSize(buf.subarray(1))
           if (size) {
             viewer.size = size
             scheduleFit()
@@ -190,8 +190,6 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
 
   return {
     http,
-    wss,
-    session,
     async close() {
       clearInterval(ping)
       clearTimeout(fitTimer)

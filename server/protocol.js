@@ -12,31 +12,22 @@ export const SET_TITLE = 0x31    // '1'
 export const SET_SIZE = 0x33     // '3'  the grid the PTY actually has
 
 /**
- * The handshake is a bare JSON object rather than a prefixed frame, and must be
- * the first message on the socket. Returns null for anything unparseable, so a
- * malformed one closes a viewer instead of the server.
+ * A size off the wire, from either the handshake or a RESIZE frame.
+ *
+ * The handshake is a bare JSON object with no command byte and must be the first
+ * message on the socket; a RESIZE is the same payload behind a prefix. Both
+ * reach the PTY, so both get the same scrutiny. Returns null for anything
+ * unparseable or unreasonable, which closes that viewer rather than the server.
  */
-export const decodeHandshake = buf => {
+export const decodeSize = buf => {
   try {
-    return sane(JSON.parse(buf.toString()))
+    const { columns, rows } = JSON.parse(buf.toString())
+    if (!Number.isInteger(columns) || !Number.isInteger(rows)) return null
+    // The upper bound is not theatre: the grid is allocated server-side, in the
+    // mirror as well as the PTY.
+    if (columns < 1 || rows < 1 || columns > 1000 || rows > 1000) return null
+    return { cols: columns, rows }
   } catch {
     return null
   }
-}
-
-/** A RESIZE payload. Returns null unless both dimensions are sane. */
-export const decodeResize = buf => {
-  try {
-    return sane(JSON.parse(buf.toString()))
-  } catch {
-    return null
-  }
-}
-
-// Every size reaching the PTY goes through here. A handshake carries one too, so
-// it gets the same scrutiny as a resize rather than a friendlier parse.
-function sane({ columns, rows }) {
-  if (!Number.isInteger(columns) || !Number.isInteger(rows)) return null
-  if (columns < 1 || rows < 1 || columns > 1000 || rows > 1000) return null
-  return { cols: columns, rows }
 }
