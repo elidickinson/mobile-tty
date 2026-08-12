@@ -61,19 +61,19 @@ test('the top inset is already excluded from the viewport, so subtracting it wou
 
 test('with the keyboard down the key bar covers the bottom inset', () => {
   const l = deriveLayout(FIXTURES['standalone portrait, kb down'])
-  assert.equal(l.keyBarHeight, KEY_BAR_H + 34, 'the bar grows rather than leaving a gap')
-  assert.equal(l.keyBarPadBottom, 34, 'its keys stay clear of the home indicator')
-  assert.equal(l.terminal.height, 812 - 34 - KEY_BAR_H)
+  assert.equal(l.keyBarHeight, KEY_BAR_H + 34 + 10, 'the bar grows rather than leaving a gap')
+  assert.equal(l.keyBarPadBottom, 34 + 10, 'its keys stay clear of the home indicator and the corner curve')
+  assert.equal(l.terminal.height, 812 - (34 + 10) - KEY_BAR_H)
 })
 
 test('with the keyboard up the bottom inset is not reserved — it is over the keyboard', () => {
   const up = deriveLayout(FIXTURES['standalone portrait, kb up'])
   assert.equal(up.keyBarHeight, KEY_BAR_H)
   assert.equal(up.keyBarPadBottom, 0)
-  assert.equal(up.terminal.height, 498 - KEY_BAR_H, 'reclaims the 34pt home-indicator inset')
+  assert.equal(up.terminal.height, 498 - KEY_BAR_H, 'reclaims the whole bottom reserve')
 
   const rows = Math.floor(up.terminal.height / 15)
-  const reserved = Math.floor((498 - 34 - KEY_BAR_H) / 15)
+  const reserved = Math.floor((498 - (34 + 10) - KEY_BAR_H) / 15)
   assert.ok(rows > reserved, 'that is a whole extra row of pi')
 })
 
@@ -81,7 +81,7 @@ test('the grid is sized from the layout viewport, so the keyboard never reflows 
   const down = deriveLayout(FIXTURES['standalone portrait, kb down'])
   const up = deriveLayout(FIXTURES['standalone portrait, kb up'])
   assert.equal(down.stableHeight, up.stableHeight, 'same grid whether the keyboard is up or not')
-  assert.equal(up.stableHeight, 812 - 34 - KEY_BAR_H)
+  assert.equal(up.stableHeight, 812 - (34 + 10) - KEY_BAR_H)
   assert.ok(up.stableHeight > up.terminal.height, 'more grid than fits on screen — pan to the rest')
 })
 

@@ -115,8 +115,8 @@ test('the key bar covers the home-indicator inset, leaving no gap beneath it', a
              btnBottom: btn.bottom, btnHeight: btn.height }
   })
   expect(m.barBottom).toBeCloseTo(m.appBottom, 0)             // nothing wasted below it
-  expect(m.barHeight).toBeCloseTo(44 + 34, 0)                 // it grew by the inset
-  expect(m.btnBottom).toBeLessThanOrEqual(m.appBottom - 33)   // keys clear the indicator
+  expect(m.barHeight).toBeCloseTo(44 + 34 + 10, 0)            // it grew by the inset and the clearance
+  expect(m.btnBottom).toBeLessThanOrEqual(m.appBottom - 43)   // keys clear the indicator and the corner
   expect(m.btnHeight).toBeGreaterThan(20)
 })
 test('the document is not scrollable and the terminal claims vertical drags', async ({ page }) => {

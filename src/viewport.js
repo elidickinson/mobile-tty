@@ -4,6 +4,10 @@
 
 export const KEY_BAR_H = 44
 
+// Keys sitting on the bottom edge of the glass are awkward to hit, and the outer
+// two run into the display's corner curve. Lift them clear of both.
+const BOTTOM_CLEARANCE = 10
+
 const MIN_COLS = 20
 const MIN_ROWS = 4
 
@@ -64,7 +68,8 @@ export function deriveLayout(s) {
   // keyboard up it sits over the keyboard, so reserving the inset there is dead
   // space. When it is down the key bar grows to cover it, keeping its keys clear
   // of the indicator — reserving it below the bar instead just leaves a gap.
-  const bottomInset = keyboardUp ? 0 : s.insetBottom
+  const bottomReserve = s.insetBottom + BOTTOM_CLEARANCE
+  const bottomInset = keyboardUp ? 0 : bottomReserve
   const keyBarHeight = KEY_BAR_H + bottomInset
 
   return {
@@ -77,7 +82,7 @@ export function deriveLayout(s) {
     // What to size the *grid* from. The layout viewport ignores the keyboard,
     // so the grid stays put when it opens and the visible window just shows
     // less of it — occlude and pan, rather than reflowing pi mid-sentence.
-    stableHeight: s.innerHeight - s.insetBottom - KEY_BAR_H,
+    stableHeight: s.innerHeight - bottomReserve - KEY_BAR_H,
     terminal: {
       width,
       height: appHeight - keyBarHeight,

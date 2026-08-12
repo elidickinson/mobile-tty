@@ -91,6 +91,9 @@ html, body {
   display: flex;
   align-items: stretch;
   gap: 1px;
+  /* The bar bleeds to the edge of the glass; the keys stay out of the corner
+     curve. Vertical clearance is the bar's own padding, set from the insets. */
+  padding-inline: 8px;
   background: var(--edge);
   border-top: 1px solid var(--edge);
 }
