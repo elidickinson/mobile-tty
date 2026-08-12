@@ -158,6 +158,11 @@ path, the terminal modes pi and the snapshot turned on undone on the way out —
 that comes back keeps its cursor and gets plain key bytes — SIGWINCH forwarded, `Ctrl-C`
 and `Ctrl-Z` passed through rather than acted on, and `Ctrl-]` to detach.
 
+That chord is the one thing a viewer cannot discover on its own, so `attach` names it on a
+cleared screen and holds back its hello for two seconds, or until any key. The server sends
+nothing until the hello, so nothing is buffered or lost — the snapshot simply arrives after
+the banner and repaints over it.
+
 One PTY still has one size, so viewers cannot each have their own. **The narrowest wins**:
 this is meant to be read on a phone, and a desktop showing a phone-width column is legible
 where the reverse is not. The server picks the size, tells every viewer what it actually is,
