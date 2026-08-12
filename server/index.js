@@ -21,7 +21,10 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
   const mirror = new Mirror(session.size)
   const viewers = new Set()
 
-  session.onResize = ({ cols, rows }) => mirror.resize(cols, rows)
+  session.onResize = size => {
+    mirror.resize(size.cols, size.rows)
+    for (const viewer of viewers) if (viewer.queue === null) viewer.sendSize(size)
+  }
   session.onData = data => {
     mirror.write(data)
     for (const viewer of viewers) {
@@ -52,6 +55,10 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
     // sends those bytes twice, once inside the snapshot and once after it.
     viewer.queue = []
     const snapshot = Buffer.from(mirror.snapshot())
+    // Size before screen: the snapshot is drawn for the PTY's grid, so a viewer
+    // that asked for a different one has to be rendering at this size before it
+    // arrives.
+    viewer.sendSize(session.size)
     if (!viewer.output(snapshot)) return
     for (const chunk of viewer.queue) if (!viewer.output(chunk)) return
     viewer.queue = null

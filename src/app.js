@@ -61,6 +61,7 @@ const conn = new TtydConnection({
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); applyPendingGrid() },
   onTitle: title => { document.title = title },
+  onSize: ({ cols, rows }) => applyServerSize(cols, rows),
   onState: showConnection,
 })
 
@@ -156,10 +157,22 @@ function applyPendingGrid() {
   }
   const { cols, rows } = pendingGrid
   pendingGrid = null
+  conn.resize(cols, rows)
+}
+
+/**
+ * Render at the grid the PTY actually has.
+ *
+ * The server owns the PTY and gives it to the narrowest viewer, so what we ask
+ * for and what we get are not always the same. Rendering anything other than
+ * the real grid would mean parsing a relative stream drawn for a different
+ * width, which is wrong in a way that looks like a layout bug.
+ */
+function applyServerSize(cols, rows) {
+  if (cols === state.cols && rows === state.rows) return
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
-  conn.resize(cols, rows)
   sizeScreen()
 }
 

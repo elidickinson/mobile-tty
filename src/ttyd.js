@@ -7,6 +7,7 @@ export const RESUME = '3'
 export const OUTPUT = '0'
 export const SET_TITLE = '1'
 export const SET_PREFS = '2'
+export const SET_SIZE = '3'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -42,6 +43,6 @@ export function decodeFrame(buffer) {
   const payload = all.subarray(1)
   if (cmd === OUTPUT) return { cmd, payload }
   const text = dec.decode(payload)
-  if (cmd === SET_PREFS) return { cmd, text, json: JSON.parse(text) }
+  if (cmd === SET_PREFS || cmd === SET_SIZE) return { cmd, text, json: JSON.parse(text) }
   return { cmd, text }
 }
