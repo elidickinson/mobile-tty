@@ -193,11 +193,14 @@ case "$cmd" in
     fi
 
     # Attach only once it can actually be connected to, and give up if the
-    # server died on the way rather than retrying against nothing.
+    # server died on the way rather than retrying against nothing. Check the
+    # child is alive *before* the curl answers: if the port was already taken,
+    # the curl would succeed against that other listener and we would end up
+    # attached to the wrong session.
     ready=""
     for _ in $(seq 100); do
-      curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/" && { ready=1; break; }
       kill -0 "$server" 2>/dev/null || die "the server exited before it was ready; see $log"
+      curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/" && { ready=1; break; }
       sleep 0.1
     done
     [[ -n "$ready" ]] || die "the server never started listening on $port; see $log"

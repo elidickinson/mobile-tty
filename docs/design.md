@@ -149,8 +149,8 @@ endpoint on the same declared hostname could pass a wss:// handshake; that needs
 page-on-another-site threat under examination does not have, and it names the real limit of what
 the check can promise.
 
-**An expired or invalidated login leaves an already-open client wedged.** The build-stamp check
-fetches and gets back the login page, which has no build meta, so it treats that as a failed
-check and stays on the old app while the socket is refused. The fix is the menu's **Reload app**,
-not a redirect: the greeting that is about the socket will still be honest after the cookie has
-turned.
+**An expired or invalidated login leaves an already-open client wedged.** The Open socket itself
+keeps working, since auth is checked only at the handshake, but when it drops the reconnect
+handshakes are refused and the client retries indefinitely with the stale screen up. The fix is
+the menu's **Reload app**, not a redirect: the app cannot be expected to surface a login the
+socket no longer lets through.
