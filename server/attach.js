@@ -15,6 +15,7 @@ const INPUT = '0'
 const RESIZE = '1'
 const OUTPUT = 0x30
 const SET_TITLE = 0x31
+const SET_SIZE = 0x33
 
 const frame = (cmd, text) => Buffer.concat([Buffer.from(cmd), Buffer.from(text)])
 
@@ -57,6 +58,8 @@ export function attach({ url }) {
     })
   })
 
+  let announced = null
+
   ws.on('message', data => {
     const buf = Buffer.from(data)
     if (buf[0] === OUTPUT) {
@@ -68,6 +71,17 @@ export function attach({ url }) {
       }
     }
     else if (buf[0] === SET_TITLE) stdout.write(`\x1b]0;${buf.subarray(1)}\x07`)
+    else if (buf[0] === SET_SIZE) {
+      // A real terminal cannot be resized from in here, so when a narrower
+      // viewer owns the grid the program simply draws in part of this window.
+      // Say so once, or it reads as a rendering fault.
+      const { columns, rows } = JSON.parse(buf.subarray(1))
+      const note = `${columns}x${rows}`
+      if (note !== announced && columns < size().columns) {
+        stdout.write(`\r\n[drawing at ${note} — a narrower viewer owns the grid]\r\n`)
+      }
+      announced = note
+    }
   })
 
   ws.on('close', (code, reason) => leave(

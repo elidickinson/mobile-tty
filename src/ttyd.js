@@ -1,12 +1,10 @@
-// ttyd's WebSocket protocol: subprotocol `tty` on /ws, first byte is the command.
+// The wire protocol: subprotocol `tty` on /ws, first byte is the command.
+// `server/protocol.js` is the other half.
 export const INPUT = '0'
 export const RESIZE = '1'
-export const PAUSE = '2'
-export const RESUME = '3'
 
 export const OUTPUT = '0'
 export const SET_TITLE = '1'
-export const SET_PREFS = '2'
 export const SET_SIZE = '3'
 
 const enc = new TextEncoder()
@@ -43,6 +41,6 @@ export function decodeFrame(buffer) {
   const payload = all.subarray(1)
   if (cmd === OUTPUT) return { cmd, payload }
   const text = dec.decode(payload)
-  if (cmd === SET_PREFS || cmd === SET_SIZE) return { cmd, text, json: JSON.parse(text) }
+  if (cmd === SET_SIZE) return { cmd, text, json: JSON.parse(text) }
   return { cmd, text }
 }

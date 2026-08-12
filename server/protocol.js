@@ -5,13 +5,10 @@
 // client -> server
 export const INPUT = 0x30        // '0'
 export const RESIZE = 0x31       // '1'
-export const PAUSE = 0x32        // '2'
-export const RESUME = 0x33       // '3'
 
 // server -> client
 export const OUTPUT = 0x30       // '0'
 export const SET_TITLE = 0x31    // '1'
-export const SET_PREFS = 0x32    // '2'
 export const SET_SIZE = 0x33     // '3'  the grid the PTY actually has
 
 /**

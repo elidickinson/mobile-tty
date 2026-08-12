@@ -137,7 +137,6 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
         viewer.started = true
         viewer.size = size
         viewer.title(command)
-        viewer.prefs({})
         // Nothing about one viewer's admission may reach another, so a failure
         // here costs that viewer its connection and nothing else.
         admit(viewer).catch(err => {
@@ -160,7 +159,7 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
           break
         }
         default:
-          break   // PAUSE and RESUME exist in the protocol; nothing needs them
+          break
       }
     })
 

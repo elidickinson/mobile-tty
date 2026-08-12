@@ -83,5 +83,7 @@ export class Session {
     if (this.viewers.size > 0) this.fit()
   }
 
-  kill(signal) { this.pty.kill(signal) }
+  // node-pty defaults to SIGHUP, which pi handles but which is a surprising
+  // thing for Ctrl-C on the server to turn into. Say what we mean.
+  kill(signal = 'SIGTERM') { this.pty.kill(signal) }
 }

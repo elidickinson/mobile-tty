@@ -1,7 +1,7 @@
 // ttyd frame encoding and decoding.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_PREFS, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../../src/ttyd.js'
+import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../../src/ttyd.js'
 
 const bytes = a => new Uint8Array(a)
 const str = u => new TextDecoder().decode(u)
@@ -33,12 +33,13 @@ test('decodeFrame splits command byte from raw payload without decoding it', () 
   assert.deepEqual(f.payload, bytes([0xe2, 0x94, 0x80]))
 })
 
-test('decodeFrame reads title and preference frames as text', () => {
+test('decodeFrame reads title as text and the size as JSON', () => {
   const enc = new TextEncoder()
   assert.equal(decodeFrame(enc.encode('1pi').buffer).cmd, SET_TITLE)
   assert.equal(decodeFrame(enc.encode('1pi').buffer).text, 'pi')
-  assert.deepEqual(decodeFrame(enc.encode('2{"a":1}').buffer).json, { a: 1 })
-  assert.equal(decodeFrame(enc.encode('2{"a":1}').buffer).cmd, SET_PREFS)
+  assert.equal(decodeFrame(enc.encode('3{"columns":50,"rows":20}').buffer).cmd, SET_SIZE)
+  assert.deepEqual(decodeFrame(enc.encode('3{"columns":50,"rows":20}').buffer).json,
+    { columns: 50, rows: 20 })
 })
 
 test('decodeFrame on an empty message is a programming error', () => {

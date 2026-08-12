@@ -11,6 +11,19 @@ const rest = () => {
   return i === -1 ? [] : process.argv.slice(i + 1)
 }
 
+// A flag given no value, or a typo, would otherwise reach node-pty or xterm as
+// NaN and fail somewhere far from the mistake.
+const number = (name, fallback) => {
+  const raw = arg(name)
+  if (raw === undefined) return fallback
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 0) {
+    console.error(`${name} needs a whole number, got ${JSON.stringify(raw)}`)
+    process.exit(2)
+  }
+  return n
+}
+
 const [command, ...args] = rest()
 if (!command) {
   console.error('usage: node server/cli.js --port N --bind ADDR --index FILE --scrollback N -- <command...>')
@@ -18,10 +31,10 @@ if (!command) {
 }
 
 const server = createTerminalServer({
-  port: Number(arg('--port') ?? 7681),
+  port: number('--port', 7681),
   bind: arg('--bind') ?? '127.0.0.1',
   index: arg('--index') ?? 'dist/client.html',
-  scrollback: Number(arg('--scrollback') ?? 500),
+  scrollback: number('--scrollback', 500),
   command,
   args,
   onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}`),
