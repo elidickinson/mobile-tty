@@ -12,7 +12,6 @@ npm install
 ./mobile-tty up                          # serve and tunnel, both ending together
 ./mobile-tty serve bash                  # a different program
 ./mobile-tty pi --model whatever         # flags after the program go to it
-./mobile-tty doctor                      # check the pieces; clear a dead session's socket
 ./mobile-tty help                        # all of it
 ```
 
@@ -22,7 +21,7 @@ The **session** holds the program and outlives every command here. `serve` and `
 
 Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. The build is skipped when `dist/client.html` is newer than `src/` and the lockfile, so a prebuilt copy needs `ttyd` and `dtach` but not node.
 
-When something looks wrong, `doctor` says what it finds — missing tools, a stale client, whether a login is really in front of the tunnel — and clears a socket left behind by a session whose master was killed, which is the one piece of state that can outlive everything else. It exits nonzero if anything is actually broken.
+`down` ends everything — server, tunnel, and the program — and clears the socket, which is the one piece of state that outlives every command. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
 ## Use it
 

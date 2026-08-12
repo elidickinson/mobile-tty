@@ -30,7 +30,6 @@ Usage: mobile-tty [command] [options] [program...]
   up             serve and run the tunnel, both ending together
   tunnel         run the Cloudflare tunnel on its own
   setup <host>   create the tunnel, DNS and Access login for a hostname
-  doctor         check the pieces and say what to do about each
   down           end everything, including the program and its history
 
 Options
@@ -73,7 +72,7 @@ take_options() {
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
-      serve|attach|up|tunnel|setup|doctor|down)
+      serve|attach|up|tunnel|setup|down)
         [[ -z "$cmd" ]] || break        # a second one is the program's business
         cmd=$1; shift ;;
       *) break ;;
@@ -106,20 +105,6 @@ build_if_stale() {
   fi
 }
 
-# A socket file is not a session: a master that was killed leaves one behind
-# with nothing holding it. Only `doctor` asks this question, because answering
-# it costs an lsof and getting it wrong on the hot path would be worse than the
-# problem. The name lsof prints is compared with repeated slashes collapsed,
-# because $TMPDIR ends in one.
-session_alive() {
-  [[ -S "$socket" ]] || return 1
-  command -v lsof >/dev/null || return 2   # cannot tell; caller must not delete
-  lsof -U 2>/dev/null | awk -v want="$socket" '
-    function flat(p) { gsub(/\/\/+/, "/", p); return p }
-    $1 == "dtach" && flat($NF) == flat(want) { found = 1 }
-    END { exit !found }'
-}
-
 # ttyd runs its command once per connection, so letting it create the session
 # would mean no session until a browser turned up, and nothing for `attach` to
 # attach to. Creating it first makes every viewer equal.
@@ -146,6 +131,18 @@ case "$cmd" in
     ;;
   up)
     [[ -f "$config" ]] || die "no $config — run: mobile-tty setup <hostname>"
+    # The edge answers this whether or not the tunnel is running, so it can be
+    # asked before starting. It is the only thing about this setup you cannot
+    # see from this machine.
+    host=$(sed -n 's/^ *- hostname: *//p' "$config" | head -1)
+    probe=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "https://$host/" 2>/dev/null || echo '000 ')
+    case "${probe%% *}" in
+      30*) [[ "${probe#* }" == *cloudflareaccess.com* ]] &&
+             echo "$host is behind a login" ||
+             echo "$host redirects somewhere that is not Access — check the application" ;;
+      200) echo "WARNING: $host answers with no login in front of it" ;;
+      *) echo "$host is not answering yet (${probe%% *})" ;;
+    esac
     build_if_stale
     ensure_session "${@:-pi}"
     cloudflared tunnel --config "$config" run &
@@ -193,90 +190,5 @@ case "$cmd" in
       echo "nothing was running"
     fi
     exit 0
-    ;;
-  doctor)
-    ok=0
-    say() { printf '%-13s %s\n' "$1" "$2"; }
-    fix() { printf '%-13s → %s\n' "" "$1"; }
-    # Separate from fix: a remedy is not always a fault, and marking it inside
-    # fix meant a benign "ok=0" afterwards wiped out an earlier real one.
-    broken() { ok=1; }
-
-    for tool in ttyd dtach; do
-      if command -v "$tool" >/dev/null; then say "$tool" found
-      else say "$tool" missing; fix "brew install $tool"; broken
-      fi
-    done
-
-    stale=""
-    [[ -f dist/client.html ]] &&
-      stale=$(find src scripts/build.js package.json package-lock.json \
-        -newer dist/client.html -print -quit 2>/dev/null || true)
-    if [[ ! -f dist/client.html || -n "$stale" ]]; then
-      say client "not built yet or out of date"
-      if command -v node >/dev/null; then
-        fix "nothing to do — serve rebuilds it"
-      else
-        fix "brew install node, or copy in a prebuilt dist/client.html"; broken
-      fi
-    else
-      say client built
-    fi
-
-    alive=0; session_alive || alive=$?
-    if [[ $alive -eq 0 ]]; then
-      say session "running at $socket"
-    elif [[ $alive -eq 2 ]]; then
-      say session "socket present, but lsof is missing so I cannot tell if it is live"
-      fix "brew install lsof, or remove $socket by hand if attaching fails"; broken
-    elif [[ -e "$socket" ]]; then
-      say session "a socket is left over from a session that was killed"
-      fix "mobile-tty down, which clears it"
-    else
-      say session "none"
-      fix "mobile-tty serve, or mobile-tty attach"
-    fi
-
-    # This asks Cloudflare whether a login guards the hostname. It cannot tell
-    # you whether your tunnel is running: the edge answers the Access redirect
-    # either way, and anything past the login needs a browser.
-    if [[ ! -f "$config" ]]; then
-      say access "no tunnel set up"
-      fix "cloudflared tunnel login, then mobile-tty setup <hostname>"
-    elif ! command -v cloudflared >/dev/null; then
-      say access "configured, but cloudflared is missing"
-      fix "brew install cloudflared"; broken
-    else
-      host=$(sed -n 's/^ *- hostname: *//p' "$config" | head -1)
-      routed=$(sed -n 's|^ *service: http://127.0.0.1:||p' "$config" | head -1)
-      if [[ -n "$routed" && "$routed" != "$port" ]]; then
-        say tunnel "points at :$routed, but this would serve on :$port"
-        fix "serve with --port $routed, or rerun setup to point it at $port"; broken
-      fi
-      # `read` returns 1 at EOF without a newline, which set -e would take as failure.
-      probe=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "https://$host/" 2>/dev/null || echo '000 ')
-      code=${probe%% *}
-      redirect=${probe#* }
-      case "$code" in
-        30*)
-          if [[ "$redirect" == *cloudflareaccess.com* ]]; then
-            say access "$host needs a login"
-          else
-            say access "$host redirects somewhere that is not Access"
-            fix "check the Access application for $host in Zero Trust > Access > Applications"; broken
-          fi ;;
-        200)
-          say access "$host IS OPEN TO ANYONE — no login in front of it"
-          fix "mobile-tty setup $host   (with CF_API_TOKEN and CF_ACCESS_EMAIL set), or add the policy by hand"
-          broken ;;
-        000)
-          say access "$host is not answering"
-          fix "mobile-tty up, or mobile-tty tunnel in another shell" ;;
-        *)
-          say access "$host answered $code"
-          fix "is the server running? mobile-tty up"; broken ;;
-      esac
-    fi
-    exit $ok
     ;;
 esac
