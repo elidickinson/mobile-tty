@@ -50,7 +50,15 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
    */
   session.onResize = size => {
     mirror.resize(size.cols, size.rows)
-    for (const viewer of viewers) if (viewer.queue === null) sendScreen(viewer)
+    for (const viewer of viewers) if (viewer.queue === null) {
+      // Same unhandled-rejection guard as admit(): a throw while serializing the
+      // snapshot after a resize must not take the server (and the pi it owns)
+      // down with it. The viewer just loses the refresh.
+      sendScreen(viewer).catch(err => {
+        console.error('server: could not re-send the screen after a resize', err)
+        viewer.close()
+      })
+    }
   }
   session.onData = data => {
     // Viewers first: the mirror is a convenience, and a failure in it must not
