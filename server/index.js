@@ -39,9 +39,18 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
   // come after — see admit().
   let held = null
 
+  /**
+   * A resize re-sends the screen rather than letting viewers reflow it.
+   *
+   * The client's VT core loses a third to two-thirds of its text on a column
+   * shrink, so a viewer that reflows its own history ends up with something the
+   * mirror disagrees with — content in the wrong places, and different again
+   * from what the next viewer to connect is given. The mirror reflows correctly,
+   * so it is the only thing allowed to: everyone else is handed the result.
+   */
   session.onResize = size => {
     mirror.resize(size.cols, size.rows)
-    for (const viewer of viewers) if (viewer.queue === null) viewer.sendSize(size)
+    for (const viewer of viewers) if (viewer.queue === null) sendScreen(viewer)
   }
   session.onData = data => {
     // Viewers first: the mirror is a convenience, and a failure in it must not
@@ -65,13 +74,12 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
    * Admissions are serialized, since two at once would fight over what is held.
    */
   let admitting = Promise.resolve()
-  const admit = viewer => {
+  const sendScreen = viewer => {
     // `catch` before `then`, or one failure poisons the chain and every viewer
     // after it is refused a screen for the life of the process — which, since
     // the server is the session, means until pi is killed.
     admitting = admitting.catch(() => {}).then(async () => {
       if (!viewer.open) return
-      session.add(viewer)
 
       held = []
       viewer.queue = []
@@ -99,6 +107,12 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
     })
     return admitting
   }
+
+  const admit = viewer => {
+    session.add(viewer)
+    return sendScreen(viewer)
+  }
+
   session.onExit = status => {
     for (const viewer of viewers) viewer.close(1000, 'session ended')
     onExit?.(status)

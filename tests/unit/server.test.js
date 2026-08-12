@@ -7,9 +7,9 @@ import { WebSocket } from 'ws'
 import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
 
-const start = async () => {
+const start = async (command = 'tests/fixtures/fake-pi.sh', args = []) => {
   const server = createTerminalServer({
-    port: 0, bind: '127.0.0.1', index: 'dist/client.html', command: 'tests/fixtures/fake-pi.sh',
+    port: 0, bind: '127.0.0.1', index: 'dist/client.html', command, args,
   })
   await new Promise(r => server.http.on('listening', r))
   return { server, url: `ws://127.0.0.1:${server.http.address().port}/ws` }
@@ -104,5 +104,61 @@ test('the narrowest viewer sets the grid, and leaving hands it back', async () =
   assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'and told again when it wins it back')
 
   wide.close()
+  await server.close()
+})
+
+/** Render everything a viewer is sent, the way the phone's core would. */
+const rendering = async url => {
+  const { WasmBridge } = await import('@wterm/core')
+  const core = await WasmBridge.load()
+  core.init(80, 24)
+  const ws = new WebSocket(url, ['tty'])
+  ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns: 80, rows: 24 })))
+  ws.on('message', d => {
+    const buf = Buffer.from(d)
+    if (buf[0] === 0x30) core.writeRaw(buf.subarray(1))
+    if (buf[0] === 0x33) {
+      const { columns, rows } = JSON.parse(buf.subarray(1))
+      if (columns !== core.getCols() || rows !== core.getRows()) core.resize(columns, rows)
+    }
+  })
+  // Oldest first: wterm numbers saved rows newest to oldest.
+  const history = () => Array.from({ length: core.getScrollbackCount() }, (_, i) =>
+    Array.from({ length: core.getCols() }, (_, x) =>
+      String.fromCodePoint(core.getScrollbackCell(i, x).char || 32)).join('').trimEnd()).reverse()
+  return { history, close: () => ws.close() }
+}
+
+test('a resize leaves every viewer with the same history, whenever it joined', async () => {
+  // Print a page of history and go quiet, so nothing redraws over the evidence.
+  const lines = Array.from({ length: 60 }, (_, n) => `L${String(n).padStart(3, '0')}:${'x'.repeat(70)}`)
+  const { server, url } = await start('sh', ['-c', `printf '%s\\n' ${lines.join(' ')}; sleep 30`])
+
+  const early = await rendering(url)
+  await settle()
+
+  // A narrower viewer takes the grid. The client core mangles its own history on
+  // a column shrink, so a viewer left to reflow diverges from one sent the screen.
+  const narrow = viewer(url, 50, 20)
+  await settle()
+  await settle()
+
+  const late = await rendering(url)
+
+  // Poll rather than sample: both viewers are being served through the same
+  // serialized queue, so agreement is what matters, not the instant it arrives.
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    try {
+      assert.deepEqual(early.history(), late.history())
+      break
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 200))
+    }
+  }
+  assert.deepEqual(early.history(), late.history(),
+    'a viewer resized into the grid and one that arrived at it never agree')
+
+  narrow.close(); early.close(); late.close()
   await server.close()
 })
