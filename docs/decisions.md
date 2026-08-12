@@ -155,8 +155,9 @@ blanking. Input queues while down; resizes do not, since the handshake carries t
 `mobile-tty attach` is a WebSocket client of the same protocol, so the desktop is a viewer
 like any other — it gets the snapshot too, and it cannot resize the PTY behind the server's
 back. It has to act like a terminal on its own account: raw mode restored on every exit
-path, SIGWINCH forwarded, `Ctrl-C` and `Ctrl-Z` passed through rather than acted on, and
-`Ctrl-]` to detach.
+path, the terminal modes pi and the snapshot turned on undone on the way out — the shell
+that comes back keeps its cursor and gets plain key bytes — SIGWINCH forwarded, `Ctrl-C`
+and `Ctrl-Z` passed through rather than acted on, and `Ctrl-]` to detach.
 
 One PTY still has one size, so viewers cannot each have their own. **The narrowest wins**:
 this is meant to be read on a phone, and a desktop showing a phone-width column is legible

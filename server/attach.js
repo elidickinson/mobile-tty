@@ -10,7 +10,15 @@ import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
 // and not Ctrl-C or Ctrl-Z, which are the whole point of passing through.
+//
+// The snapshot's preamble enables the kitty keyboard protocol, so a terminal
+// that honors it reports Ctrl-] as `ESC[93;5u` — the ] codepoint with the
+// ctrl bit set — instead of the raw 0x1d byte. Both are the same chord.
 const DETACH = 0x1d
+const DETACH_KITTY = /\x1b\[93(:[0-9]+)?;\d+u/
+
+// Same chord in either encoding.
+export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chunk)
 
 const frame = (cmd, text) => Buffer.concat([Buffer.from([cmd]), Buffer.from(text)])
 
@@ -24,11 +32,18 @@ export function attach({ url }) {
   const ws = new WebSocket(url, ['tty'])
   let restored = false
 
+  // The snapshot's preamble leaves the terminal in the kitty keyboard protocol
+  // and bracketed paste, and pi's own frames leave the cursor hidden and may
+  // leave synchronized output holding. Undo all of it on the way out, or the
+  // shell that comes back is fed escape-encoded keys and has no cursor.
+  const UNPREP = '\x1b[?2026l\x1b[<1u\x1b[?2004l\x1b[?25h'
+
   // One restore path for every exit, including a throw: leaving a terminal in
   // raw mode is the kind of bug that outlives the process that caused it.
   const restore = () => {
     if (restored) return
     restored = true
+    stdout.write(UNPREP)
     if (stdin.isRaw) stdin.setRawMode(false)
     stdin.pause()
   }
@@ -39,6 +54,9 @@ export function attach({ url }) {
   }
   process.on('exit', restore)
   process.on('uncaughtException', err => { restore(); throw err })
+  // Killed from outside, the terminal still gets restored.
+  process.on('SIGTERM', () => leave())
+  process.on('SIGHUP', () => leave())
 
   const size = () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 })
 
@@ -48,7 +66,7 @@ export function attach({ url }) {
     stdin.resume()
     stdout.on('resize', () => ws.send(frame(RESIZE, JSON.stringify(size()))))
     stdin.on('data', chunk => {
-      if (chunk.includes(DETACH)) leave('detached; the session is still running')
+      if (isDetach(chunk)) leave('detached; the session is still running')
       ws.send(frame(INPUT, chunk))
     })
   })
