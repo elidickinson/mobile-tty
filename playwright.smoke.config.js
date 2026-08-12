@@ -1,7 +1,7 @@
 import { defineConfig } from '@playwright/test'
 import { phone } from './playwright.config.js'
 
-// Tests against real pi under dtach. Slower and mildly flakier than the main
+// Tests against real pi. Slower and mildly flakier than the main
 // suite, so they run on their own: `npm run test:smoke`. They send no prompts,
 // so they cost no tokens — they only check that pi still renders and reflows.
 export default defineConfig({

@@ -59,3 +59,26 @@ test('the snapshot replaces a screen rather than painting over it', async () => 
 
   assert.deepEqual(render(core).filter(Boolean), ['after'])
 })
+
+test('the snapshot replaces the history too, rather than stacking under it', async () => {
+  const mirror = new Mirror({ cols: COLS, rows: ROWS, scrollback: 100 })
+  for (let i = 0; i < 40; i++) mirror.write(Buffer.from(`fresh ${i}\r\n`))
+  await mirror.drain()
+
+  // A page that reconnects still holds everything from before it dropped. RIS
+  // does not clear saved lines, so without ED 3 the snapshot's history lands
+  // underneath the stale history instead of replacing it.
+  const core = await WasmBridge.load()
+  core.init(COLS, ROWS)
+  for (let i = 0; i < 40; i++) core.writeString(`stale ${i}\r\n`)
+  const stale = core.getScrollbackCount()
+  assert.ok(stale > 10, 'the reconnecting viewer needs history to lose')
+
+  core.writeString(mirror.snapshot())
+
+  const history = Array.from({ length: core.getScrollbackCount() }, (_, i) =>
+    Array.from({ length: core.getCols() }, (_, x) =>
+      String.fromCodePoint(core.getScrollbackCell(i, x).char || 32)).join('').trim())
+  assert.equal(history.filter(l => l.startsWith('stale')).length, 0, 'stale history survived')
+  assert.ok(history.filter(l => l.startsWith('fresh')).length > 10, 'fresh history missing')
+})

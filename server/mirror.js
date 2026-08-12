@@ -19,7 +19,11 @@ const PREAMBLE = '\x1b[?2004h\x1b[>7u'
 
 // Reset first: a reconnecting viewer already has a screen, a cursor, modes and
 // scrollback, and serialized VT assumes a fresh terminal and resets nothing.
-const RESET = '\x1bc'
+//
+// RIS alone is not enough. It leaves the saved lines alone, so the history below
+// would stack underneath whatever the viewer had before it dropped — duplicated
+// and out of order. ED 3 is what clears them.
+const RESET = '\x1bc\x1b[3J'
 
 export class Mirror {
   constructor({ cols, rows, scrollback = 0 }) {

@@ -66,26 +66,33 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
    */
   let admitting = Promise.resolve()
   const admit = viewer => {
-    admitting = admitting.then(async () => {
+    // `catch` before `then`, or one failure poisons the chain and every viewer
+    // after it is refused a screen for the life of the process — which, since
+    // the server is the session, means until pi is killed.
+    admitting = admitting.catch(() => {}).then(async () => {
       if (!viewer.open) return
       session.add(viewer)
 
       held = []
       viewer.queue = []
-      await mirror.drain()
-      const snapshot = Buffer.from(mirror.snapshot())
+      try {
+        await mirror.drain()
+        const snapshot = Buffer.from(mirror.snapshot())
 
-      // Size before screen: the snapshot is drawn for the PTY's grid, so a
-      // viewer that asked for a different one has to be rendering at this size
-      // before it arrives.
-      viewer.sendSize(session.size)
-      if (viewer.output(snapshot)) {
-        for (const chunk of viewer.queue) if (!viewer.output(chunk)) break
+        // Size before screen: the snapshot is drawn for the PTY's grid, so a
+        // viewer that asked for a different one has to be rendering at this
+        // size before it arrives.
+        viewer.sendSize(session.size)
+        if (viewer.output(snapshot)) {
+          for (const chunk of viewer.queue) if (!viewer.output(chunk)) break
+        }
+      } finally {
+        // Whatever happened to this viewer, the mirror has to be fed again or
+        // every screen after this one is stale.
+        viewer.queue = null
+        for (const chunk of held) mirror.write(chunk)
+        held = null
       }
-      viewer.queue = null
-
-      for (const chunk of held) mirror.write(chunk)
-      held = null
     })
     return admitting
   }
@@ -130,7 +137,10 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
         viewer.prefs({})
         // Nothing about one viewer's admission may reach another, so a failure
         // here costs that viewer its connection and nothing else.
-        admit(viewer).catch(() => viewer.close(1011, 'could not send the screen'))
+        admit(viewer).catch(err => {
+          console.error('server: could not admit a viewer', err)
+          viewer.close(1011, 'could not send the screen')
+        })
         return
       }
       if (buf.length === 0) return

@@ -55,7 +55,6 @@ test('input typed while disconnected is queued and flushed on reconnect', () => 
   const { c, sock, timers, flush } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
-  flush()                            // drain the attach nudge
   sock().drop()
   const before = sock().sent.length
   c.send('hello')
@@ -74,14 +73,12 @@ test('backoff grows on repeated failure and resets once connected', () => {
   const delays = []
   c.connect({ cols: 50, rows: 30 })
   sock().open()
-  flush()                            // drain the attach nudge
   sock().drop(); delays.push(timers[0].ms); retry()
   sock().drop(); delays.push(timers[0].ms); retry()
   sock().drop(); delays.push(timers[0].ms); retry()
   assert.ok(delays[1] > delays[0] && delays[2] > delays[1])
 
   sock().open()
-  flush()                                 // drain the repaint nudge
   sock().drop()
   assert.equal(timers[0].ms, delays[0], 'a successful connection resets the backoff')
 })
@@ -95,10 +92,9 @@ test('state changes are reported for the connection indicator', () => {
 })
 
 test('resize sends the new size and remembers it for the next reconnect', () => {
-  const { c, sock, timers, flush } = setup()
+  const { c, sock, timers } = setup()
   c.connect({ cols: 50, rows: 30 })
   sock().open()
-  flush()                            // drain the attach nudge
   c.resize(120, 40)
   assert.deepEqual(JSON.parse(text(sock().sent.at(-1)).slice(1)), { columns: 120, rows: 40 })
 

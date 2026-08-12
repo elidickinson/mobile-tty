@@ -17,11 +17,11 @@ npm install
 
 It listens on **loopback by default**, because that is all the tunnel needs. `--lan` opens it to the network so a phone on the same wifi can reach `http://<your-ip>:7681/` — which is an unauthenticated terminal on your network, so prefer the tunnel. **Add to Home Screen** and launch it from there — standalone mode drops Safari's chrome and is worth about 7 extra rows.
 
-The **session** holds the program and outlives every command here. `serve` and `attach` each start one if there is not one already, and both are only viewers onto it — so the desktop can attach with nothing else running, and closing the last browser tab kills nothing. To end it, exit the program.
+The **server** holds the program: one PTY, and every viewer looks at the same screen. It keeps that screen, so opening the page gets it back instantly instead of making the program redraw, and closing the last tab kills nothing. `attach` joins a server that is already running rather than starting one. To end the session, exit the program or run `down`.
 
 Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. The build is skipped when `dist/client.html` is newer than `src/` and the lockfile, though the server is node either way.
 
-`down` ends everything — server, tunnel, and the program — and clears the socket, which is the one piece of state that outlives every command. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
+`down` ends everything — server, tunnel, and the program. The default program is `pi --session-id mobile-tty`, so starting again rejoins the same conversation and only work in flight is lost. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
 ## Use it
 
@@ -49,13 +49,14 @@ cloudflared tunnel login                 # once, opens a browser
 
 The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
 
-The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though: whoever attached or resized last owns it, and **Fit** is how the phone takes it back.
+The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though, and **the narrowest viewer wins** — this is meant to be read on a phone, and a desktop showing a phone-width column is legible where the reverse is not. The server tells every viewer the size it actually picked.
 
 ## Test
 
 ```
-npm test                # 40 unit
-npm run test:e2e        # 39 WebKit at 402x812 against tests/fixtures/fake-pi.sh
+npm test                # 44 unit, including the snapshot round-trip gate
+npm run test:e2e        # 41 WebKit at 402x812 against tests/fixtures/fake-pi.sh
+npm run test:integrity  # 2 that no viewer is ever sent a gap
 npm run test:smoke      # 3 against real pi; sends no prompts, costs no tokens
 npm run build           # dist/client.html, one self-contained file
 ```
