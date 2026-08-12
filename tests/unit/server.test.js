@@ -60,3 +60,16 @@ test('a nonsense handshake closes that socket and nothing else', async () => {
     assert.ok(good.output > 0, 'a later viewer is unaffected')
   } finally { await server.close() }
 })
+
+test('a resize arriving after the program exits does not take the server down', async () => {
+  const { Session } = await import('../../server/session.js')
+  const session = new Session({ command: 'sh', args: ['-c', 'exit 0'], cols: 80, rows: 24 })
+  session.viewers.add({ size: { cols: 40, rows: 12 } })
+  await new Promise(resolve => { session.onExit = resolve })
+  await new Promise(resolve => setTimeout(resolve, 150))
+
+  // Viewers outlive the program by however long their sockets take to close, so
+  // a coalesced resize can land on a closed PTY — which throws EBADF from a
+  // timer, where nothing can catch it and the process is the session.
+  assert.doesNotThrow(() => session.fit())
+})

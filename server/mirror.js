@@ -25,15 +25,79 @@ const PREAMBLE = '\x1b[?2004h\x1b[>7u'
 // and out of order. ED 3 is what clears them.
 const RESET = '\x1bc\x1b[3J'
 
+// Longer than any sequence worth cutting inside, so the search for one is
+// bounded rather than walking the whole chunk.
+const MAX_TAIL = 128
+
+/** Does the escape sequence starting at `i` finish inside this buffer? */
+const terminated = (buf, i) => {
+  const kind = buf[i + 1]
+  if (kind === undefined) return false
+  if (kind === 0x5b) {                                    // CSI: ends 0x40..0x7e
+    for (let j = i + 2; j < buf.length; j++) if (buf[j] >= 0x40 && buf[j] <= 0x7e) return true
+    return false
+  }
+  if (kind === 0x5d) {                                    // OSC: ends BEL or ST
+    for (let j = i + 2; j < buf.length; j++) {
+      if (buf[j] === 0x07) return true
+      if (buf[j] === 0x1b && buf[j + 1] === 0x5c) return true
+    }
+    return false
+  }
+  if (kind === 0x50 || kind === 0x58 || kind === 0x5e || kind === 0x5f) {   // DCS/SOS/PM/APC: ST
+    for (let j = i + 2; j < buf.length; j++) if (buf[j] === 0x1b && buf[j + 1] === 0x5c) return true
+    return false
+  }
+  return true                                             // anything else is a two-byte escape
+}
+
+/** Step back off a multi-byte character that the cut would land inside. */
+const wholeCharacters = (buf, cut) => {
+  let k = cut - 1
+  while (k >= 0 && k >= cut - 3 && (buf[k] & 0xc0) === 0x80) k--
+  if (k < 0) return cut
+  const lead = buf[k]
+  const width = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : lead < 0xf8 ? 4 : 1
+  return k + width > cut ? k : cut
+}
+
+/**
+ * How much of `buf` can be parsed without leaving a sequence half-finished.
+ *
+ * The parser keeps a partial sequence as internal state, and `serialize()` only
+ * ever sees committed cells. So a snapshot taken while the parser is mid-
+ * character omits its leading byte, and the viewer that receives the rest gets
+ * an orphaned tail — a stray `55;95;255m`, which is the corruption this whole
+ * server exists to stop.
+ */
+const completeUpTo = buf => {
+  let cut = buf.length
+  for (let i = buf.length - 1; i >= Math.max(0, buf.length - MAX_TAIL); i--) {
+    if (buf[i] !== 0x1b) continue
+    if (!terminated(buf, i)) cut = i
+    break
+  }
+  return wholeCharacters(buf, cut)
+}
+
 export class Mirror {
   constructor({ cols, rows, scrollback = 0 }) {
     this.scrollback = scrollback
+    // Bytes held back because they do not yet form a complete sequence. They
+    // belong to a new viewer after the snapshot, since the screen cannot
+    // contain them yet.
+    this.pending = Buffer.alloc(0)
     this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback })
     this.serializer = new SerializeAddon()
     this.term.loadAddon(this.serializer)
   }
 
-  write(bytes) { this.term.write(bytes) }
+  write(bytes) {
+    const buf = this.pending.length ? Buffer.concat([this.pending, bytes]) : Buffer.from(bytes)
+    const cut = completeUpTo(buf)
+    this.pending = Buffer.from(buf.subarray(cut))
+    if (cut > 0) this.term.write(buf.subarray(0, cut))
+  }
 
   resize(cols, rows) {
     if (cols === this.term.cols && rows === this.term.rows) return

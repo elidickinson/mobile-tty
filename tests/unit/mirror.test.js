@@ -60,6 +60,48 @@ test('the snapshot replaces a screen rather than painting over it', async () => 
   assert.deepEqual(render(core).filter(Boolean), ['after'])
 })
 
+test('a character split across the snapshot is not lost', async () => {
+  const mirror = new Mirror({ cols: COLS, rows: ROWS })
+  mirror.write(Buffer.from('AAA'))
+  mirror.write(Buffer.from([0xe2]))          // U+2500 starts, and the viewer joins here
+  await mirror.drain()
+
+  // The parser keeps a half-read character as invisible state, so a snapshot
+  // that only serialized cells would drop the leading byte and hand the viewer
+  // the orphaned tail.
+  const snapshot = mirror.snapshot()
+  const held = Buffer.from(mirror.pending)
+  const live = Buffer.from([0x94, 0x80])     // ...and completes after admission
+
+  const core = await WasmBridge.load()
+  core.init(COLS, ROWS)
+  core.writeString(snapshot)
+  core.writeRaw(held)
+  core.writeRaw(live)
+
+  assert.deepEqual(render(core).filter(Boolean), ['AAA\u2500'])
+})
+
+test('an escape sequence split across the snapshot is not rendered as text', async () => {
+  const mirror = new Mirror({ cols: COLS, rows: ROWS })
+  mirror.write(Buffer.from('AAA'))
+  mirror.write(Buffer.from('\x1b[3'))        // SGR starts, and the viewer joins here
+  await mirror.drain()
+
+  const snapshot = mirror.snapshot()
+  const held = Buffer.from(mirror.pending)
+
+  const core = await WasmBridge.load()
+  core.init(COLS, ROWS)
+  core.writeString(snapshot)
+  core.writeRaw(held)
+  core.writeRaw(Buffer.from('1mBBB'))
+
+  const screen = render(core).filter(Boolean)
+  assert.deepEqual(screen, ['AAABBB'])
+  assert.ok(!screen.join('').includes('1m'), 'the sequence tail printed as text')
+})
+
 test('the snapshot replaces the history too, rather than stacking under it', async () => {
   const mirror = new Mirror({ cols: COLS, rows: ROWS, scrollback: 100 })
   for (let i = 0; i < 40; i++) mirror.write(Buffer.from(`fresh ${i}\r\n`))

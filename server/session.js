@@ -20,6 +20,7 @@ export class Session {
   constructor({ command, args = [], cwd = process.cwd(), env = process.env, cols = 80, rows = 24 }) {
     this.viewers = new Set()
     this.size = { cols, rows }
+    this.exited = false
     this.onData = null
     this.onExit = null
     this.onResize = null
@@ -35,7 +36,10 @@ export class Session {
       encoding: null,
     })
     this.pty.onData(data => this.onData?.(data))
-    this.pty.onExit(({ exitCode, signal }) => this.onExit?.({ exitCode, signal }))
+    this.pty.onExit(({ exitCode, signal }) => {
+      this.exited = true
+      this.onExit?.({ exitCode, signal })
+    })
   }
 
   write(bytes) { this.pty.write(bytes) }
@@ -48,7 +52,10 @@ export class Session {
    * common case free — the phone is already the narrowest, so nothing resizes.
    */
   fit() {
-    if (this.viewers.size === 0) return this.size
+    // Viewers can outlive the program by the moment it takes to close them, and
+    // resizing a closed PTY throws EBADF from a timer, where it would take the
+    // whole server down.
+    if (this.exited || this.viewers.size === 0) return this.size
     let cols = Infinity
     let rows = Infinity
     for (const v of this.viewers) {

@@ -83,8 +83,11 @@ export function createTerminalServer({ port, bind, index, command, args = [], sc
         // viewer that asked for a different one has to be rendering at this
         // size before it arrives.
         viewer.sendSize(session.size)
+        // Screen, then the bytes the screen could not contain yet, then what
+        // arrived while it was being taken.
         if (viewer.output(snapshot)) {
-          for (const chunk of viewer.queue) if (!viewer.output(chunk)) break
+          const rest = mirror.pending.length ? [Buffer.from(mirror.pending), ...viewer.queue] : viewer.queue
+          for (const chunk of rest) if (!viewer.output(chunk)) break
         }
       } finally {
         // Whatever happened to this viewer, the mirror has to be fed again or
