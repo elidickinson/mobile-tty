@@ -143,6 +143,11 @@ case "$cmd" in
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
     cloudflared tunnel --config "$config" run &
     tunnel=$!
+    # Installed as soon as there is anything to clean up: an interrupt between
+    # here and the server starting would otherwise leave the tunnel orphaned,
+    # since nothing would be watching it yet. $server is unset until the next
+    # line, so the trap has to tolerate that.
+    trap 'kill ${tunnel:-} ${server:-} 2>/dev/null || true' EXIT INT TERM
     echo "serving http://$bind:$port"
     # Both in the background, then wait. Not exec, which would replace this
     # shell and take the trap with it; and not the server in the foreground
@@ -151,7 +156,6 @@ case "$cmd" in
     node server/cli.js --port "$port" --bind "$bind" --index dist/client.html \
       --scrollback "$scrollback" -- "$@" &
     server=$!
-    trap 'kill $tunnel $server 2>/dev/null' EXIT INT TERM
     status=0
     wait $server || status=$?
     [[ $status -eq 0 ]] || echo "mobile-tty: the server exited ($status); stopping the tunnel too" >&2
