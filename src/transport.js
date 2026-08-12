@@ -75,9 +75,8 @@ export class TtydConnection {
       // Nudge only when there is nothing on screen to keep. Reattaching sends
       // no replay, so a fresh page needs it — but on a reconnect the stale
       // screen is better than what a nudge costs: every reflow redraws the whole
-      // conversation into scrollback, and one landing mid-sequence desynchronises
-      // the parser. Rows, not columns: a column change makes the far side rewrap
-      // everything, where a row change is only a redraw.
+      // conversation into scrollback. Rows, not columns: a column change makes
+      // the far side rewrap everything, where a row change is only a redraw.
       if (!this.everPainted) {
         this.whenQuiet(ws, () => {
           ws.send(encodeResize(this.cols, this.rows - 1))
