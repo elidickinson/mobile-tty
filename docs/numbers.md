@@ -18,8 +18,10 @@ iPhone, screen **402×874 pt @3x**, iOS 2026-08-10. Read live from the `≡` men
   but iOS reports a 62 pt inset on **both** sides, so only 750 is usable — 15 columns go to
   the notch, and there is no way to tell which side it is actually on.
 - Safe-area insets — Safari 0/0/0/0, standalone portrait **t62 b34**, landscape
-  **r62 b20 l62**. The top inset is already excluded from the layout viewport; the others
-  are not.
+  **r62 b20 l62**, all measured under `black-translucent`. Standalone now uses an opaque
+  status bar (`black`) instead: iOS places the app below it directly rather than
+  overlapping and shrinking the layout viewport, so the top inset should read **0**. The
+  portrait/landscape rows above need a fresh on-device read to confirm.
 - `innerHeight` seen at **874, 812, 402** mid-rotation, keyboard at **237, 310, 314**.
   Settles ~1 s: debounce, never hardcode.
 
