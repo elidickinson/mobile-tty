@@ -62,6 +62,12 @@ npm run test:smoke      # against real pi; sends no prompts, costs no tokens
 
 Anything mechanisable is a pure function; the device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. Not doing visual regression — goldens would churn while the design moves.
 
+## Picking up a new build
+
+- **Every load** revalidates: the document is `no-cache` with the bundle's hash as its ETag, so an unchanged client costs a 304 instead of 74 KB.
+- **On startup** the page refetches past the cache and compares build stamps; a newer one on the server redirects to `?b=<hash>`, a URL iOS has no cached copy of. This is what actually works in standalone, where the launch document is held whatever the headers say.
+- **Never mid-session.** A page already open will not notice a new build — use **Reload app** in the menu.
+
 ## Notes
 
 Requires node, plus `cloudflared` for the tunnel. Alternate-screen apps — Claude Code, vim, htop — are out of scope for now, and dictation is untested.
