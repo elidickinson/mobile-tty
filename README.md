@@ -20,7 +20,7 @@ The **server** holds the program: one PTY, and every viewer looks at the same sc
 
 Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. There is no build step: the server bundles the client when the page is asked for, so an edit needs a reload and nothing else -- notably not a restart, which would kill the program.
 
-`down` ends everything -- server, tunnel, and the program. The default program is `pi --session-id mobile-tty`, so starting again rejoins the same conversation and only work in flight is lost. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
+`down` ends everything -- server, tunnel, and the program. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
 ## Use it
 
@@ -70,6 +70,10 @@ Anything mechanisable is a pure function; the device verifies the viewport adapt
 - **Every load** revalidates: the document is `no-cache` with the bundle's hash as its ETag, so an unchanged client costs a 304 instead of 74 KB.
 - **On startup** the page refetches past the cache and compares build stamps; a newer one on the server redirects to `?b=<hash>`, a URL iOS has no cached copy of. This is what actually works in standalone, where the launch document is held whatever the headers say.
 - **Never mid-session.** A page already open will not notice a new build -- use **Reload app** in the menu.
+
+## Keeping a conversation
+
+Restarting the server starts a fresh pi. Pass `./mobile-tty pi --session-id whatever` for one that comes back every time, or just `/resume` from inside pi when you actually want it.
 
 ## Notes
 

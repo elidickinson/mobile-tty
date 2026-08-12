@@ -107,7 +107,7 @@ legible where the reverse is not. The server picks and tells every viewer what i
 which makes the common case free, since the phone is already the narrowest.
 
 Adopting an *already running* pi needs ptrace surgery (`reptyr`) and is Linux-only, so a restart
-ends the session. Hence the default `pi --session-id mobile-tty`.
+ends the session and starts a fresh conversation, unless pi is given one to resume.
 
 ## Access
 

@@ -26,10 +26,7 @@ bind="${MTTY_BIND:-127.0.0.1}"
 hostname="${MTTY_HOSTNAME:-}"
 config="$PWD/cloudflared.yml"
 
-# A restart kills the program, so the default one is told to come back to the
-# same conversation. Without --session-id plain pi would start a fresh session
-# every time the server bounced.
-default_program=(pi --session-id mobile-tty)
+default_program=(pi)
 
 usage() {
   cat <<'USAGE'
