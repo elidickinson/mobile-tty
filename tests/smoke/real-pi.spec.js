@@ -34,7 +34,8 @@ const pageReady = async page => {
 
 // The fixture ids in the order they appear, read from the core model. The
 // scrollback indexes newest-to-oldest, so walk it backwards, then append the
-// live screen. A fresh pi per test means the first render is exactly 0..99.
+// live screen. Raw, not deduped: a duplicated or repeated render must fail
+// this against allIds, not disappear into a set.
 const fixtureIds = page => page.evaluate(() => {
   const t = window.mtty?.term?.bridge
   if (!t) return []
@@ -47,12 +48,10 @@ const fixtureIds = page => page.evaluate(() => {
   const lines = []
   for (let y = saved - 1; y >= 0; y--) lines.push(row(y, true))
   for (let y = 0; y < t.getRows?.() ?? 0; y++) lines.push(row(y, false))
-  const ids = []
-  for (const line of lines) {
+  return lines.flatMap(line => {
     const m = line.match(/MTTY-LINE-(\d{3})/)
-    if (m && !ids.includes(Number(m[1]))) ids.push(Number(m[1]))
-  }
-  return ids
+    return m ? [Number(m[1])] : []
+  })
 })
 const allIds = Array.from({ length: 100 }, (_, i) => i)
 
@@ -134,4 +133,26 @@ test('reconnecting to a running session keeps the whole transcript, in order', a
   await expect.poll(() => fixtureIds(page)).toEqual(allIds)
   await expect.poll(() => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount()))
     .toBeGreaterThan(0)
+})
+
+test('a resize does not dump a reader at the live edge', async ({ page }) => {
+  // A grid change replaces the whole rendered buffer, and the DOM collapses to
+  // one screen before the resize's snapshot lands. If the reading position is
+  // not carried across that gap, the browser resets scrollTop to the top of
+  // the shrunk buffer and the app's own bottom-pinning then reads that as
+  // "already at the bottom" and leaves it there — every resize dumps whoever
+  // is scrolled back into history at the live edge.
+  await pageReady(page)
+  await typeFixture(page)
+  await expect.poll(() => fixtureComplete(page)).toBe(true)
+  await expect.poll(() => fixtureIds(page)).toEqual(allIds)
+
+  await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
+  await expect.poll(() => page.evaluate(() => document.getElementById('to-bottom').hidden)).toBe(false)
+
+  await setGrid(page, '120×40', 120)
+
+  // Still reading, not dumped at the bottom — and nothing duplicated getting there.
+  expect(await page.evaluate(() => document.getElementById('to-bottom').hidden)).toBe(false)
+  await expect.poll(() => fixtureIds(page)).toEqual(allIds)
 })

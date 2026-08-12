@@ -172,12 +172,41 @@ function applyPendingGrid() {
  * the real grid would mean parsing a relative stream drawn for a different
  * width, which is wrong in a way that looks like a layout bug.
  */
+// A grid change is followed by a snapshot that replaces the whole buffer, and
+// the rendered rows are dropped before it arrives. Reading position therefore
+// has to be taken before the resize and put back once wterm has rendered the
+// repaint, which it does on a later frame.
+let reading = null
+
 function applyServerSize(cols, rows) {
   if (cols === state.cols && rows === state.rows) return
+  // How far up the history the eye is, as a share of the whole — the only
+  // measure that survives a reflow, since pixels and rows both change.
+  reading = atBottom() || screen.scrollHeight === 0
+    ? null
+    : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
   sizeScreen()
+  if (reading !== null) keepReading()
+}
+
+/** Re-apply the position on every frame until the repaint stops growing. */
+function keepReading() {
+  const share = reading
+  let last = -1
+  let frames = 0
+  const step = () => {
+    if (reading !== share) return // a newer resize owns it now
+    const h = screen.scrollHeight
+    screen.scrollTop = h - screen.clientHeight - share * h
+    toBottom.hidden = atBottom()
+    if (h === last && ++frames > 3) { reading = null; return }
+    if (h !== last) { last = h; frames = 0 }
+    requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
 }
 
 function setScale(scale) {
