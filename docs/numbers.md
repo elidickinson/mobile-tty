@@ -73,8 +73,9 @@ They behave oppositely. v1 targets pi; alternate-screen support is deferred.
 - **Viewer backlog cap:** 4 MB of `bufferedAmount`, then that viewer is disconnected. It is
   never sent a gap.
 - **Smallest shared grid:** 20x8, so no viewer can shrink everyone to nothing.
-- **Snapshot scrollback:** 500 lines, about 37 KB. pi cannot page itself, so this is the
-  only history a reloaded page gets.
+- **Snapshot scrollback:** 500 lines by default, about 37 KB — roughly 75 bytes a line. pi
+  cannot page itself, so this is the only history a reloaded page gets. Tune it with
+  `--scrollback N` or `$MTTY_SCROLLBACK`.
 - **Keyboard detection:** ≥100 pt of lost viewport, so collapsing browser chrome does not
   read as a keyboard.
 - **Autocorrect:** 0 `insertReplacementText` events over 7 typed chars.

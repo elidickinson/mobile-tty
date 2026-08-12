@@ -13,7 +13,7 @@ const rest = () => {
 
 const [command, ...args] = rest()
 if (!command) {
-  console.error('usage: node server/cli.js --port N --bind ADDR --index FILE -- <command...>')
+  console.error('usage: node server/cli.js --port N --bind ADDR --index FILE --scrollback N -- <command...>')
   process.exit(2)
 }
 
@@ -21,6 +21,7 @@ const server = createTerminalServer({
   port: Number(arg('--port') ?? 7681),
   bind: arg('--bind') ?? '127.0.0.1',
   index: arg('--index') ?? 'dist/client.html',
+  scrollback: Number(arg('--scrollback') ?? 500),
   command,
   args,
   onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}`),

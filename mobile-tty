@@ -17,6 +17,9 @@ cd "$root" || { echo "mobile-tty: cannot enter $root" >&2; exit 1; }
 [[ -f scripts/build.js ]] || { echo "mobile-tty: $root does not look like the mobile-tty checkout" >&2; exit 1; }
 
 port="${PORT:-7681}"
+# Lines of history a reconnecting viewer gets back. pi does not page its own
+# transcript, so this is the only way to read back through a conversation.
+scrollback="${MTTY_SCROLLBACK:-500}"
 bind="${MTTY_BIND:-127.0.0.1}"
 config="$PWD/cloudflared.yml"
 
@@ -41,6 +44,8 @@ Options
   --lan          short for --bind 0.0.0.0
   --bind ADDR    listen on one address (default 127.0.0.1, or $MTTY_BIND)
   --port N       default 7681, or $PORT
+  --scrollback N lines of history a reconnecting viewer gets back
+                 (default 500, or $MTTY_SCROLLBACK)
 
 Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
@@ -71,6 +76,7 @@ take_options() {
       --lan) bind=0.0.0.0; shift ;;
       --bind) [[ $# -ge 2 ]] || usage_error "--bind needs a value"; bind=$2; shift 2 ;;
       --port) [[ $# -ge 2 ]] || usage_error "--port needs a value"; port=$2; shift 2 ;;
+      --scrollback) [[ $# -ge 2 ]] || usage_error "--scrollback needs a value"; scrollback=$2; shift 2 ;;
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
@@ -112,7 +118,8 @@ case "$cmd" in
     build_if_stale
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
     echo "serving http://$bind:$port"
-    exec node server/cli.js --port "$port" --bind "$bind" --index dist/client.html -- "$@"
+    exec node server/cli.js --port "$port" --bind "$bind" --index dist/client.html \
+      --scrollback "$scrollback" -- "$@"
     ;;
   attach)
     echo "Ctrl-] detaches and leaves it running. Ctrl-C goes through to the program."
@@ -141,7 +148,8 @@ case "$cmd" in
     # shell and take the trap with it; and not the server in the foreground
     # either, because bash defers signals until the foreground command returns
     # — so a TERM would sit unhandled and leave the tunnel behind.
-    node server/cli.js --port "$port" --bind "$bind" --index dist/client.html -- "$@" &
+    node server/cli.js --port "$port" --bind "$bind" --index dist/client.html \
+      --scrollback "$scrollback" -- "$@" &
     server=$!
     trap 'kill $tunnel $server 2>/dev/null' EXIT INT TERM
     status=0

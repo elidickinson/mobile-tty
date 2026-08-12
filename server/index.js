@@ -21,14 +21,17 @@ const RESIZE_COALESCE_MS = 100
 // Generous for a paste, far short of what it takes to matter. Without it a
 // viewer could hand the PTY a hundred megabytes in one frame.
 const MAX_FRAME = 1024 * 1024
-// pi does not page its own transcript — it answers PageUp with nothing — so the
-// terminal's scrollback is the only way to read back through a conversation. A
-// snapshot without it means a reload loses the lot. 500 lines costs about 37 KB.
-const SCROLLBACK = 500
 
-export function createTerminalServer({ port, bind, index, command, args = [], onListen, onExit }) {
+/**
+ * `scrollback` is how much history a reconnecting viewer gets back. It is worth
+ * tuning: pi does not page its own transcript, so this is the only way to read
+ * back through a conversation on a phone. Roughly 75 bytes a line — 500 lines is
+ * about 37 KB per connect, against a pi transcript re-render that starts at
+ * 12 KB and grows with every turn.
+ */
+export function createTerminalServer({ port, bind, index, command, args = [], scrollback = 500, onListen, onExit }) {
   const session = new Session({ command, args })
-  const mirror = new Mirror({ ...session.size, scrollback: SCROLLBACK })
+  const mirror = new Mirror({ ...session.size, scrollback })
   const viewers = new Set()
 
   // Non-null while a snapshot is being taken. The mirror stops consuming for

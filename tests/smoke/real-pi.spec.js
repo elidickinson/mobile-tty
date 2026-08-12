@@ -1,4 +1,4 @@
-// Against real pi under dtach. Renders and reflows only — sends no prompts,
+// Against real pi. Renders and reflows only — sends no prompts,
 // so it costs no tokens.
 import { test, expect } from '@playwright/test'
 
@@ -31,7 +31,7 @@ test('real pi renders and reflows across the grid presets', async ({ page }) => 
   await expect(page.locator('#screen')).toContainText('(auto)')
 })
 
-test('pi keeps a real scrollback — dtach leaves the alternate screen alone', async ({ page }) => {
+test('pi keeps a real scrollback — nothing in the stack imposes an alternate screen', async ({ page }) => {
   await page.goto('/')
   await expect(page.locator('#screen')).toContainText('mobile-tty', { timeout: 60_000 })
 
@@ -48,9 +48,9 @@ test('pi keeps a real scrollback — dtach leaves the alternate screen alone', a
 })
 
 test('a fresh page attaching to a running session gets a painted screen', async ({ page }) => {
-  // dtach has no replay buffer, so this is only ever correct because every
-  // attach nudges the size. It cannot be caught against a program the test
-  // itself just started.
+  // The server keeps the screen, so this arrives as a snapshot without pi being
+  // asked to repaint. It cannot be caught against a program the test itself just
+  // started.
   await page.goto('/')
   await expect(page.locator('#screen')).toContainText('(auto)', { timeout: 60_000 })
 
