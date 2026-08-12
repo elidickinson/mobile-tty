@@ -22,6 +22,12 @@ Every command runs in the foreground and owns what it starts, so there is nothin
 
 `down` ends everything -- server, tunnel, and the program. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
+### Requirements and Limitations
+
+Requires node, plus `cloudflared` for the tunnel.
+
+Terminal apps that use alternate screen (like Claude Code) seem to work without any scrollback. Alt screen apps are currently out of scope.
+
 ## Use it
 
 **Key bar**, left to right: `⌃ ⇧` are sticky -- tap one, then the next key you press (including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then `esc`, `⇥` tab, `⌫` backspace, arrows, `⌨` to summon or dismiss the keyboard, and `≡` for the menu. Backspace and the arrows repeat when held; the software keyboard's own backspace does not, because the field it types into is emptied after every keystroke.
@@ -30,7 +36,7 @@ There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes 
 
 **Scrolling** is a normal drag. When you scroll away from the live screen a **↓ latest** button appears; typing also jumps you back. New output while you are reading history leaves you where you are.
 
-**Rotate to landscape** for 93 columns instead of 50. The grid never resizes on its own when the keyboard opens -- only the visible window shrinks.
+**Rotate to landscape** and the screen should automatically reflow to 93 columns instead of 50. The grid never resizes on its own when the keyboard opens -- only the visible window shrinks.
 
 **Menu** (`≡`): **Top** / **Bottom** jump to either end of the scrollback; **Paste** -- long-press the field, paste, then Send, since iOS only offers its callout on a visible field; grid presets and **Fit**; zoom, which is render scale only and leaves the grid alone; **Reconnect**; **Clear view**, local only; **Reload app**, since standalone has no reload button; and a live readout of viewport, insets, grid and scroll state. A ⚡ in the corner means the socket is down, and errors paint a red panel at the top.
 
@@ -75,10 +81,8 @@ npm run test:integrity  # that no viewer is ever sent a gap
 npm run test:smoke      # against real pi; sends no prompts, costs no tokens
 ```
 
-Anything mechanisable is a pure function; the device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. Not doing visual regression -- goldens would churn while the design moves.
+Tried hard to automate testing as much as possible. The device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. 
 
 ## Notes
-
-Requires node, plus `cloudflared` for the tunnel. Alternate-screen apps -- Claude Code, vim, htop -- are out of scope for now, and dictation is untested.
 
 Why it is built this way, and the measurements behind it: [`docs/design.md`](docs/design.md) and [`docs/numbers.md`](docs/numbers.md).
