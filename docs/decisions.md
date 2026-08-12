@@ -2,30 +2,34 @@
 
 Why the thing is shaped this way. Measured values live in `numbers.md`.
 
-## Backend: ttyd `--index` + dtach
+## Backend: our own server
 
-ttyd is plumbing, not a terminal: it allocates a PTY, pumps raw VT bytes over a WebSocket,
-and calls `ioctl` for SIGWINCH. The protocol is five constants, so the client speaks it in
-~30 lines.
-
-`--index` serves **exactly one document** plus `/token`; every other path is rejected. So
-the client is a single self-contained file — all CSS and JS inline, no service worker (they
+`server/` owns the PTY through node-pty and speaks a five-constant WebSocket protocol, so
+the client parses it in ~30 lines. It serves **exactly one document**, which is why the
+client is a single self-contained file — all CSS and JS inline, no service worker (they
 cannot register from `data:` URLs). That costs offline support, meaningless for a terminal,
 and web push, which belongs on Pushover anyway.
 
-ttyd kills its child when the socket closes, so something must hold the PTY or every
-reconnect starts a fresh pi. **dtach, not tmux**: tmux 3.7b takes the outer terminal's
-alternate screen unconditionally — `alternate-screen off`, `terminal-overrides
-',*:smcup@:rmcup@'` and `terminal-features ',*:-alternatescreen'` all leave `\e[?1049h` in
-the stream. The alternate screen has no scrollback, which would delete the entire reason
-for choosing a DOM renderer. dtach emulates no terminal, so pi's bytes arrive unchanged.
+**One PTY, N viewers.** The server is the session: every viewer sees the same stream and
+writes into the same PTY, and ending the server ends the program. It keeps the current
+screen in an `@xterm/headless` mirror so a new viewer is sent a picture instead of making
+pi redraw for one.
 
-What dtach gives up is tmux's replay buffer; the resize nudge covers exactly that.
+It replaced ttyd and dtach together. dtach's master reads up to 4096 bytes from the PTY and
+writes them to each non-blocking client socket; on `EAGAIN` it abandons the unwritten tail
+and never retries. That is silent deletion mid-stream, and it is where corrupt escape
+sequences like a stray `55;95;255m` came from — 9.3 MB lost across 55,989 gaps under a
+resize storm, measured. `tests/integrity/` is the standing gate against repeating it.
+
+**Not tmux**: tmux 3.7b takes the outer terminal's alternate screen unconditionally —
+`alternate-screen off`, `terminal-overrides ',*:smcup@:rmcup@'` and `terminal-features
+',*:-alternatescreen'` all leave `\e[?1049h` in the stream. The alternate screen has no
+scrollback, which would delete the entire reason for choosing a DOM renderer.
 
 ## Renderer: wterm, DOM over canvas
 
 The renderer owns the screen model, scrollback, painting and key encoding — which is to say
-it owns all three problems. ttyd owns none of them.
+it owns all three problems. The server owns none of them.
 
 `@wterm/dom` renders to the DOM, so momentum scroll, selection handles and find come free.
 Two properties make it fit: its Zig VT core ships as **inlined base64 WASM**, which is what
@@ -90,7 +94,7 @@ surviving rows go to its own input box and that window cannot be moved.
 
 ## Scrolling
 
-pi does not use the alternate screen and dtach does not impose one, so the terminal's own
+pi does not use the alternate screen and nothing in the stack imposes one, so the terminal's own
 scrollback holds real history and is scrolled natively. No copy-mode, no synthesised mouse
 events, no `capture-pane` reader view. This only holds because the stack keeps the
 alternate screen free — the reason tmux is not in it.
@@ -122,36 +126,36 @@ bottom inset and strands rows below the fold. One refit on the next frame fixes 
 
 ## Reconnect
 
-Attaching to a dtach session gives a blank screen with no replay, so the size is nudged
-N−1 → N to force a repaint — on *every* attach, since a freshly loaded page routinely lands
-on a session that has been running for hours. **The two sizes need a gap** (120 ms): sent
-back to back, the app reads the window size only after both ioctls, sees the size it
-already had, and draws nothing.
+The server holds the screen, so attaching costs nothing and prompts nobody: it sends the
+serialized grid and the viewer is live. That matters because making pi repaint is not
+cheap — it renders relatively and re-draws its **entire transcript** on SIGWINCH, around
+12 KB after one turn and growing linearly, so the old attach paid a redraw proportional to
+the whole conversation.
+
+The snapshot is the visible grid only. Terminal scrollback is not restored: it was only ever
+a lossy duplicate of pi's transcript, and pi is the real record.
 
 The terminal object outlives the socket, so a drop leaves the stale screen up rather than
-blanking. Input queues while down; resizes do not — the handshake carries the size, and
-queuing it would flush in the same tick as the nudge and collapse the gap.
+blanking. Input queues while down; resizes do not, since the handshake carries the size.
 
 ## Sharing the session with a desktop
 
-`dtach` multiplexes attachers, so the host joins the running session with no change to the
-stack:
+`mobile-tty attach` is a WebSocket client of the same protocol, so the desktop is a viewer
+like any other — it gets the snapshot too, and it cannot resize the PTY behind the server's
+back. It has to act like a terminal on its own account: raw mode restored on every exit
+path, SIGWINCH forwarded, `Ctrl-C` and `Ctrl-Z` passed through rather than acted on, and
+`Ctrl-]` to detach.
 
-```
-dtach -a "${TMPDIR:-/tmp}/mobile-tty.sock" -r winch
-```
-
-Both clients see each other's input and output. What they cannot have is separate sizes:
-one PTY has one size, and whoever set it last owns it — an attaching desktop leaves the
-phone rendering a grid the PTY no longer has.
-
-Taking it back needs a *real* change. Re-sending the same numbers reaches nothing: ttyd
-finds its own PTY unchanged, raises no SIGWINCH, and dtach forwards nothing. So it is the
-nudge, it costs two redraws, and it is therefore **Fit** — a deliberate tap — rather than a
-poll. Whoever acted last owns the size; Fit is how the phone acts.
+One PTY still has one size, so viewers cannot each have their own. **The narrowest wins**:
+this is meant to be read on a phone, and a desktop showing a phone-width column is legible
+where the reverse is not. The server picks the size, tells every viewer what it actually is,
+and they render that rather than what they asked for. It also makes the common case free —
+the phone is already the narrowest, so nothing resizes.
 
 Adopting an *already running* pi is not possible: reassigning a live process's controlling
-terminal needs ptrace surgery (`reptyr`), which is Linux-only. pi has to start under dtach.
+terminal needs ptrace surgery (`reptyr`), which is Linux-only. pi has to start under the
+server. A restart therefore ends it, which is why the default program is
+`pi --session-id mobile-tty` — it comes back to the same conversation.
 
 ## Access
 

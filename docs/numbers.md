@@ -29,11 +29,26 @@ iPhone, screen **402×874 pt @3x**, iOS 2026-08-10. Read live from the `≡` men
 |---|---|---|---|
 | `ttyd pi` | No | Real | **No** — ttyd kills the child |
 | `ttyd tmux new -A pi` | **Yes** (`\e[?1049h`) | **0** | Yes |
-| `ttyd dtach -A -r winch pi` | **No** | **Real** | **Yes** |
+| `ttyd dtach -A -r winch pi` | **No** | **Real** | **Yes**, and lossy |
+| our server | **No** | **Real** | **Yes** |
 
 tmux 3.7b takes the outer alternate screen unconditionally; `alternate-screen off`,
 `terminal-overrides ',*:smcup@:rmcup@'` and `terminal-features ',*:-alternatescreen'` all
 leave `\e[?1049h` in the stream.
+
+dtach loses bytes: its master abandons the unwritten tail of a 4096-byte read when a client
+socket returns `EAGAIN`. Under a resize storm with three viewers, 9.3 MB across 55,989 gaps.
+
+## pi's rendering (measured)
+
+- **Full-screen clears emitted on its own:** none. Only in response to SIGWINCH.
+- **Absolute cursor positioning:** none. It renders relatively (`ESC[nA`, `ESC[nG`, `\r\n`).
+- **Cost of one SIGWINCH:** a re-render of the entire transcript — 12 KB after one turn,
+  +3.3 KB per trivial turn, linear.
+- **Streaming amplification:** 176 KB of frames for 360 bytes of content.
+- **Startup preamble, emitted once and never repeated:** `ESC[?2004h` (bracketed paste),
+  `ESC[>7u` (kitty keyboard), the title, and the capability queries `ESC[c`, `ESC[?u`,
+  `ESC[16t`. A snapshot has to carry it or keys come back differently encoded.
 
 ## Target apps
 
@@ -53,24 +68,29 @@ They behave oppositely. v1 targets pi; alternate-screen support is deferred.
 - **Cell at 13px:** **8.04 × 15 pt on device**, 7.83 × 16 in headless WebKit. Measured at
   runtime, never assumed — at 402 pt wide that is the difference between 50 and 51 columns.
 - **Key bar:** 44 pt, plus the bottom inset when the keyboard is down.
-- **Reconnect nudge gap:** 120 ms. Zero gap does not repaint.
+- **Resize coalescing:** 100 ms, so a viewer flapping its size cannot make pi re-render its
+  transcript repeatedly.
+- **Viewer backlog cap:** 4 MB of `bufferedAmount`, then that viewer is disconnected. It is
+  never sent a gap.
+- **Smallest shared grid:** 20x8, so no viewer can shrink everyone to nothing.
 - **Keyboard detection:** ≥100 pt of lost viewport, so collapsing browser chrome does not
   read as a keyboard.
 - **Autocorrect:** 0 `insertReplacementText` events over 7 typed chars.
 
-## ttyd protocol
+## Wire protocol
 
 WebSocket subprotocol `tty`, endpoint `/ws`. First byte of every message is the command.
 
-```c
-// client -> server                  // server -> client
-#define INPUT           '0'          #define OUTPUT           '0'
-#define RESIZE_TERMINAL '1'          #define SET_WINDOW_TITLE '1'
-#define PAUSE           '2'          #define SET_PREFERENCES  '2'
-#define RESUME          '3'
-#define JSON_DATA       '{'
+```
+client -> server            server -> client
+INPUT    '0'                OUTPUT     '0'
+RESIZE   '1'                SET_TITLE  '1'
+PAUSE    '2'                SET_PREFS  '2'
+RESUME   '3'                SET_SIZE   '3'
 ```
 
-`'1'` carries `{"columns":N,"rows":M}`; `'{'` carries `{"AuthToken":"…","columns":N,"rows":M}`
-and must arrive first. `--index` serves **one document** (plus `/token`) and skips ttyd's
-gzip path.
+`RESIZE` and `SET_SIZE` carry `{"columns":N,"rows":M}`. The handshake is a bare
+`{"AuthToken":"…","columns":N,"rows":M}` with no command byte and must arrive first.
+
+`SET_SIZE` is the grid the PTY actually has, which is not always the one a viewer asked
+for: the narrowest viewer wins and the rest render at its size.

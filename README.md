@@ -19,7 +19,7 @@ It listens on **loopback by default**, because that is all the tunnel needs. `--
 
 The **session** holds the program and outlives every command here. `serve` and `attach` each start one if there is not one already, and both are only viewers onto it — so the desktop can attach with nothing else running, and closing the last browser tab kills nothing. To end it, exit the program.
 
-Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. The build is skipped when `dist/client.html` is newer than `src/` and the lockfile, so a prebuilt copy needs `ttyd` and `dtach` but not node.
+Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. The build is skipped when `dist/client.html` is newer than `src/` and the lockfile, though the server is node either way.
 
 `down` ends everything — server, tunnel, and the program — and clears the socket, which is the one piece of state that outlives every command. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
@@ -37,7 +37,7 @@ There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes 
 
 ## Reach it from anywhere
 
-There is no `--password`, and the fault is not ours: ttyd refuses the WebSocket upgrade without a basic-auth header, and Safari does not put one on a WebSocket handshake ([ttyd#1437](https://github.com/tsl0922/ttyd/issues/1437), open since 2025, fix unmerged). The page loads and the terminal never connects.
+There is no `--password`: Safari does not put a basic-auth header on a WebSocket handshake, so the page would load and the terminal would never connect. Authentication belongs at the edge — see below.
 
 Cloudflare Access authenticates with a cookie instead, and cookies *are* sent on WebSocket handshakes. Given a domain on Cloudflare:
 
@@ -47,7 +47,7 @@ cloudflared tunnel login                 # once, opens a browser
 ./mobile-tty up                          # serve and tunnel together
 ```
 
-ttyd runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
+The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
 
 The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though: whoever attached or resized last owns it, and **Fit** is how the phone takes it back.
 
@@ -56,7 +56,7 @@ The desktop can watch or type at the same time, either by opening the same URL o
 ```
 npm test                # 40 unit
 npm run test:e2e        # 39 WebKit at 402x812 against tests/fixtures/fake-pi.sh
-npm run test:smoke      # 3 against real pi under dtach; sends no prompts, costs no tokens
+npm run test:smoke      # 3 against real pi; sends no prompts, costs no tokens
 npm run build           # dist/client.html, one self-contained file
 ```
 
@@ -64,6 +64,6 @@ Anything mechanisable is a pure function; the device verifies the viewport adapt
 
 ## Notes
 
-Requires `ttyd` and `dtach` (`brew install ttyd dtach`), plus `cloudflared` for the tunnel. Alternate-screen apps — Claude Code, vim, htop — are out of scope for now, and dictation is untested.
+Requires node, plus `cloudflared` for the tunnel. Alternate-screen apps — Claude Code, vim, htop — are out of scope for now, and dictation is untested.
 
 Why it is built this way, and the measurements behind it: [`docs/decisions.md`](docs/decisions.md) · [`docs/numbers.md`](docs/numbers.md).
