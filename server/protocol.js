@@ -21,8 +21,7 @@ export const SET_SIZE = 0x33     // '3'  the grid the PTY actually has
  */
 export const decodeHandshake = buf => {
   try {
-    const { columns, rows } = JSON.parse(buf.toString())
-    return { cols: Number(columns) || 0, rows: Number(rows) || 0 }
+    return sane(JSON.parse(buf.toString()))
   } catch {
     return null
   }
@@ -31,11 +30,16 @@ export const decodeHandshake = buf => {
 /** A RESIZE payload. Returns null unless both dimensions are sane. */
 export const decodeResize = buf => {
   try {
-    const { columns, rows } = JSON.parse(buf.toString())
-    if (!Number.isInteger(columns) || !Number.isInteger(rows)) return null
-    if (columns < 1 || rows < 1 || columns > 1000 || rows > 1000) return null
-    return { cols: columns, rows }
+    return sane(JSON.parse(buf.toString()))
   } catch {
     return null
   }
+}
+
+// Every size reaching the PTY goes through here. A handshake carries one too, so
+// it gets the same scrutiny as a resize rather than a friendlier parse.
+function sane({ columns, rows }) {
+  if (!Number.isInteger(columns) || !Number.isInteger(rows)) return null
+  if (columns < 1 || rows < 1 || columns > 1000 || rows > 1000) return null
+  return { cols: columns, rows }
 }

@@ -27,47 +27,61 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
   const mirror = new Mirror(session.size)
   const viewers = new Set()
 
+  // Non-null while a snapshot is being taken. The mirror stops consuming for
+  // that moment so the screen it serializes is exactly the screen these bytes
+  // come after — see admit().
+  let held = null
+
   session.onResize = size => {
     mirror.resize(size.cols, size.rows)
     for (const viewer of viewers) if (viewer.queue === null) viewer.sendSize(size)
   }
   session.onData = data => {
-    mirror.write(data)
+    // Viewers first: the mirror is a convenience, and a failure in it must not
+    // cost anyone bytes it was about to be sent.
     for (const viewer of viewers) {
-      // Not yet given a screen, so these bytes are already in the snapshot it
-      // is about to get.
-      if (viewer.queue === undefined) continue
-      // Queued rather than sent: its snapshot has been taken but not delivered,
-      // and these bytes belong after it.
       if (viewer.queue) viewer.queue.push(data)
-      else if (!viewer.output(data)) viewers.delete(viewer)
+      else if (viewer.queue === null && !viewer.output(data)) viewers.delete(viewer)
     }
+    if (held) held.push(data)
+    else mirror.write(data)
   }
 
   /**
    * Give a viewer the screen, then everything that happened while we took it.
    *
-   * The order is the whole point: take the snapshot from a drained parser, then
-   * flush what arrived meanwhile. Sending live bytes first would apply them to a
-   * screen the viewer has not been given, and sending them twice would double.
+   * The split has to be exact. Draining alone is not enough: the parser is
+   * asynchronous, so bytes written behind the drain marker are parsed after the
+   * snapshot is serialized and would be in neither the screen nor the queue.
+   * Holding them out of the mirror instead makes the boundary a real one.
+   *
+   * Admissions are serialized, since two at once would fight over what is held.
    */
-  const admit = async viewer => {
-    session.add(viewer)
-    mirror.resize(session.size.cols, session.size.rows)
-    await mirror.drain()
-    // Nothing can arrive between here and the snapshot: `onData` is an I/O
-    // callback and this is the microtask continuing the await, so the queue
-    // opens on exactly the byte the snapshot ends at. Opening it any earlier
-    // sends those bytes twice, once inside the snapshot and once after it.
-    viewer.queue = []
-    const snapshot = Buffer.from(mirror.snapshot())
-    // Size before screen: the snapshot is drawn for the PTY's grid, so a viewer
-    // that asked for a different one has to be rendering at this size before it
-    // arrives.
-    viewer.sendSize(session.size)
-    if (!viewer.output(snapshot)) return
-    for (const chunk of viewer.queue) if (!viewer.output(chunk)) return
-    viewer.queue = null
+  let admitting = Promise.resolve()
+  const admit = viewer => {
+    admitting = admitting.then(async () => {
+      if (!viewer.open) return
+      session.add(viewer)
+      mirror.resize(session.size.cols, session.size.rows)
+
+      held = []
+      viewer.queue = []
+      await mirror.drain()
+      const snapshot = Buffer.from(mirror.snapshot())
+
+      // Size before screen: the snapshot is drawn for the PTY's grid, so a
+      // viewer that asked for a different one has to be rendering at this size
+      // before it arrives.
+      viewer.sendSize(session.size)
+      if (viewer.output(snapshot)) {
+        for (const chunk of viewer.queue) if (!viewer.output(chunk)) break
+      }
+      viewer.queue = null
+
+      for (const chunk of held) mirror.write(chunk)
+      held = null
+    })
+    return admitting
   }
   session.onExit = status => {
     for (const viewer of viewers) viewer.close(1000, 'session ended')

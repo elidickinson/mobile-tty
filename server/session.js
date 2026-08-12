@@ -60,7 +60,7 @@ export class Session {
     const next = { cols: Math.max(cols, MIN_COLS), rows: Math.max(rows, MIN_ROWS) }
     if (!same(next, this.size)) {
       this.size = next
-      this.pty.resize(cols, rows)
+      this.pty.resize(next.cols, next.rows)
       this.onResize?.(next)
     }
     return this.size

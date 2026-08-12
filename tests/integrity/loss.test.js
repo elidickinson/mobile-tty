@@ -102,3 +102,22 @@ test('a rogue viewer costs the well-behaved ones nothing', async () => {
     })
   } finally { stack.stop() }
 })
+
+test('a viewer joining mid-stream gets the screen and then every byte after it', async () => {
+  const stack = await startStack({ port: 7698, command: 'tests/fixtures/counter.sh' })
+  try {
+    // Join repeatedly while the session is at full rate: each snapshot has to
+    // split the stream exactly, with nothing lost or repeated at the seam.
+    for (let i = 0; i < 5; i++) {
+      const viewer = new Viewer(stack.url)
+      await viewer.opened
+      viewer.start()
+      await wait(400)
+      const bytes = await viewer.settle()
+      const missing = gaps(bytes)
+      const total = bytes.reduce((n, b) => n + b.length, 0)
+      assert.ok(total > 64 * 1024, `join ${i} captured only ${total} bytes`)
+      assert.deepEqual(missing, [], `join ${i}: ${missing.length} seams, of ${total} bytes`)
+    }
+  } finally { stack.stop() }
+})

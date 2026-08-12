@@ -34,13 +34,15 @@ export class Viewer {
   /**
    * Hand this viewer output. Returns false once it has been cut loose.
    *
-   * The check is before the write, not after: `bufferedAmount` is what this
-   * socket has failed to drain, so a viewer that is already over its limit does
-   * not get to make it worse.
+   * The check is before the write: `bufferedAmount` is what this socket has
+   * failed to drain, so a viewer that cannot take this chunk is cut loose
+   * instead of being sent part of it.
    */
   output(bytes) {
     if (!this.open) return false
-    if (this.ws.bufferedAmount > BACKLOG_LIMIT) {
+    // Counting the chunk about to be added, so a single large write cannot
+    // vault the backlog past the limit and sit there.
+    if (this.ws.bufferedAmount + bytes.length > BACKLOG_LIMIT) {
       this.ws.close(TOO_FAR_BEHIND, 'too far behind')
       return false
     }
