@@ -21,11 +21,10 @@ writes into the same PTY, and ending the server ends the program. It keeps the c
 screen in an `@xterm/headless` mirror so a new viewer is sent a picture instead of making
 pi redraw for one.
 
-It replaced ttyd and dtach together. dtach's master reads up to 4096 bytes from the PTY and
-writes them to each non-blocking client socket; on `EAGAIN` it abandons the unwritten tail
-and never retries. That is silent deletion mid-stream, and it is where corrupt escape
-sequences like a stray `55;95;255m` came from — 9.3 MB lost across 55,989 gaps under a
-resize storm, measured. `tests/integrity/` is the standing gate against repeating it.
+It replaced ttyd and dtach together. dtach drops bytes: on `EAGAIN` its master abandons the
+unwritten tail of a 4096-byte read and never retries — silent deletion mid-stream, and
+where corrupt escape sequences like a stray `55;95;255m` came from (measured, `numbers.md`).
+`tests/integrity/` is the standing gate against repeating it.
 
 **Not tmux**: tmux 3.7b takes the outer terminal's alternate screen unconditionally —
 `alternate-screen off`, `terminal-overrides ',*:smcup@:rmcup@'` and `terminal-features
@@ -137,14 +136,14 @@ bottom inset and strands rows below the fold. One refit on the next frame fixes 
 
 The server holds the screen, so attaching costs nothing and prompts nobody: it sends the
 serialized grid and the viewer is live. That matters because making pi repaint is not
-cheap — it renders relatively and re-draws its **entire transcript** on SIGWINCH, around
-12 KB after one turn and growing linearly, so the old attach paid a redraw proportional to
-the whole conversation.
+cheap — it renders relatively and re-draws its **entire transcript** on SIGWINCH, a cost
+that grows linearly with the conversation (measured, `numbers.md`), so the old attach paid
+a redraw proportional to the whole conversation.
 
 The snapshot carries the screen and 500 lines of history above it. That history is not a
 luxury: pi renders inline and does not page itself — PageUp gets `\e[1G\e[?25l` and nothing
 else — so the terminal's scrollback is the only way to read back through a conversation.
-About 37 KB, against a transcript re-render that starts at 12 KB and grows every turn.
+About 37 KB, against a transcript re-render that grows with every turn.
 `--scrollback N` moves it, since how far back you want to read is a matter of taste.
 
 The terminal object outlives the socket, so a drop leaves the stale screen up rather than

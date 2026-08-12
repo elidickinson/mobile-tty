@@ -34,10 +34,6 @@ iPhone, screen **402×874 pt @3x**, iOS 2026-08-10. Read live from the `≡` men
 | `ttyd dtach -A -r winch pi` | **No** | **Real** | **Yes**, and lossy |
 | our server | **No** | **Real** | **Yes** |
 
-tmux 3.7b takes the outer alternate screen unconditionally; `alternate-screen off`,
-`terminal-overrides ',*:smcup@:rmcup@'` and `terminal-features ',*:-alternatescreen'` all
-leave `\e[?1049h` in the stream.
-
 dtach loses bytes: its master abandons the unwritten tail of a 4096-byte read when a client
 socket returns `EAGAIN`. Under a resize storm with three viewers, 9.3 MB across 55,989 gaps.
 
