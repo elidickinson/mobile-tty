@@ -54,10 +54,10 @@ The desktop can watch or type at the same time, either by opening the same URL o
 ## Test
 
 ```
-npm test                # 44 unit, including the snapshot round-trip gate
-npm run test:e2e        # 41 WebKit at 402x812 against tests/fixtures/fake-pi.sh
-npm run test:integrity  # 2 that no viewer is ever sent a gap
-npm run test:smoke      # 3 against real pi; sends no prompts, costs no tokens
+npm test                # unit, including the snapshot round-trip gate
+npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.sh
+npm run test:integrity  # that no viewer is ever sent a gap
+npm run test:smoke      # against real pi; sends no prompts, costs no tokens
 npm run build           # dist/client.html, one self-contained file
 ```
 

@@ -73,3 +73,36 @@ test('a resize arriving after the program exits does not take the server down', 
   // timer, where nothing can catch it and the process is the session.
   assert.doesNotThrow(() => session.fit())
 })
+
+/** Connect, ask for a size, and collect every grid the server reports. */
+const viewer = (url, columns, rows) => {
+  const seen = []
+  const ws = new WebSocket(url, ['tty'])
+  ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns, rows })))
+  ws.on('message', d => {
+    const buf = Buffer.from(d)
+    if (buf[0] === 0x33) seen.push(JSON.parse(buf.subarray(1)))
+  })
+  return { seen, close: () => ws.close() }
+}
+
+const settle = () => new Promise(resolve => setTimeout(resolve, 500))
+
+test('the narrowest viewer sets the grid, and leaving hands it back', async () => {
+  const { server, url } = await start()
+  const wide = viewer(url, 100, 30)
+  await settle()
+  assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'alone, a viewer gets what it asked for')
+
+  const narrow = viewer(url, 40, 12)
+  await settle()
+  assert.deepEqual(narrow.seen.at(-1), { columns: 40, rows: 12 })
+  assert.deepEqual(wide.seen.at(-1), { columns: 40, rows: 12 }, 'the wide viewer is told it lost')
+
+  narrow.close()
+  await settle()
+  assert.deepEqual(wide.seen.at(-1), { columns: 100, rows: 30 }, 'and told again when it wins it back')
+
+  wide.close()
+  await server.close()
+})

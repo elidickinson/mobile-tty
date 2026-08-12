@@ -88,8 +88,7 @@ WebSocket subprotocol `tty`, endpoint `/ws`. First byte of every message is the 
 client -> server            server -> client
 INPUT    '0'                OUTPUT     '0'
 RESIZE   '1'                SET_TITLE  '1'
-PAUSE    '2'                SET_PREFS  '2'
-RESUME   '3'                SET_SIZE   '3'
+                            SET_SIZE   '3'
 ```
 
 `RESIZE` and `SET_SIZE` carry `{"columns":N,"rows":M}`. The handshake is a bare

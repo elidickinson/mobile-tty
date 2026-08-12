@@ -28,8 +28,7 @@ export class TtydConnection {
     this.ws = null
     this.queue = []
     this.backoff = BACKOFF_MIN
-    this.lastOutput = 0
-    this.now = () => Date.now()
+
   }
 
   get connected() { return this.ws?.readyState === 1 }
@@ -58,10 +57,7 @@ export class TtydConnection {
 
     ws.onmessage = ev => {
       const f = decodeFrame(ev.data)
-      if (f.cmd === OUTPUT) {
-        this.lastOutput = this.now()
-        this.onOutput(f.payload)
-      }
+      if (f.cmd === OUTPUT) this.onOutput(f.payload)
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
       else if (f.cmd === SET_SIZE) this.onSize?.({ cols: f.json.columns, rows: f.json.rows })
     }
