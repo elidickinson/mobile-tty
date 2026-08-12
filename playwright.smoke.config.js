@@ -1,20 +1,18 @@
 import { defineConfig } from '@playwright/test'
 import { phone } from './playwright.config.js'
 
-// Tests against real pi. Slower and mildly flakier than the main
-// suite, so they run on their own: `npm run test:smoke`. They send no prompts,
-// so they cost no tokens — they only check that pi still renders and reflows.
+// Tests against real pi, driven by a deterministic test extension instead of
+// waiting on pi's own startup. Slower than the main suite, so they run on
+// their own: `npm run test:smoke`. Each test gets a fresh server and pi (see
+// tests/smoke/helpers.js) so no test inherits another's history — the session
+// is the server, and this suite's whole job is history integrity. They send no
+// prompts — the slash commands render fixture output without an agent turn —
+// so no tokens.
 export default defineConfig({
   testDir: 'tests/smoke',
   timeout: 90_000,
   expect: { timeout: 30_000 },
   workers: 1,
   reporter: 'list',
-  use: { ...phone, baseURL: 'http://127.0.0.1:7692' },
-  webServer: {
-    command: 'node scripts/build.js && node server/cli.js --port 7692 --index dist/client.html -- pi --session-id mobile-tty-smoke',
-    url: 'http://127.0.0.1:7692',
-    reuseExistingServer: false,
-    stdout: 'ignore',
-  },
+  use: { ...phone, baseURL: 'http://127.0.0.1:0' },
 })
