@@ -126,7 +126,7 @@ case "$cmd" in
     exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://127.0.0.1:$port/ws' }))"
     ;;
   up)
-    [[ -f "$config" ]] || die "no $config — run: mobile-tty setup <hostname>"
+    [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
     # The edge answers this whether or not the tunnel is running, so it can be
     # asked before starting. It is the only thing about this setup you cannot
     # see from this machine.
@@ -135,7 +135,7 @@ case "$cmd" in
     case "${probe%% *}" in
       30*) [[ "${probe#* }" == *cloudflareaccess.com* ]] &&
              echo "$host is behind a login" ||
-             echo "$host redirects somewhere that is not Access — check the application" ;;
+             echo "$host redirects somewhere that is not Access -- check the application" ;;
       200) echo "WARNING: $host answers with no login in front of it" ;;
       *) echo "$host is not answering yet (${probe%% *})" ;;
     esac
@@ -151,7 +151,7 @@ case "$cmd" in
     # Both in the background, then wait. Not exec, which would replace this
     # shell and take the trap with it; and not the server in the foreground
     # either, because bash defers signals until the foreground command returns
-    # — so a TERM would sit unhandled and leave the tunnel behind.
+    # -- so a TERM would sit unhandled and leave the tunnel behind.
     node server/cli.js --port "$port" --bind "$bind" \
       ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@" &
     server=$!
@@ -161,7 +161,7 @@ case "$cmd" in
     exit $status
     ;;
   tunnel)
-    [[ -f "$config" ]] || die "no $config — run: mobile-tty setup <hostname>"
+    [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
     exec cloudflared tunnel --config "$config" run
     ;;
   down)
