@@ -8,7 +8,8 @@
     "build": "node scripts/build.js",
     "dev": "node scripts/build.js --watch",
     "test:e2e": "playwright test",
-    "test:smoke": "playwright test -c playwright.smoke.config.js"
+    "test:smoke": "playwright test -c playwright.smoke.config.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
   },
   "license": "ISC",
   "type": "module",
@@ -18,6 +19,8 @@
     "ws": "^8.21.3"
   },
   "dependencies": {
-    "@wterm/dom": "^0.3.3"
+    "@wterm/dom": "^0.3.3",
+    "node-pty": "^1.1.0",
+    "ws": "^8.21.3"
   }
 }
