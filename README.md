@@ -6,16 +6,15 @@ Drive pi.dev -- or any full-screen terminal app -- from a phone, over a WebSocke
 
 ```
 npm install
-./mobile-tty                             # build if stale, then serve on :7681
-./mobile-tty --lan                       # reachable from the phone over wifi
-./mobile-tty attach                      # join the same session from this terminal
-./mobile-tty up                          # serve and tunnel, both ending together
-./mobile-tty serve bash                  # a different program
+./mobile-tty                             # serves `pi` on 127.0.0.1:7681
+./mobile-tty --bind 0.0.0.0 --port 1234  # can specify how to bind our server
+./mobile-tty attach                      # join an existing session from this terminal
+./mobile-tty up                          # launch server and cloudflare tunnel
+./mobile-tty serve bash                  # a different program besides `pi`
 ./mobile-tty pi --model whatever         # flags after the program go to it
-./mobile-tty help                        # all of it
 ```
 
-It listens on **loopback by default**, because that is all the tunnel needs. `--lan` opens it to the network so a phone on the same wifi can reach `http://<your-ip>:7681/` -- which is an unauthenticated terminal on your network, so prefer the tunnel. **Add to Home Screen** and launch it from there -- standalone mode drops Safari's chrome and is worth about 7 extra rows.
+It listens on **loopback by default**, because that is all the tunnel needs. `--bind 0.0.0.0` opens it to the network so a phone on the same wifi can reach `http://<your-ip>:7681/` -- which is an unauthenticated terminal on your network, so prefer the tunnel. **Add to Home Screen** and launch it from there -- standalone mode drops Safari's chrome and is worth about 7 extra rows.
 
 The **server** holds the program: one PTY, and every viewer looks at the same screen. It keeps that screen, so opening the page gets it back instantly instead of making the program redraw, and closing the last tab kills nothing. `attach` joins a server that is already running rather than starting one. To end the session, exit the program or run `down`.
 
@@ -49,7 +48,7 @@ cloudflared tunnel login                 # once, opens a browser
 
 The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
 
-For a network you already trust -- a LAN, a tailnet -- `$MTTY_PASSWORD` is the lighter option: set it and the page becomes a login that mints a cookie, with `attach` using the same password. It is a single static secret with no lockout, so make it a generated one, and on `--lan` it crosses plain http in the clear. Access is still the better answer for anything facing the internet; use one or the other, not both.
+For a network you already trust -- a LAN, a tailnet -- `$MTTY_PASSWORD` is the lighter option: set it and the page becomes a login that mints a cookie, with `attach` using the same password. It is a single static secret with no lockout, so make it a generated one, and bound to the network it crosses plain http in the clear. Access is still the better answer for anything facing the internet; use one or the other, not both.
 
 **`--hostname` is required behind any proxy.** A page on any site you visit can open a WebSocket to your loopback -- nothing in the browser stops it -- so a socket is refused unless its `Origin` is the address it connected to. Addresses work as-is; a name (Cloudflare, MagicDNS, any reverse proxy) has to be declared, by flag or `$MTTY_HOSTNAME`. Miss it and the page loads but never connects, with the reason on stderr.
 
