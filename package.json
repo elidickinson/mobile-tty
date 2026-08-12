@@ -15,8 +15,7 @@
   "type": "module",
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "esbuild": "^0.28.2",
-    "ws": "^8.21.3"
+    "esbuild": "^0.28.2"
   },
   "dependencies": {
     "@wterm/dom": "^0.3.3",
