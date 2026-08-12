@@ -34,10 +34,13 @@ const server = createTerminalServer({
   port: number('--port', 7681),
   bind: arg('--bind') ?? '127.0.0.1',
   hostname: arg('--hostname'),
+  // Never a flag: a command line is readable by every process on the machine.
+  password: process.env.MTTY_PASSWORD,
   scrollback: number('--scrollback', 500),
   command,
   args,
-  onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}`),
+  onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}` +
+    (process.env.MTTY_PASSWORD ? ' (password required)' : '')),
   // pi exiting is the session ending, and the session is what this process is
   // for. Anything else would leave a server serving a terminal that is gone.
   onExit: ({ exitCode }) => server.close().then(() => process.exit(exitCode ?? 0)),

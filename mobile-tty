@@ -61,9 +61,12 @@ narrowest one decides the size, because this is meant to be read on a phone.
 `attach` joins a server that is already running; it does not start one. To end
 the session, exit the program or run `down`.
 
-There is no --password: Safari does not send basic-auth on a WebSocket
-handshake, so the page would load and the terminal would never connect. Use
-`setup` and let Cloudflare Access do the login.
+Set $MTTY_PASSWORD for a login page and a cookie: an opt-in alternative to
+Access for a network you already trust. Not a flag, because a command line is
+readable by every process on the machine, and not basic auth, because Safari
+sends no such header on a WebSocket handshake and the terminal would never
+connect. Use `setup` and let Cloudflare Access do it instead when it is facing
+the internet.
 
 A page on any site you visit can open a WebSocket to this server, so sockets
 are refused unless their Origin matches the address they connected to. Reaching
@@ -120,7 +123,6 @@ case "$cmd" in
       ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@"
     ;;
   attach)
-    echo "Ctrl-] detaches and leaves it running. Ctrl-C goes through to the program."
     exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://127.0.0.1:$port/ws' }))"
     ;;
   up)

@@ -7,12 +7,19 @@ import { WebSocket } from 'ws'
 import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
 
-const start = async (command = 'tests/fixtures/fake-pi.sh', args = []) => {
-  const server = createTerminalServer({ port: 0, bind: '127.0.0.1', command, args })
+const start = async (command = 'tests/fixtures/fake-pi.sh', args = [], options = {}) => {
+  const server = createTerminalServer({ port: 0, bind: '127.0.0.1', command, args, ...options })
   await new Promise(r => server.http.on('listening', r))
   const { port } = server.http.address()
   return { server, url: `ws://127.0.0.1:${port}/ws`, page: `http://127.0.0.1:${port}/` }
 }
+
+/** Just the handshake: was this socket let up at all? */
+const handshake = (url, options) => new Promise(resolve => {
+  const ws = new WebSocket(url, ['tty'], options)
+  ws.on('open', () => { ws.close(); resolve('opened') })
+  ws.on('error', () => resolve('refused'))
+})
 
 /** Connect, handshake, and report how much screen arrived before it settled. */
 const join = (url, handshake = { AuthToken: '', columns: 50, rows: 20 }) => new Promise(resolve => {
@@ -190,12 +197,30 @@ test('the document validates against its build id, so an unchanged client costs 
 test('a socket from another origin never reaches the session', async () => {
   const { server, url } = await start()
   try {
-    const outcome = await new Promise(resolve => {
-      const ws = new WebSocket(url, ['tty'], { origin: 'http://evil.example' })
-      ws.on('open', () => resolve('opened'))
-      ws.on('error', () => resolve('refused'))
-    })
-    assert.equal(outcome, 'refused', 'a hostile page got a terminal')
+    assert.equal(await handshake(url, { origin: 'http://evil.example' }), 'refused',
+      'a hostile page got a terminal')
+  } finally {
+    await server.close()
+  }
+})
+
+test('a password puts a login in front of both the page and the socket', async () => {
+  const { server, url, page } = await start(undefined, [], { password: 'hunter2' })
+  const submit = password => fetch(`${page}login`, {
+    method: 'POST', body: new URLSearchParams({ password }), redirect: 'manual',
+  })
+  try {
+    assert.match(await (await fetch(page)).text(), /<form method="post"/,
+      'the terminal was served to someone who has not logged in')
+    assert.equal(await handshake(url), 'refused')
+    assert.equal((await submit('wrong')).status, 401)
+
+    const granted = await submit('hunter2')
+    assert.equal(granted.status, 303)
+    const cookie = granted.headers.getSetCookie()[0].split(';')[0]
+
+    assert.match(await (await fetch(page, { headers: { cookie } })).text(), /name="build"/)
+    assert.equal(await handshake(url, { headers: { cookie } }), 'opened')
   } finally {
     await server.close()
   }

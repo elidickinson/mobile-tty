@@ -37,7 +37,7 @@ There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes 
 
 ## Reach it from anywhere
 
-There is no `--password`: Safari does not put a basic-auth header on a WebSocket handshake, so the page would load and the terminal would never connect. Authentication belongs at the edge — see below.
+Authentication is a cookie, either way you do it. Basic auth cannot work at all here: Safari puts no `Authorization` header on a WebSocket handshake and the page cannot add one, so it would load and then never connect.
 
 Cloudflare Access authenticates with a cookie instead, and cookies *are* sent on WebSocket handshakes. Given a domain on Cloudflare:
 
@@ -48,6 +48,8 @@ cloudflared tunnel login                 # once, opens a browser
 ```
 
 The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
+
+For a network you already trust — a LAN, a tailnet — `$MTTY_PASSWORD` is the lighter option: set it and the page becomes a login that mints a cookie, with `attach` using the same password. It is a single static secret with no lockout, so make it a generated one, and on `--lan` it crosses plain http in the clear. Access is still the better answer for anything facing the internet; use one or the other, not both.
 
 **`--hostname` is required behind any proxy.** A page on any site you visit can open a WebSocket to your loopback — nothing in the browser stops it — so a socket is refused unless its `Origin` is the address it connected to. Addresses work as-is; a name (Cloudflare, MagicDNS, any reverse proxy) has to be declared, by flag or `$MTTY_HOSTNAME`. Miss it and the page loads but never connects, with the reason on stderr.
 

@@ -13,10 +13,15 @@ export { expect }
  * keeps tests from colliding on a port still in TIME_WAIT.
  */
 export const test = base.extend({
-  baseURL: async ({}, use) => {
+  // Off unless a spec asks for it with test.use({ password }).
+  password: [undefined, { option: true }],
+  baseURL: async ({ password }, use) => {
     const server = spawn('node',
       ['server/cli.js', '--port', '0', '--', 'tests/fixtures/fake-pi.sh'],
-      { stdio: ['ignore', 'pipe', 'inherit'] })
+      {
+        stdio: ['ignore', 'pipe', 'inherit'],
+        env: password ? { ...process.env, MTTY_PASSWORD: password } : process.env,
+      })
     const port = await new Promise((resolve, reject) => {
       server.stdout.on('data', d => {
         const found = String(d).match(/:(\d+)/)

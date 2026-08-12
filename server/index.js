@@ -5,6 +5,7 @@
 // the corrupt escape sequences came from; nothing here may repeat that.
 import { createServer } from 'node:http'
 import { WebSocketServer } from 'ws'
+import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
 import { Session } from './session.js'
@@ -30,7 +31,8 @@ const MAX_FRAME = 1024 * 1024
  * about 37 KB per connect, against a pi transcript re-render that starts at
  * 12 KB and grows with every turn.
  */
-export function createTerminalServer({ port, bind, hostname, command, args = [], scrollback = 500, onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = 500, onListen, onExit }) {
+  const auth = new Auth(password)
   const session = new Session({ command, args })
   const mirror = new Mirror({ ...session.size, scrollback })
   const viewers = new Set()
@@ -138,8 +140,23 @@ export function createTerminalServer({ port, bind, hostname, command, args = [],
   // has no cached copy of, and what it gets back is whatever is current. It must
   // not be cached any harder than `/` either — the home screen launches a fixed
   // URL, so pinning that one would strand the phone on an old build for good.
+  const loginHeaders = { 'content-type': 'text/html', 'cache-control': 'no-store' }
+
   const http = createServer(async (req, res) => {
-    if (req.url?.split('?')[0] !== '/') return void res.writeHead(404).end()
+    const path = req.url?.split('?')[0]
+
+    if (path === '/login' && req.method === 'POST') {
+      const attempt = await submittedPassword(req)
+      if (!attempt || !auth.accepts(attempt)) return void res.writeHead(401, loginHeaders).end(loginPage(true))
+      // Secure only where the connection actually was: on `--lan` it is plain
+      // http, and a cookie the browser refuses to send is a login that loops.
+      const secure = req.headers['x-forwarded-proto'] === 'https'
+      return void res.writeHead(303, { location: '/', 'set-cookie': auth.grant({ secure }) }).end()
+    }
+
+    if (path !== '/') return void res.writeHead(404).end()
+    if (!auth.admits(req)) return void res.writeHead(200, loginHeaders).end(loginPage())
+
     let client
     try {
       client = await buildClient()
@@ -167,6 +184,10 @@ export function createTerminalServer({ port, bind, hostname, command, args = [],
     // with --hostname, and a socket that silently will not open is a mystery.
     verifyClient: ({ req }) => {
       const { origin, host } = req.headers
+      if (!auth.admits(req)) {
+        console.error('server: refused a socket that has not logged in')
+        return false
+      }
       if (originAllowed({ origin, host, hostname })) return true
       // Only where it is the likely explanation: arriving under a name nobody
       // declared. A hostile page reaching the address direct is not a setup

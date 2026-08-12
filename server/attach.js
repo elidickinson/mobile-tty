@@ -20,16 +20,45 @@ const DETACH_KITTY = /\x1b\[93(:[0-9]+)?;\d+u/
 // Same chord in either encoding.
 export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chunk)
 
+// The chord is the one thing a viewer cannot discover on its own, so say it
+// once on the way in. Long enough to read, short enough not to be in the way.
+const BANNER = 'mobile-tty — press Ctrl-] to disconnect\r\nCtrl-C and Ctrl-Z go through to the program.'
+const BANNER_MS = 2000
+
 const frame = (cmd, text) => Buffer.concat([Buffer.from([cmd]), Buffer.from(text)])
 
-export function attach({ url }) {
+// The same login the browser does, rather than a second way in: post the
+// password, keep the cookie, put it on the handshake.
+async function login(url, password) {
+  const target = new URL(url)
+  target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:'
+  target.pathname = '/login'
+  const response = await fetch(target, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ password }),
+    redirect: 'manual',
+  })
+  const [cookie] = response.headers.getSetCookie()
+  if (!cookie) {
+    console.error('attach: $MTTY_PASSWORD was refused')
+    process.exit(1)
+  }
+  return cookie.split(';')[0]
+}
+
+export async function attach({ url }) {
   const { stdin, stdout } = process
   if (!stdin.isTTY) {
     console.error('attach: not a terminal')
     process.exit(2)
   }
 
-  const ws = new WebSocket(url, ['tty'])
+  // Before the terminal is touched, so a refusal leaves it exactly as found.
+  const password = process.env.MTTY_PASSWORD
+  const headers = password ? { cookie: await login(url, password) } : undefined
+
+  const ws = new WebSocket(url, ['tty'], { headers })
   let restored = false
 
   // The snapshot's preamble leaves the terminal in the kitty keyboard protocol
@@ -61,12 +90,28 @@ export function attach({ url }) {
   const size = () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 })
 
   ws.on('open', () => {
-    ws.send(JSON.stringify({ AuthToken: '', ...size() }))
     stdin.setRawMode(true)
     stdin.resume()
-    stdout.on('resize', () => ws.send(frame(RESIZE, JSON.stringify(size()))))
+
+    // The server sends nothing until this hello, so holding it back gives the
+    // banner the screen to itself and the snapshot repaints over it. No output
+    // is buffered or lost here — none has been asked for yet.
+    stdout.write(`\x1b[2J\x1b[H${BANNER}`)
+    let started = false
+    const start = () => {
+      if (started) return
+      started = true
+      clearTimeout(timer)
+      ws.send(JSON.stringify({ AuthToken: '', ...size() }))
+      stdout.on('resize', () => ws.send(frame(RESIZE, JSON.stringify(size()))))
+    }
+    const timer = setTimeout(start, BANNER_MS)
+
     stdin.on('data', chunk => {
       if (isDetach(chunk)) leave('detached; the session is still running')
+      // The key that dismisses the banner is spent doing so: the session has
+      // not been shown yet, so it was not typed at what is about to appear.
+      if (!started) return start()
       ws.send(frame(INPUT, chunk))
     })
   })
