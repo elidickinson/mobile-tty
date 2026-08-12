@@ -175,35 +175,50 @@ function applyPendingGrid() {
 // A grid change is followed by a snapshot that replaces the whole buffer, and
 // the rendered rows are dropped before it arrives. Reading position therefore
 // has to be taken before the resize and put back once wterm has rendered the
-// repaint, which it does on a later frame.
-let reading = null
+// repaint, which it does on a later frame — but a live stream can keep
+// growing the buffer forever, so this cannot just wait for it to settle. It
+// gives up after a fixed window, and anything that moves the scroll on its
+// own terms — a drag, Top/Bottom, the back-to-live button — cancels it.
+let stopReading = () => {}
 
 function applyServerSize(cols, rows) {
   if (cols === state.cols && rows === state.rows) return
   // How far up the history the eye is, as a share of the whole — the only
   // measure that survives a reflow, since pixels and rows both change.
-  reading = atBottom() || screen.scrollHeight === 0
+  const share = atBottom() || screen.scrollHeight === 0
     ? null
     : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
   sizeScreen()
-  if (reading !== null) keepReading()
+  if (share !== null) keepReading(share)
 }
 
-/** Re-apply the position on every frame until the repaint stops growing. */
-function keepReading() {
-  const share = reading
+// Long enough for wterm's own repaint to land after a resize; not a promise to
+// hold position against output that is still streaming in.
+const READING_MS = 600
+
+/** Re-apply the position on every frame until the repaint settles or gives up. */
+function keepReading(share) {
+  stopReading() // a newer resize, or the user, cancels whatever was running
+  const deadline = performance.now() + READING_MS
   let last = -1
   let frames = 0
+  const cancel = () => {
+    stopReading = () => {}
+    screen.removeEventListener('pointerdown', cancel)
+    screen.removeEventListener('wheel', cancel)
+  }
+  stopReading = cancel
+  screen.addEventListener('pointerdown', cancel, { passive: true })
+  screen.addEventListener('wheel', cancel, { passive: true })
   const step = () => {
-    if (reading !== share) return // a newer resize owns it now
+    if (stopReading !== cancel || performance.now() > deadline) { cancel(); return }
     const h = screen.scrollHeight
     screen.scrollTop = h - screen.clientHeight - share * h
     toBottom.hidden = atBottom()
-    if (h === last && ++frames > 3) { reading = null; return }
-    if (h !== last) { last = h; frames = 0 }
+    if (h === last) { if (++frames > 3) { cancel(); return } } else { last = h; frames = 0 }
     requestAnimationFrame(step)
   }
   requestAnimationFrame(step)
@@ -424,8 +439,8 @@ function buildMenu() {
     'zoom-in': () => setScale(state.scale * ZOOM_STEP),
     'zoom-out': () => setScale(state.scale / ZOOM_STEP),
     'zoom-reset': () => setScale(1),
-    top: () => { screen.scrollTop = 0; menu.hidden = true },
-    bottom: () => { screen.scrollTop = screen.scrollHeight; menu.hidden = true },
+    top: () => { stopReading(); screen.scrollTop = 0; menu.hidden = true },
+    bottom: () => { stopReading(); screen.scrollTop = screen.scrollHeight; menu.hidden = true },
     // iOS offers its paste callout on a real, visible field; the terminal's own
     // input is hidden, so there is nothing there to long-press.
     'send-paste': () => {
@@ -480,7 +495,7 @@ async function main() {
   await term.init()
 
   screen.addEventListener('scroll', () => { toBottom.hidden = atBottom() })
-  toBottom.addEventListener('click', () => { screen.scrollTop = screen.scrollHeight })
+  toBottom.addEventListener('click', () => { stopReading(); screen.scrollTop = screen.scrollHeight })
 
   const first = applyLayout()
   orientation = first.orientation

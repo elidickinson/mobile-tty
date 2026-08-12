@@ -66,17 +66,19 @@ export class Session {
 
     const next = { cols: Math.max(cols, MIN_COLS), rows: Math.max(rows, MIN_ROWS) }
     if (!same(next, this.size)) {
-      this.size = next
       try {
         this.pty.resize(next.cols, next.rows)
-      } catch {
+      } catch (err) {
         // `exited` is only set once the async exit event lands, and kill()
         // can close the fd before that arrives — a viewer's socket dropping in
         // that window reaches here with a pty that is already gone in every
-        // sense but the flag. A failed resize means the same thing: nothing
-        // left to resize.
+        // sense but the flag. Committing `size` before the attempt would leave
+        // it claiming a size the pty never reached, and `same()` would then
+        // skip every future resize back to it — so it moves here, after.
+        console.error('server: pty resize failed', err)
         return this.size
       }
+      this.size = next
       this.onResize?.(next)
     }
     return this.size

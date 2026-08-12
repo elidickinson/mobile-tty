@@ -135,6 +135,13 @@ test('reconnecting to a running session keeps the whole transcript, in order', a
     .toBeGreaterThan(0)
 })
 
+// How far up the history the view is, as a share of the whole — the same
+// measure the client itself uses to survive a reflow.
+const readingShare = page => page.evaluate(() => {
+  const el = document.getElementById('screen')
+  return (el.scrollHeight - el.scrollTop - el.clientHeight) / el.scrollHeight
+})
+
 test('a resize does not dump a reader at the live edge', async ({ page }) => {
   // A grid change replaces the whole rendered buffer, and the DOM collapses to
   // one screen before the resize's snapshot lands. If the reading position is
@@ -147,12 +154,21 @@ test('a resize does not dump a reader at the live edge', async ({ page }) => {
   await expect.poll(() => fixtureComplete(page)).toBe(true)
   await expect.poll(() => fixtureIds(page)).toEqual(allIds)
 
-  await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
-  await expect.poll(() => page.evaluate(() => document.getElementById('to-bottom').hidden)).toBe(false)
+  // Somewhere in the middle of history — not the top, not the bottom — so a
+  // regression that clamps to either extreme is distinguishable from a
+  // genuinely preserved position, not just "technically not at the bottom".
+  await page.evaluate(() => {
+    const el = document.getElementById('screen')
+    el.scrollTop = el.scrollHeight * 0.4
+  })
+  const before = await readingShare(page)
+  expect(before).toBeGreaterThan(0.3)
 
   await setGrid(page, '120×40', 120)
 
-  // Still reading, not dumped at the bottom — and nothing duplicated getting there.
-  expect(await page.evaluate(() => document.getElementById('to-bottom').hidden)).toBe(false)
+  // The reader's relative position survives the reflow, within the rounding a
+  // coarser row grid introduces — not just "not dumped exactly to the bottom".
+  await expect.poll(() => readingShare(page), { timeout: 2_000 })
+    .toBeGreaterThan(before - 0.1)
   await expect.poll(() => fixtureIds(page)).toEqual(allIds)
 })
