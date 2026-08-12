@@ -17,6 +17,11 @@ import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
 const DETACH = 0x1d
 const DETACH_KITTY = /\x1b\[93(:[0-9]+)?;\d+u/
 
+// Detaching is not the session ending, and `serve --attach` has to tell them
+// apart: one hands the server over to the phone, the other means there is
+// nothing left to hand over.
+export const DETACHED = 3
+
 // Same chord in either encoding.
 export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chunk)
 
@@ -108,7 +113,10 @@ export async function attach({ url }) {
     const timer = setTimeout(start, BANNER_MS)
 
     stdin.on('data', chunk => {
-      if (isDetach(chunk)) leave('detached; the session is still running')
+      if (isDetach(chunk)) leave(
+        'detached; the session is still running\r\n' +
+        '  rejoin it   mobile-tty attach\r\n' +
+        '  end it      mobile-tty down', DETACHED)
       // The key that dismisses the banner is spent doing so: the session has
       // not been shown yet, so it was not typed at what is about to appear.
       if (!started) return start()

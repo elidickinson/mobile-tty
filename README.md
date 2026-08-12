@@ -9,7 +9,8 @@ npm install
 ./mobile-tty                             # serves `pi` on 127.0.0.1:7681
 ./mobile-tty --bind 0.0.0.0 --port 1234  # can specify how to bind our server
 ./mobile-tty attach                      # join an existing session from this terminal
-./mobile-tty up                          # launch server and cloudflare tunnel
+./mobile-tty serve --tunnel              # also run the cloudflare tunnel
+./mobile-tty serve --attach              # also watch it from this terminal
 ./mobile-tty serve bash                  # a different program besides `pi`
 ./mobile-tty pi --model whatever         # flags after the program go to it
 ```
@@ -18,9 +19,9 @@ It listens on **loopback by default**, because that is all the tunnel needs. `--
 
 The **server** holds the program: one PTY, and every viewer looks at the same screen. It keeps that screen, so opening the page gets it back instantly instead of making the program redraw, and closing the last tab kills nothing. `attach` joins a server that is already running rather than starting one. To end the session, exit the program or run `down`.
 
-Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone.
+Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` takes the server and the tunnel down together. The exception is `--attach`, where `Ctrl-]` detaches and deliberately leaves the server up for the phone -- rejoin it with `attach`, end it with `down`. Closing the terminal ends it either way.
 
-`down` ends everything -- server, tunnel, and the program. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
+`down` ends everything -- server, tunnel, and the program. `--tunnel` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
 ### Requirements and Limitations
 
@@ -49,7 +50,7 @@ Cloudflare Access authenticates with a cookie instead, and cookies *are* sent on
 ```
 cloudflared tunnel login                 # once, opens a browser
 ./mobile-tty setup pi.example.com        # tunnel, DNS, config, Access login
-./mobile-tty up --hostname pi.example.com   # serve and tunnel together
+./mobile-tty serve --tunnel --hostname pi.example.com
 ```
 
 The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
