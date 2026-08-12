@@ -4,6 +4,7 @@
   "description": "TUI-friendly mobile web terminal",
   "scripts": {
     "test": "node --test 'tests/unit/**/*.test.js'",
+    "test:integrity": "node --test 'tests/integrity/*.test.js'",
     "build": "node scripts/build.js",
     "dev": "node scripts/build.js --watch",
     "test:e2e": "playwright test",
@@ -13,7 +14,8 @@
   "type": "module",
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "esbuild": "^0.28.2"
+    "esbuild": "^0.28.2",
+    "ws": "^8.21.3"
   },
   "dependencies": {
     "@wterm/dom": "^0.3.3"
