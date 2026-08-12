@@ -273,11 +273,16 @@ const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHei
 
 // ---------------------------------------------------------------- key bar
 
-// No ⌥: meta is an ESC prefix, so `esc` then `b` is byte-identical to alt+b and
-// readline cannot tell them apart. Backspace has no such substitute.
+// For a letter key, meta is just an ESC prefix, so `esc` then `b` is
+// byte-identical to alt+b and there would be nothing this button adds. Arrows
+// are the exception: alt+Up is one CSI sequence with a modifier parameter
+// (\e[1;3A), not reproducible by sending esc and Up separately — those stay
+// two unrelated sequences, and esc alone is a real keystroke on its own (it
+// aborts the current task), not a modifier waiting to be paired.
 const BAR = [
   { label: '⌃', mod: 'ctrl' },
   { label: '⇧', mod: 'shift' },
+  { label: '⌥', mod: 'alt' },
   { label: 'esc', key: 'Escape' },
   { label: '⇥', key: 'Tab' },
   // The software keyboard will not repeat its own backspace: wterm empties the
@@ -287,7 +292,7 @@ const BAR = [
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
   { label: '→', key: 'Right', repeat: true },
-  { label: '⌨', name: 'keyboard', act: () => toggleKeyboard() },
+  { label: '⌨', name: 'keyboard', cls: 'wide', act: () => toggleKeyboard() },
   { label: '≡', name: 'menu', act: openMenu },
 ]
 
@@ -349,6 +354,7 @@ function buildBar() {
     b.textContent = item.label
     b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
     if (item.label.length > 1) b.classList.add('word')
+    if (item.cls) b.classList.add(item.cls)
     if (item.mod) {
       b.dataset.mod = item.mod
       b.addEventListener('pointerdown', e => {

@@ -34,6 +34,20 @@ test('key bar sends the right bytes, and a sticky modifier applies once', async 
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
 })
 
+test('option sends the real alt-modified sequence, not esc plus the key', async ({ page }) => {
+  await ready(page)
+  await spySocket(page)
+
+  // alt+Up is one CSI sequence with a modifier parameter, not reproducible by
+  // sending Escape and Up as two separate presses.
+  await page.getByRole('button', { name: 'alt', exact: true }).tap()
+  await page.getByRole('button', { name: 'Up', exact: true }).tap()
+
+  const log = await sentFrames(page)
+  expect(log.at(-1)).toBe('0\x1b[1;3A')
+  await expect(page.getByRole('button', { name: 'alt', exact: true })).not.toHaveClass(/sticky/)
+})
+
 test('pasted text is sent to the terminal', async ({ page }) => {
   await ready(page)
   await page.getByRole('button', { name: 'menu' }).tap()
@@ -52,8 +66,10 @@ test('the key bar keys are big enough to hit', async ({ page }) => {
   await ready(page)
   const widths = await page.evaluate(() =>
     [...document.querySelectorAll('#bar button')].map(b => b.getBoundingClientRect().width))
-  expect(widths.length).toBe(11)
-  expect(Math.min(...widths)).toBeGreaterThan(34)
+  expect(widths.length).toBe(12)
+  // 12 equal-width buttons cannot all clear 34px in a 402px-wide phone (12 * 34
+  // > 402 even with zero gap or padding) — the floor moved down with the count.
+  expect(Math.min(...widths)).toBeGreaterThan(30)
 })
 
 test('the keyboard key summons and dismisses the input', async ({ page }) => {

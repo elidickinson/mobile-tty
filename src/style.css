@@ -108,6 +108,7 @@ html, body {
 
 #bar button:active { background: #33333c; }
 #bar button.word { font-size: 14px; }
+#bar button.wide { font-size: 22px; }
 #bar button.sticky { background: var(--accent); color: #001; }
 
 /* Only ever visible when the socket is not up. A frozen terminal otherwise
