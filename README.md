@@ -76,4 +76,4 @@ Anything mechanisable is a pure function; the device verifies the viewport adapt
 
 Requires node, plus `cloudflared` for the tunnel. Alternate-screen apps — Claude Code, vim, htop — are out of scope for now, and dictation is untested.
 
-Why it is built this way, and the measurements behind it: [`docs/decisions.md`](docs/decisions.md) · [`docs/numbers.md`](docs/numbers.md).
+Why it is built this way, and the measurements behind it: [`docs/design.md`](docs/design.md) · [`docs/numbers.md`](docs/numbers.md).
