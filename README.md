@@ -29,6 +29,8 @@ Requires node, plus `cloudflared` for the tunnel.
 
 Terminal apps that use alternate screen (like Claude Code) seem to work without any scrollback. Alt screen apps are currently out of scope.
 
+Keystrokes queued while disconnected are replayed in full on reconnect, even after a long sleep.
+
 ## Use it
 
 **Key bar**, left to right: `⌃ ⇧` are sticky -- tap one, then the next key you press (including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then `esc`, `⇥` tab, `⌫` backspace, arrows, `⌨` to summon or dismiss the keyboard, and `≡` for the menu. Backspace and the arrows repeat when held; the software keyboard's own backspace does not, because the field it types into is emptied after every keystroke.
