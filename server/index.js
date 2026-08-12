@@ -27,11 +27,16 @@ const MAX_FRAME = 1024 * 1024
 /**
  * `scrollback` is how much history a reconnecting viewer gets back. It is worth
  * tuning: pi does not page its own transcript, so this is the only way to read
- * back through a conversation on a phone. Roughly 75 bytes a line — 500 lines is
- * about 37 KB per connect, against a pi transcript re-render that starts at
+ * back through a conversation on a phone. Roughly 75 bytes a line — 750 lines is
+ * about 56 KB per connect, against a pi transcript re-render that starts at
  * 12 KB and grows with every turn.
+ *
+ * Raising it past 1000 only helps `attach`: the browser client's VT core keeps
+ * 1000 lines and silently drops the rest, and the limit lives inside its WASM
+ * with no option to raise it. A real terminal has its own scrollback and no
+ * such cap, so the bytes are not wasted there.
  */
-export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = 500, onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = 750, onListen, onExit }) {
   const auth = new Auth(password)
   const session = new Session({ command, args })
   const mirror = new Mirror({ ...session.size, scrollback })

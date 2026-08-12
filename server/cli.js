@@ -36,7 +36,7 @@ const server = createTerminalServer({
   hostname: arg('--hostname'),
   // Never a flag: a command line is readable by every process on the machine.
   password: process.env.MTTY_PASSWORD,
-  scrollback: number('--scrollback', 500),
+  scrollback: number('--scrollback', 750),
   command,
   args,
   onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}` +

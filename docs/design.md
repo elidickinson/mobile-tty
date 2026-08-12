@@ -89,10 +89,11 @@ pass, so one refit on the next frame keeps rows from stranding below the fold.
 
 The server holds the screen, so attaching costs nothing and prompts nobody. That matters because
 pi renders relatively and re-draws its **entire transcript** on SIGWINCH, a cost that grows with
-the conversation. The snapshot carries the screen and 500 lines above it, because pi does not
+the conversation. The snapshot carries the screen and 750 lines above it, because pi does not
 page itself and scrollback is the only way to read back through a conversation; `--scrollback N`
-moves it. The terminal object outlives the socket, so a drop leaves the stale screen up rather
-than blanking; input queues while down, resizes do not, since the handshake carries the size.
+moves it, though past 1000 lines only `attach` sees the difference. The terminal object outlives
+the socket, so a drop leaves the stale screen up rather than blanking; input queues while down,
+resizes do not, since the handshake carries the size.
 
 `attach` is a client of the same protocol, so the desktop cannot resize the PTY behind the
 server's back. It has to act like a terminal on its own account: raw mode restored on every exit
