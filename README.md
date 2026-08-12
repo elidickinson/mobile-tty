@@ -18,7 +18,7 @@ It listens on **loopback by default**, because that is all the tunnel needs. `--
 
 The **server** holds the program: one PTY, and every viewer looks at the same screen. It keeps that screen, so opening the page gets it back instantly instead of making the program redraw, and closing the last tab kills nothing. `attach` joins a server that is already running rather than starting one. To end the session, exit the program or run `down`.
 
-Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone. There is no build step: the server bundles the client when the page is asked for, so an edit needs a reload and nothing else -- notably not a restart, which would kill the program.
+Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` on `up` takes the server and the tunnel down together, and leaves the session alone.
 
 `down` ends everything -- server, tunnel, and the program. `up` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
 
@@ -54,17 +54,6 @@ For a network you already trust -- a LAN, a tailnet -- `$MTTY_PASSWORD` is the l
 
 The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though, and **the narrowest viewer wins** -- this is meant to be read on a phone, and a desktop showing a phone-width column is legible where the reverse is not. The server tells every viewer the size it actually picked.
 
-## Test
-
-```
-npm test                # unit, including the snapshot round-trip gate
-npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.sh
-npm run test:integrity  # that no viewer is ever sent a gap
-npm run test:smoke      # against real pi; sends no prompts, costs no tokens
-```
-
-Anything mechanisable is a pure function; the device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. Not doing visual regression -- goldens would churn while the design moves.
-
 ## Picking up a new build
 
 - **Every load** revalidates: the document is `no-cache` with the bundle's hash as its ETag, so an unchanged client costs a 304 instead of 74 KB.
@@ -74,6 +63,19 @@ Anything mechanisable is a pure function; the device verifies the viewport adapt
 ## Keeping a conversation
 
 Restarting the server starts a fresh pi. Pass `./mobile-tty pi --session-id whatever` for one that comes back every time, or just `/resume` from inside pi when you actually want it.
+
+## Development
+
+There is no build step: the server bundles the client when the page is asked for, so an edit needs a reload and nothing else -- notably not a restart, which would kill the program.
+
+```
+npm test                # unit, including the snapshot round-trip gate
+npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.sh
+npm run test:integrity  # that no viewer is ever sent a gap
+npm run test:smoke      # against real pi; sends no prompts, costs no tokens
+```
+
+Anything mechanisable is a pure function; the device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. Not doing visual regression -- goldens would churn while the design moves.
 
 ## Notes
 
