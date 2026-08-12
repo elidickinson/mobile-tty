@@ -46,6 +46,11 @@ export const ready = async page => {
   await expect(page.locator('#screen .term-row').first()).toBeVisible()
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
   await expect.poll(() => page.evaluate(() => Boolean(window.mtty?.term?.bridge))).toBe(true)
+  // The server decides the grid, so the client is not settled until it has said
+  // so. Alone in a test, what we asked for is always what we get.
+  await expect.poll(() => page.evaluate(() =>
+    window.mtty.state.cols === window.mtty.state.wanted.cols &&
+    window.mtty.state.rows === window.mtty.state.wanted.rows)).toBe(true)
 }
 
 export const scrollTop = page => page.evaluate(() => document.getElementById('screen').scrollTop)

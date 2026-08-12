@@ -15,6 +15,9 @@ import { INPUT, RESIZE, decodeHandshake, decodeResize } from './protocol.js'
 // spoken to even when pi is silent. ttyd did this and it is why `up` survived a
 // quiet evening.
 const PING_MS = 30_000
+// A resize costs pi a full transcript re-render, so viewers that flap their size
+// are made to settle before anyone pays for it.
+const RESIZE_COALESCE_MS = 100
 
 export function createTerminalServer({ port, bind, index, command, args = [], onListen, onExit }) {
   const session = new Session({ command, args })
@@ -68,6 +71,13 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
     onExit?.(status)
   }
 
+  let fitTimer = null
+  const scheduleFit = () => {
+    if (fitTimer) return
+    fitTimer = setTimeout(() => { fitTimer = null; session.fit() }, RESIZE_COALESCE_MS)
+    fitTimer.unref()
+  }
+
   const http = createServer(async (req, res) => {
     if (req.url?.split('?')[0] !== '/') return void res.writeHead(404).end()
     try {
@@ -106,7 +116,7 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
           const size = decodeResize(buf.subarray(1))
           if (size) {
             viewer.size = size
-            session.fit()
+            scheduleFit()
           }
           break
         }
@@ -138,6 +148,7 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
     session,
     async close() {
       clearInterval(ping)
+      clearTimeout(fitTimer)
       session.kill()
       wss.close()
       await new Promise(res => http.close(res))

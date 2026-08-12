@@ -11,6 +11,11 @@ import { spawn } from 'node-pty'
 // when the size actually changes.
 const same = (a, b) => a.cols === b.cols && a.rows === b.rows
 
+// The narrowest viewer wins, so without a floor any viewer could hand everyone
+// a 1x1 grid. Nothing legible is narrower than this.
+const MIN_COLS = 20
+const MIN_ROWS = 8
+
 export class Session {
   constructor({ command, args = [], cwd = process.cwd(), env = process.env, cols = 80, rows = 24 }) {
     this.viewers = new Set()
@@ -52,7 +57,7 @@ export class Session {
     }
     if (!Number.isFinite(cols) || !Number.isFinite(rows)) return this.size
 
-    const next = { cols, rows }
+    const next = { cols: Math.max(cols, MIN_COLS), rows: Math.max(rows, MIN_ROWS) }
     if (!same(next, this.size)) {
       this.size = next
       this.pty.resize(cols, rows)

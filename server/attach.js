@@ -59,7 +59,14 @@ export function attach({ url }) {
 
   ws.on('message', data => {
     const buf = Buffer.from(data)
-    if (buf[0] === OUTPUT) stdout.write(buf.subarray(1))
+    if (buf[0] === OUTPUT) {
+      // A terminal that cannot keep up must slow the socket down rather than
+      // let the server's queue grow until it disconnects us.
+      if (!stdout.write(buf.subarray(1))) {
+        ws._socket.pause()
+        stdout.once('drain', () => ws._socket.resume())
+      }
+    }
     else if (buf[0] === SET_TITLE) stdout.write(`\x1b]0;${buf.subarray(1)}\x07`)
   })
 

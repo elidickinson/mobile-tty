@@ -41,6 +41,9 @@ const state = {
   scale: 1,
   cols: 80,
   rows: 24,
+  // What we asked the server for. It differs from cols/rows whenever another
+  // viewer is narrower, which is what being letterboxed looks like from here.
+  wanted: { cols: 80, rows: 24 },
   cell: { width: 8, height: 16 },
   mods: { ctrl: false, alt: false, shift: false },
 }
@@ -157,6 +160,7 @@ function applyPendingGrid() {
   }
   const { cols, rows } = pendingGrid
   pendingGrid = null
+  state.wanted = { cols, rows }
   conn.resize(cols, rows)
 }
 
