@@ -1,6 +1,5 @@
 // Does anything appear, and does it match the PTY it asked for.
-import { test, expect } from '@playwright/test'
-import { screenText, liveRows, ready } from './helpers.js'
+import { test, expect, screenText, liveRows, ready } from './helpers.js'
 
 test('renders the TUI with box drawing intact', async ({ page }) => {
   await ready(page)

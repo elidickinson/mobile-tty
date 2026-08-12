@@ -12,7 +12,7 @@ export default defineConfig({
   reporter: 'list',
   use: { ...phone, baseURL: 'http://127.0.0.1:7692' },
   webServer: {
-    command: 'node scripts/build.js && ttyd -W -p 7692 --index dist/client.html dtach -A /tmp/mtty-smoke.sock -r winch -z pi',
+    command: 'node scripts/build.js && node server/cli.js --port 7692 --index dist/client.html -- pi --session-id mobile-tty-smoke',
     url: 'http://127.0.0.1:7692',
     reuseExistingServer: false,
     stdout: 'ignore',

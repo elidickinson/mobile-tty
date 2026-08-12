@@ -1,6 +1,5 @@
 // Everything that puts bytes on the wire: the key bar, modifiers, paste.
-import { test, expect } from '@playwright/test'
-import { screenText, spySocket, sentFrames, ready } from './helpers.js'
+import { test, expect, screenText, spySocket, sentFrames, ready } from './helpers.js'
 
 test('typing reaches the shell and echoes back', async ({ page }) => {
   await ready(page)

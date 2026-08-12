@@ -1,7 +1,7 @@
 #!/bin/bash
 # The entry point. Everything here runs in the foreground and owns what it
-# starts, so there is nothing to track between invocations: the dtach session
-# survives on its own, which is the only state that matters.
+# starts, and the server owns the program: ending the server ends the session,
+# so there is no state left between invocations at all.
 set -euo pipefail
 
 # Resolve through symlinks so ~/bin/mobile-tty -> repo/mobile-tty still finds
@@ -18,15 +18,19 @@ cd "$root" || { echo "mobile-tty: cannot enter $root" >&2; exit 1; }
 
 port="${PORT:-7681}"
 bind="${MTTY_BIND:-127.0.0.1}"
-socket="${MTTY_SOCKET:-${TMPDIR:-/tmp}/mobile-tty.sock}"
 config="$PWD/cloudflared.yml"
+
+# A restart kills the program, so the default one is told to come back to the
+# same conversation. Without --session-id plain pi would start a fresh session
+# every time the server bounced.
+default_program=(pi --session-id mobile-tty)
 
 usage() {
   cat <<'USAGE'
 Usage: mobile-tty [command] [options] [program...]
 
   serve          build if stale, then serve it (default)
-  attach         attach this terminal to the same session
+  attach         attach this terminal to a running server
   up             serve and run the tunnel, both ending together
   tunnel         run the Cloudflare tunnel on its own
   setup <host>   create the tunnel, DNS and Access login for a hostname
@@ -37,20 +41,19 @@ Options
   --lan          short for --bind 0.0.0.0
   --bind ADDR    listen on one address (default 127.0.0.1, or $MTTY_BIND)
   --port N       default 7681, or $PORT
-  --socket PATH  dtach socket (default $TMPDIR/mobile-tty.sock)
 
 Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
 terminal on your network.
 
-The session holds the program and outlives every command here. serve and attach
-each start one if there is not one already, and both are only viewers onto it.
-To end it, exit the program.
+The server owns the program. Every viewer sees the same screen, and the
+narrowest one decides the size, because this is meant to be read on a phone.
+`attach` joins a server that is already running; it does not start one. To end
+the session, exit the program or run `down`.
 
-There is no --password: ttyd refuses the WebSocket upgrade without a basic-auth
-header and Safari does not send one on a handshake (tsl0922/ttyd#1437), so the
-page would load and the terminal would never connect. Use `setup` and let
-Cloudflare Access do the login.
+There is no --password: Safari does not send basic-auth on a WebSocket
+handshake, so the page would load and the terminal would never connect. Use
+`setup` and let Cloudflare Access do the login.
 USAGE
 }
 
@@ -68,7 +71,6 @@ take_options() {
       --lan) bind=0.0.0.0; shift ;;
       --bind) [[ $# -ge 2 ]] || usage_error "--bind needs a value"; bind=$2; shift 2 ;;
       --port) [[ $# -ge 2 ]] || usage_error "--port needs a value"; port=$2; shift 2 ;;
-      --socket) [[ $# -ge 2 ]] || usage_error "--socket needs a value"; socket=$2; shift 2 ;;
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
@@ -90,8 +92,8 @@ set -- ${REST[@]+"${REST[@]}"}
 # the tunnel it writes points at the right place.
 [[ "$cmd" == setup ]] && exec env PORT="$port" scripts/cf-access.sh "$@"
 
-# Build only when the client is older than what it is built from, so someone
-# with a prebuilt dist/ needs ttyd and dtach but not node.
+# Build only when the client is older than what it is built from. The server is
+# node either way, so this only saves the build, not the dependency.
 build_if_stale() {
   local stale=""
   # package-lock stands in for node_modules: installing a different @wterm
@@ -105,29 +107,16 @@ build_if_stale() {
   fi
 }
 
-# ttyd runs its command once per connection, so letting it create the session
-# would mean no session until a browser turned up, and nothing for `attach` to
-# attach to. Creating it first makes every viewer equal.
-ensure_session() {
-  [[ -S "$socket" ]] || dtach -n "$socket" -z "$@"
-}
-
 case "$cmd" in
   serve)
     build_if_stale
-    ensure_session "${@:-pi}"
-    echo "serving http://$bind:$port  (session at $socket)"
-    # -A rather than -a: exiting the program ends the session, and an
-    # attach-only viewer would then fail on every reconnect for ever — the
-    # client retries, ttyd spawns, it exits 1, round and round. -A starts a
-    # fresh one. ensure_session above still guarantees one exists beforehand.
-    exec ttyd -W -p "$port" -i "$bind" --index dist/client.html \
-      dtach -A "$socket" -r winch -z "${@:-pi}"
+    [[ $# -gt 0 ]] || set -- "${default_program[@]}"
+    echo "serving http://$bind:$port"
+    exec node server/cli.js --port "$port" --bind "$bind" --index dist/client.html -- "$@"
     ;;
   attach)
-    ensure_session "${@:-pi}"
-    echo "Ctrl-\\ detaches and leaves it running. Ctrl-C goes through to the program."
-    exec dtach -A "$socket" -r winch -z "${@:-pi}"
+    echo "Ctrl-] detaches and leaves it running. Ctrl-C goes through to the program."
+    exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://127.0.0.1:$port/ws' }))"
     ;;
   up)
     [[ -f "$config" ]] || die "no $config — run: mobile-tty setup <hostname>"
@@ -144,16 +133,15 @@ case "$cmd" in
       *) echo "$host is not answering yet (${probe%% *})" ;;
     esac
     build_if_stale
-    ensure_session "${@:-pi}"
+    [[ $# -gt 0 ]] || set -- "${default_program[@]}"
     cloudflared tunnel --config "$config" run &
     tunnel=$!
-    echo "serving http://$bind:$port  (session at $socket)"
+    echo "serving http://$bind:$port"
     # Both in the background, then wait. Not exec, which would replace this
-    # shell and take the trap with it; and not ttyd in the foreground either,
-    # because bash defers signals until the foreground command returns — so a
-    # TERM would sit unhandled and leave the tunnel behind.
-    ttyd -W -p "$port" -i "$bind" --index dist/client.html \
-      dtach -A "$socket" -r winch -z "${@:-pi}" &
+    # shell and take the trap with it; and not the server in the foreground
+    # either, because bash defers signals until the foreground command returns
+    # — so a TERM would sit unhandled and leave the tunnel behind.
+    node server/cli.js --port "$port" --bind "$bind" --index dist/client.html -- "$@" &
     server=$!
     trap 'kill $tunnel $server 2>/dev/null' EXIT INT TERM
     status=0
@@ -167,8 +155,8 @@ case "$cmd" in
     ;;
   down)
     # No state to look things up by, so they are found by what they were started
-    # as, narrowed to this port, socket and config. That is a fair trade for a
-    # command whose whole job is to end them.
+    # as, narrowed to this port and config. That is a fair trade for a command
+    # whose whole job is to end them.
     ended=""
     kill_matching() {
       local pids
@@ -178,14 +166,12 @@ case "$cmd" in
       kill $pids 2>/dev/null || true
       ended="$ended $2"
     }
-    kill_matching "ttyd -W -p $port .*$socket" server
+    kill_matching "server/cli.js --port $port" server
     kill_matching "cloudflared tunnel --config $config" tunnel
-    kill_matching "dtach -[nA] $socket" session
     sleep 1
-    rm -f "$socket"
     if [[ -n "$ended" ]]; then
       echo "ended:$ended"
-      [[ "$ended" == *session* ]] && echo "the program is gone, and so is whatever it was holding"
+      [[ "$ended" == *server* ]] && echo "the program is gone, and so is whatever it was holding"
     else
       echo "nothing was running"
     fi

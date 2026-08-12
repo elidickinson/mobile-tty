@@ -1,6 +1,5 @@
 // Scrollback: where the view sits, and what is allowed to move it.
-import { test, expect } from '@playwright/test'
-import { ready, scrollTop, settled, fillScrollback, distanceFromBottom } from './helpers.js'
+import { test, expect, ready, scrollTop, settled, fillScrollback, distanceFromBottom } from './helpers.js'
 
 test('the menu jumps to the top and back to the bottom', async ({ page }) => {
   await ready(page)

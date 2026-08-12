@@ -1,27 +1,71 @@
-// The server: one PTY per connection, attached to a dtach session that outlives
-// them all, speaking the same five-byte protocol the client already knows.
+// The server: it owns pi, and it is the session.
 //
-// It replaces ttyd so that the screen can live here rather than nowhere — see
-// eli/plan.md. This step changes nothing the client can observe.
+// It replaces ttyd and dtach both. dtach is gone because it silently discarded
+// the unwritten tail of a read whenever a client socket filled, which is where
+// the corrupt escape sequences came from; nothing here may repeat that.
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { WebSocketServer } from 'ws'
-import { spawn } from 'node-pty'
+import { Session } from './session.js'
+import { Viewer } from './viewer.js'
+import { Mirror } from './mirror.js'
+import { INPUT, RESIZE, decodeHandshake, decodeResize } from './protocol.js'
 
-// client -> server            server -> client
-const INPUT = 0x30            // '0'   OUTPUT
-const RESIZE = 0x31           // '1'   SET_WINDOW_TITLE
-                              // '2'   SET_PREFERENCES
+// Cloudflare drops idle sockets and the phone sleeps, so the socket has to be
+// spoken to even when pi is silent. ttyd did this and it is why `up` survived a
+// quiet evening.
+const PING_MS = 30_000
 
-export function createTerminalServer({ port, bind, index, command, args = [], onListen }) {
-  const http = createServer(async (req, res) => {
-    if (req.url?.split('?')[0] !== '/') {
-      res.writeHead(404).end()
-      return
+export function createTerminalServer({ port, bind, index, command, args = [], onListen, onExit }) {
+  const session = new Session({ command, args })
+  const mirror = new Mirror(session.size)
+  const viewers = new Set()
+
+  session.onResize = ({ cols, rows }) => mirror.resize(cols, rows)
+  session.onData = data => {
+    mirror.write(data)
+    for (const viewer of viewers) {
+      // Not yet given a screen, so these bytes are already in the snapshot it
+      // is about to get.
+      if (viewer.queue === undefined) continue
+      // Queued rather than sent: its snapshot has been taken but not delivered,
+      // and these bytes belong after it.
+      if (viewer.queue) viewer.queue.push(data)
+      else if (!viewer.output(data)) viewers.delete(viewer)
     }
+  }
+
+  /**
+   * Give a viewer the screen, then everything that happened while we took it.
+   *
+   * The order is the whole point: take the snapshot from a drained parser, then
+   * flush what arrived meanwhile. Sending live bytes first would apply them to a
+   * screen the viewer has not been given, and sending them twice would double.
+   */
+  const admit = async viewer => {
+    session.add(viewer)
+    mirror.resize(session.size.cols, session.size.rows)
+    await mirror.drain()
+    // Nothing can arrive between here and the snapshot: `onData` is an I/O
+    // callback and this is the microtask continuing the await, so the queue
+    // opens on exactly the byte the snapshot ends at. Opening it any earlier
+    // sends those bytes twice, once inside the snapshot and once after it.
+    viewer.queue = []
+    const snapshot = Buffer.from(mirror.snapshot())
+    if (!viewer.output(snapshot)) return
+    for (const chunk of viewer.queue) if (!viewer.output(chunk)) return
+    viewer.queue = null
+  }
+  session.onExit = status => {
+    for (const viewer of viewers) viewer.close(1000, 'session ended')
+    onExit?.(status)
+  }
+
+  const http = createServer(async (req, res) => {
+    if (req.url?.split('?')[0] !== '/') return void res.writeHead(404).end()
     try {
-      const page = await readFile(index)
-      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' }).end(page)
+      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' })
+        .end(await readFile(index))
     } catch {
       res.writeHead(500).end('cannot read the client')
     }
@@ -30,56 +74,66 @@ export function createTerminalServer({ port, bind, index, command, args = [], on
   const wss = new WebSocketServer({ server: http, path: '/ws', handleProtocols: () => 'tty' })
 
   wss.on('connection', ws => {
-    let pty = null
+    const viewer = new Viewer(ws)
+    viewers.add(viewer)
 
-    const send = (kind, payload) => {
-      if (ws.readyState !== ws.OPEN) return
-      ws.send(Buffer.concat([Buffer.from(kind), Buffer.from(payload)]))
-    }
-
-    // The first message is the handshake, and carries the size to open at.
-    const start = ({ columns, rows }) => {
-      pty = spawn(command, args, {
-        name: 'xterm-256color',
-        cols: columns || 80,
-        rows: rows || 24,
-        cwd: process.cwd(),
-        env: process.env,
-        // Bytes, not strings: a multi-byte sequence split across reads must not
-        // be decoded here — the client's VT core reassembles it.
-        encoding: null,
-      })
-      pty.onData(data => send('0', data))
-      pty.onExit(() => ws.close())
-      send('1', command)
-      send('2', JSON.stringify({}))
-    }
-
+    // One viewer's bad frame is not allowed to reach any other viewer, or pi.
     ws.on('message', data => {
       const buf = Buffer.from(data)
-      if (!pty) {
-        // Anything before the handshake is either the handshake or noise.
-        try { start(JSON.parse(buf.toString())) } catch { /* not yet */ }
+      if (!viewer.started) {
+        const size = decodeHandshake(buf)
+        if (!size) return void viewer.close(1002, 'bad handshake')
+        viewer.started = true
+        viewer.size = size
+        viewer.title(command)
+        viewer.prefs({})
+        admit(viewer)
         return
       }
+      if (buf.length === 0) return
       switch (buf[0]) {
         case INPUT:
-          pty.write(buf.subarray(1))
+          session.write(buf.subarray(1))
           break
         case RESIZE: {
-          const { columns, rows } = JSON.parse(buf.subarray(1).toString())
-          if (columns > 0 && rows > 0) pty.resize(columns, rows)
+          const size = decodeResize(buf.subarray(1))
+          if (size) {
+            viewer.size = size
+            session.fit()
+          }
           break
         }
         default:
-          break   // PAUSE and RESUME exist in the protocol; nothing needs them yet
+          break   // PAUSE and RESUME exist in the protocol; nothing needs them
       }
     })
 
-    ws.on('close', () => pty?.kill())
-    ws.on('error', () => pty?.kill())
+    const drop = () => {
+      viewers.delete(viewer)
+      session.remove(viewer)
+    }
+    ws.on('close', drop)
+    ws.on('error', drop)
   })
 
-  http.listen(port, bind, () => onListen?.({ port, bind }))
-  return { http, wss, close: () => new Promise(res => { wss.close(); http.close(res) }) }
+  const ping = setInterval(() => {
+    for (const viewer of viewers) if (viewer.open) viewer.ws.ping()
+  }, PING_MS)
+  ping.unref()
+
+  // Port 0 means the OS picks, so report what it actually bound rather than
+  // what was asked for.
+  http.listen(port, bind, () => onListen?.({ port: http.address().port, bind }))
+
+  return {
+    http,
+    wss,
+    session,
+    async close() {
+      clearInterval(ping)
+      session.kill()
+      wss.close()
+      await new Promise(res => http.close(res))
+    },
+  }
 }

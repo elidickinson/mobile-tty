@@ -1,8 +1,7 @@
 // Losing and regaining the socket, and picking up a new build.
-import { test, expect } from '@playwright/test'
-import { spySocket, sentFrames, ready } from './helpers.js'
+import { test, expect, spySocket, sentFrames, ready } from './helpers.js'
 
-test('reconnect keeps the screen up, and gets a live one back', async ({ page }) => {
+test('reconnect keeps the screen up, and rejoins the same session', async ({ page }) => {
   await ready(page)
   await page.locator('#screen textarea').pressSequentially('marker')
   await expect(page.locator('#screen')).toContainText('> marker')
@@ -14,15 +13,15 @@ test('reconnect keeps the screen up, and gets a live one back', async ({ page })
   await page.evaluate(() => window.mtty.conn.ws.close())
   await expect(page.locator('#screen')).toContainText('> marker')
 
-  // What matters is a correct screen afterwards, however it arrives. Here the
-  // far side paints by itself, so no nudge is sent — resizing something that is
-  // already drawing is what desynchronises its parser.
+  // The server holds the session, so reconnecting lands back in it with the
+  // half-typed line intact, and the screen arrives as a snapshot rather than by
+  // making the program repaint. No resize is sent to get it.
   await expect(page.locator('#screen')).toContainText('fake-pi ready', { timeout: 15_000 })
   const resizes = (await sentFrames(page)).filter(x => x[0] === '1')
   expect(resizes).toHaveLength(0)
 
   await page.locator('#screen textarea').pressSequentially('again')
-  await expect(page.locator('#screen')).toContainText('> again')
+  await expect(page.locator('#screen')).toContainText('> markeragain')
 })
 
 test('a current build does not reload, and a newer one is fetched past the cache', async ({ page }) => {

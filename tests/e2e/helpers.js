@@ -1,6 +1,33 @@
-// Shared setup for the e2e specs: page readiness, socket spying, and the
-// scroll measurements that need a settled baseline.
-import { expect } from '@playwright/test'
+// Shared setup for the e2e specs: a session per test, page readiness, socket
+// spying, and the scroll measurements that need a settled baseline.
+import { test as base, expect } from '@playwright/test'
+import { spawn } from 'node:child_process'
+
+export { expect }
+
+/**
+ * One server, and so one program, per test.
+ *
+ * The server is the session now, so a shared one would carry typing and history
+ * from every earlier test into the next. Port 0 lets the OS pick, which is what
+ * keeps tests from colliding on a port still in TIME_WAIT.
+ */
+export const test = base.extend({
+  baseURL: async ({}, use) => {
+    const server = spawn('node',
+      ['server/cli.js', '--port', '0', '--index', 'dist/client.html', '--', 'tests/fixtures/fake-pi.sh'],
+      { stdio: ['ignore', 'pipe', 'inherit'] })
+    const port = await new Promise((resolve, reject) => {
+      server.stdout.on('data', d => {
+        const found = String(d).match(/:(\d+)/)
+        if (found) resolve(Number(found[1]))
+      })
+      server.on('exit', code => reject(new Error(`server exited (${code}) before listening`)))
+    })
+    await use(`http://127.0.0.1:${port}`)
+    server.kill('SIGKILL')
+  },
+})
 
 export const screenText = page => page.locator('#screen').innerText()
 
