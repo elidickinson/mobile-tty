@@ -60,6 +60,36 @@ test('the snapshot replaces a screen rather than painting over it', async () => 
   assert.deepEqual(render(core).filter(Boolean), ['after'])
 })
 
+test('only complete sequences reach the parser', async () => {
+  // What is held back is what the parser would keep as invisible state, and so
+  // what a snapshot taken at that instant could not contain.
+  const cases = [
+    ['lone ESC', 'A\x1b', '\x1b'],
+    ['incomplete charset', 'A\x1b(', '\x1b('],
+    ['complete charset', 'A\x1b(B', ''],
+    ['incomplete CSI', 'A\x1b[3', '\x1b[3'],
+    ['complete CSI', 'A\x1b[31m', ''],
+    ['CSI with intermediate', 'A\x1b[?25l', ''],
+    // Longer than any fixed lookbehind would catch, which is why the scan runs
+    // forward from a known-clean start rather than back from the end.
+    ['unterminated OSC', `A\x1b]0;${'x'.repeat(200)}`, `\x1b]0;${'x'.repeat(200)}`],
+    ['OSC ended by BEL', `A\x1b]0;${'x'.repeat(200)}\x07`, ''],
+    ['OSC ended by ST', 'A\x1b]0;t\x1b\\', ''],
+    ['unterminated DCS', 'A\x1bP1$r', '\x1bP1$r'],
+    ['four-byte char, one byte in', '\xf0', '\xf0'],
+    ['four-byte char, three bytes in', '\xf0\x9f\x98', '\xf0\x9f\x98'],
+    ['four-byte char, whole', '\u{1f600}', ''],
+    ['plain text', 'hello world', ''],
+  ]
+
+  for (const [name, input, expected] of cases) {
+    const mirror = new Mirror({ cols: COLS, rows: ROWS })
+    mirror.write(Buffer.from(input, 'latin1'))
+    await mirror.drain()
+    assert.equal(mirror.pending.toString('latin1'), expected, name)
+  }
+})
+
 test('a character split across the snapshot is not lost', async () => {
   const mirror = new Mirror({ cols: COLS, rows: ROWS })
   mirror.write(Buffer.from('AAA'))

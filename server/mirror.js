@@ -25,59 +25,79 @@ const PREAMBLE = '\x1b[?2004h\x1b[>7u'
 // and out of order. ED 3 is what clears them.
 const RESET = '\x1bc\x1b[3J'
 
-// Longer than any sequence worth cutting inside, so the search for one is
-// bounded rather than walking the whole chunk.
-const MAX_TAIL = 128
+const ESC = 0x1b
+const BEL = 0x07
 
-/** Does the escape sequence starting at `i` finish inside this buffer? */
-const terminated = (buf, i) => {
+// Far larger than any real sequence, including a long OSC title.
+const MAX_PENDING = 64 * 1024
+
+/**
+ * Index just past the escape sequence starting at `i`, or -1 if it is unfinished.
+ *
+ * Scanning forward rather than back from the end is what makes this exact: a
+ * title longer than any fixed lookbehind, or a sequence whose payload contains
+ * another ESC, both defeat a backward search.
+ */
+const escapeEnd = (buf, i) => {
   const kind = buf[i + 1]
-  if (kind === undefined) return false
-  if (kind === 0x5b) {                                    // CSI: ends 0x40..0x7e
-    for (let j = i + 2; j < buf.length; j++) if (buf[j] >= 0x40 && buf[j] <= 0x7e) return true
-    return false
+  if (kind === undefined) return -1
+
+  if (kind === 0x5b) {                                     // CSI: params, then 0x40..0x7e
+    let j = i + 2
+    while (j < buf.length && buf[j] >= 0x20 && buf[j] <= 0x3f) j++
+    return j < buf.length && buf[j] >= 0x40 && buf[j] <= 0x7e ? j + 1 : -1
   }
-  if (kind === 0x5d) {                                    // OSC: ends BEL or ST
+  if (kind === 0x5d) {                                     // OSC: ends BEL or ST
     for (let j = i + 2; j < buf.length; j++) {
-      if (buf[j] === 0x07) return true
-      if (buf[j] === 0x1b && buf[j + 1] === 0x5c) return true
+      if (buf[j] === BEL) return j + 1
+      if (buf[j] === ESC && buf[j + 1] === 0x5c) return j + 2
     }
-    return false
+    return -1
   }
   if (kind === 0x50 || kind === 0x58 || kind === 0x5e || kind === 0x5f) {   // DCS/SOS/PM/APC: ST
-    for (let j = i + 2; j < buf.length; j++) if (buf[j] === 0x1b && buf[j + 1] === 0x5c) return true
-    return false
+    for (let j = i + 2; j < buf.length; j++) {
+      if (buf[j] === ESC && buf[j + 1] === 0x5c) return j + 2
+    }
+    return -1
   }
-  return true                                             // anything else is a two-byte escape
-}
-
-/** Step back off a multi-byte character that the cut would land inside. */
-const wholeCharacters = (buf, cut) => {
-  let k = cut - 1
-  while (k >= 0 && k >= cut - 3 && (buf[k] & 0xc0) === 0x80) k--
-  if (k < 0) return cut
-  const lead = buf[k]
-  const width = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : lead < 0xf8 ? 4 : 1
-  return k + width > cut ? k : cut
+  if (kind >= 0x20 && kind <= 0x2f) {                      // intermediates, then a final
+    let j = i + 1
+    while (j < buf.length && buf[j] >= 0x20 && buf[j] <= 0x2f) j++
+    return j < buf.length && buf[j] >= 0x30 && buf[j] <= 0x7e ? j + 1 : -1
+  }
+  return i + 2                                             // any other two-byte escape
 }
 
 /**
  * How much of `buf` can be parsed without leaving a sequence half-finished.
  *
- * The parser keeps a partial sequence as internal state, and `serialize()` only
- * ever sees committed cells. So a snapshot taken while the parser is mid-
- * character omits its leading byte, and the viewer that receives the rest gets
- * an orphaned tail — a stray `55;95;255m`, which is the corruption this whole
- * server exists to stop.
+ * The parser keeps a partial sequence as invisible state, and `serialize()` only
+ * ever sees committed cells. So a snapshot taken mid-character omits its leading
+ * byte while the viewer still receives the continuation — an orphaned tail like
+ * `55;95;255m`, which is the corruption this whole server exists to stop.
+ *
+ * Every buffer starts on a clean boundary, because this is what decides where
+ * the last one ended. That is what lets the scan run forward and be exact.
  */
 const completeUpTo = buf => {
-  let cut = buf.length
-  for (let i = buf.length - 1; i >= Math.max(0, buf.length - MAX_TAIL); i--) {
-    if (buf[i] !== 0x1b) continue
-    if (!terminated(buf, i)) cut = i
-    break
+  let i = 0
+  let clean = 0
+  while (i < buf.length) {
+    const b = buf[i]
+    if (b === ESC) {
+      const end = escapeEnd(buf, i)
+      if (end === -1) return clean
+      i = end
+    } else if (b < 0x80) {
+      i++
+    } else {
+      const width = b < 0xc0 ? 1 : b < 0xe0 ? 2 : b < 0xf0 ? 3 : b < 0xf8 ? 4 : 1
+      if (i + width > buf.length) return clean
+      i += width
+    }
+    clean = i
   }
-  return wholeCharacters(buf, cut)
+  return clean
 }
 
 export class Mirror {
@@ -94,7 +114,11 @@ export class Mirror {
 
   write(bytes) {
     const buf = this.pending.length ? Buffer.concat([this.pending, bytes]) : Buffer.from(bytes)
-    const cut = completeUpTo(buf)
+    // A program that opens a sequence and never closes it would otherwise hold
+    // everything after it in memory for ever. Past this, take the parser's word
+    // for it: a stream this malformed is already lost, and the mirror recovering
+    // beats the server growing without bound.
+    const cut = buf.length > MAX_PENDING ? buf.length : completeUpTo(buf)
     this.pending = Buffer.from(buf.subarray(cut))
     if (cut > 0) this.term.write(buf.subarray(0, cut))
   }
