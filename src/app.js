@@ -133,11 +133,10 @@ function sizeScreen() {
   screen.scrollTop = screen.scrollHeight - screen.clientHeight - Math.max(0, fromBottom)
 }
 
-// Resizing mid-stream makes the VT core drop whatever sequence it was part way
-// through, and the rest of it lands on screen as text — `55;95;255m` from a
-// colour change, say. After that the screen is wrong in ways that look like
-// layout bugs: the input box drawn in one place and the cursor left in another.
-// So a resize waits for the output to stop.
+// A resize reaches pi as SIGWINCH and makes it repaint, so it waits for the
+// output to stop rather than landing in the middle of one. Our own core is not
+// the reason: it holds a partial sequence across a resize and finishes parsing
+// it afterwards.
 const QUIET_MS = 120
 let lastOutput = 0
 let pendingGrid = null

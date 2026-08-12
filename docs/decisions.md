@@ -33,8 +33,31 @@ survives the single-document constraint, and `write(Uint8Array)` hands raw bytes
 parser — so a multi-byte sequence split across two WebSocket messages is reassembled by the
 core and JS never decodes the socket.
 
-ghostty-web is the API-compatible fallback. xterm.js is canvas, has the largest bundle, and
-carries long-open mobile bugs (#1101, #2403, #1007, #5721).
+xterm.js and ghostty-web are both canvas. Canvas is not a drop-in here whatever its API
+looks like: the layout, zoom and scrolling all treat the wterm element as the one scroller,
+and a canvas renderer brings its own viewport and scrollbar instead. xterm.js also has the
+largest bundle and long-open mobile bugs (#1101, #2403, #1007, #5721).
+
+### The core is a separate choice from the renderer
+
+`@wterm/dom` takes any `TerminalCore`, so the parser can be swapped without touching the
+renderer. `@wterm/ghostty` (libghostty compiled to WASM) is the obvious candidate and does
+not work at 0.3.3: it traps the WASM on accumulated grapheme clusters —
+`page integrity violation ... MissingGraphemeData`, then `unreachable` — which kills the
+terminal outright on a large repaint. Its `scrollbackLimit` is also inert, capping near 792
+lines, and its WASM ships as a separate 431 KB file rather than inlined base64, which costs
+566 KB against the single-document constraint. Worth re-testing on a release past 0.3.3;
+`ghostty-vt-core` holds the working swap.
+
+### Known bug: the core loses text on column shrink
+
+Shrinking columns drops a third to two-thirds of the text on screen, with no scrollback
+involved and nothing scrolling off: 80→50 loses 192 characters of 537, 120→40 loses 341, and
+even 80→79 loses 5. Fit, every preset and every rotation does this. libghostty reflows the
+same input correctly, so this is the strongest reason to revisit the core.
+
+The core also answers almost no queries — CPR, and nothing else. No DA1, DECRQM or
+XTGETTCAP, so pi's startup probes go unanswered.
 
 ## Input: straight to pi
 

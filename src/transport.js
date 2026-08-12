@@ -1,7 +1,7 @@
 // The ttyd connection: framing, reconnect, and the size games a shared PTY needs.
 import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE } from './ttyd.js'
 
-const QUIET_MS = 250      // resizing mid-sequence desynchronises the far side's parser
+const QUIET_MS = 250      // long enough that a nudge lands between pi's repaints, not inside one
 const BACKOFF_MIN = 500
 const BACKOFF_MAX = 10_000
 // Long enough that the app has finished reflowing from the first half before
