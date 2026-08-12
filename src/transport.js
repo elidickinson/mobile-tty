@@ -1,9 +1,13 @@
 // The ttyd connection: framing, reconnect, and the size games a shared PTY needs.
 import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE } from './ttyd.js'
 
+const QUIET_MS = 250      // resizing mid-sequence desynchronises the far side's parser
 const BACKOFF_MIN = 500
 const BACKOFF_MAX = 10_000
-const NUDGE_GAP = 120
+// Long enough that the app has finished reflowing from the first half before
+// the second arrives. At 120ms pi laid its input box out against one size and
+// left the cursor at another, so typing landed below its own status lines.
+const NUDGE_GAP = 500
 
 /**
  * A ttyd connection that survives the phone sleeping.
@@ -28,9 +32,23 @@ export class TtydConnection {
     this.ws = null
     this.queue = []
     this.backoff = BACKOFF_MIN
+    this.lastOutput = 0
+    this.everPainted = false
+    this.now = () => Date.now()
   }
 
   get connected() { return this.ws?.readyState === 1 }
+
+  /** Run `fn` once nothing has arrived for a while, and the socket is still ours. */
+  whenQuiet(ws, fn) {
+    const tick = () => {
+      if (this.ws !== ws || ws.readyState !== 1) return
+      const since = this.now() - this.lastOutput
+      if (since >= QUIET_MS) fn()
+      else this.schedule(tick, QUIET_MS - since)
+    }
+    this.schedule(tick, QUIET_MS)
+  }
 
   connect({ cols, rows }) {
     this.cols = cols
@@ -54,10 +72,20 @@ export class TtydConnection {
       // the window size only after both ioctls have applied, sees the size it
       // already had, and does nothing.
       ws.send(encodeHandshake(this.token, this.cols, this.rows))
-      ws.send(encodeResize(this.cols - 1, this.rows))
-      this.schedule(() => {
-        if (this.ws === ws && ws.readyState === 1) ws.send(encodeResize(this.cols, this.rows))
-      }, NUDGE_GAP)
+      // Nudge only when there is nothing on screen to keep. Reattaching sends
+      // no replay, so a fresh page needs it — but on a reconnect the stale
+      // screen is better than what a nudge costs: every reflow redraws the whole
+      // conversation into scrollback, and one landing mid-sequence desynchronises
+      // the parser. Rows, not columns: a column change makes the far side rewrap
+      // everything, where a row change is only a redraw.
+      if (!this.everPainted) {
+        this.whenQuiet(ws, () => {
+          ws.send(encodeResize(this.cols, this.rows - 1))
+          this.schedule(() => {
+            if (this.ws === ws && ws.readyState === 1) ws.send(encodeResize(this.cols, this.rows))
+          }, NUDGE_GAP)
+        })
+      }
       this.backoff = BACKOFF_MIN
       for (const frame of this.queue.splice(0)) ws.send(frame)
       this.onState?.('connected')
@@ -65,7 +93,11 @@ export class TtydConnection {
 
     ws.onmessage = ev => {
       const f = decodeFrame(ev.data)
-      if (f.cmd === OUTPUT) this.onOutput(f.payload)
+      if (f.cmd === OUTPUT) {
+        this.lastOutput = this.now()
+        this.everPainted = true
+        this.onOutput(f.payload)
+      }
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
     }
 

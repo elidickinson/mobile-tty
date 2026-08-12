@@ -77,14 +77,30 @@ test('reconnect nudges the size N-1 then N to force a full repaint', () => {
   timers.shift().fn()
   sock().open()
 
-  // The two sizes must not land in the same tick, or the app reads the window
+  // Nothing goes out at once: the far side gets a moment to paint by itself,
+  // and the two sizes must not land in the same tick or it reads the window
   // size once and sees no change.
-  const immediate = sock().sent.map(text).filter(b => b[0] === '1')
-  assert.equal(immediate.length, 1, 'the second half of the nudge is deferred')
+  assert.equal(sock().sent.map(text).filter(b => b[0] === '1').length, 0)
   flush()
 
   const resizes = sock().sent.map(text).filter(b => b[0] === '1').map(b => JSON.parse(b.slice(1)))
-  assert.deepEqual(resizes, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
+  // Rows, not columns: changing columns makes the far side rewrap everything.
+  assert.deepEqual(resizes, [{ columns: 50, rows: 29 }, { columns: 50, rows: 30 }])
+})
+
+test('a reconnect with a screen already up does not nudge', () => {
+  // Every reflow redraws the whole conversation into scrollback; the stale
+  // screen is worth more than that.
+  const { c, sock, timers, flush } = setup()
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  sock().message([0x30, 0x68, 0x69])
+  flush()
+  sock().drop()
+  timers.shift().fn()
+  sock().open()
+  flush()
+  assert.equal(sock().sent.map(text).filter(b => b[0] === '1').length, 0)
 })
 
 test('even a first connection nudges — the session outlives the page', () => {
@@ -95,7 +111,7 @@ test('even a first connection nudges — the session outlives the page', () => {
   sock().open()
   flush()
   const resizes = sock().sent.map(text).filter(b => b[0] === '1').map(b => JSON.parse(b.slice(1)))
-  assert.deepEqual(resizes, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
+  assert.deepEqual(resizes, [{ columns: 50, rows: 29 }, { columns: 50, rows: 30 }])
 })
 
 test('a resize while disconnected is not queued — it would collapse the nudge gap', () => {
@@ -104,11 +120,10 @@ test('a resize while disconnected is not queued — it would collapse the nudge 
   c.connect({ cols: 50, rows: 30 })
   sock().open()
 
-  const immediate = sock().sent.map(text).filter(b => b[0] === '1')
-  assert.equal(immediate.length, 1, 'only the first half of the nudge lands in this tick')
+  assert.equal(sock().sent.map(text).filter(b => b[0] === '1').length, 0, 'nothing lands in this tick')
   flush()
   const resizes = sock().sent.map(text).filter(b => b[0] === '1').map(b => JSON.parse(b.slice(1)))
-  assert.deepEqual(resizes, [{ columns: 49, rows: 30 }, { columns: 50, rows: 30 }])
+  assert.deepEqual(resizes, [{ columns: 50, rows: 29 }, { columns: 50, rows: 30 }])
 })
 
 test('backoff grows on repeated failure and resets once connected', () => {
@@ -153,6 +168,24 @@ test('claimSize is silent while disconnected', () => {
 
   c.claimSize()
   assert.equal(sock().sent.length, before, 'nothing queued either — the handshake carries the size')
+})
+
+test('the nudge waits for the output to stop', () => {
+  // A resize part way through an escape sequence makes the far side's parser
+  // drop it and print the remainder as text.
+  const { c, sock, timers } = setup()
+  let clock = 1000
+  c.now = () => clock
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+
+  sock().message([0x30, 0x68, 0x69])            // still drawing
+  timers.shift().fn()                            // the first quiet check
+  assert.equal(sock().sent.map(text).filter(b => b[0] === '1').length, 0, 'not while it is talking')
+
+  clock += 1000                                  // it went quiet
+  timers.shift().fn()
+  assert.equal(sock().sent.map(text).filter(b => b[0] === '1').length, 1)
 })
 
 test('state changes are reported for the connection indicator', () => {

@@ -59,7 +59,7 @@ const conn = new TtydConnection({
   url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
   schedule: (fn, ms) => setTimeout(fn, ms),
-  onOutput: bytes => term.write(bytes),   // raw bytes: the VT core reassembles UTF-8
+  onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); applyPendingGrid() },
   onTitle: title => { document.title = title },
   onState: showConnection,
 })
@@ -133,7 +133,30 @@ function sizeScreen() {
   screen.scrollTop = screen.scrollHeight - screen.clientHeight - Math.max(0, fromBottom)
 }
 
+// Resizing mid-stream makes the VT core drop whatever sequence it was part way
+// through, and the rest of it lands on screen as text — `55;95;255m` from a
+// colour change, say. After that the screen is wrong in ways that look like
+// layout bugs: the input box drawn in one place and the cursor left in another.
+// So a resize waits for the output to stop.
+const QUIET_MS = 120
+let lastOutput = 0
+let pendingGrid = null
+
 function setGrid(cols, rows) {
+  pendingGrid = { cols, rows }
+  applyPendingGrid()
+}
+
+function applyPendingGrid() {
+  if (!pendingGrid) return
+  clearTimeout(applyPendingGrid.timer)
+  const since = Date.now() - lastOutput
+  if (since < QUIET_MS) {
+    applyPendingGrid.timer = setTimeout(applyPendingGrid, QUIET_MS - since)
+    return
+  }
+  const { cols, rows } = pendingGrid
+  pendingGrid = null
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
@@ -157,12 +180,6 @@ function fitGrid(l = deriveLayout(readViewport())) {
   // same glass, and Fit means fill what you can see.
   const { cols, rows } = gridFor(l.terminal.width / state.scale, l.stableHeight / state.scale, state.cell)
   setGrid(cols, rows)
-}
-
-/** Fit, and take the size back from any other client attached to the session. */
-function fitAndClaim() {
-  fitGrid()
-  conn.claimSize()
 }
 
 // visualViewport fires a burst during rotation and keyboard animation, and the
@@ -352,7 +369,9 @@ function buildMenu() {
   }
   const fit = document.createElement('button')
   fit.textContent = 'Fit'
-  fit.addEventListener('click', fitAndClaim)
+  // Wrapped, not passed directly: a listener is handed the click event, which
+  // would arrive as the layout argument and throw on l.terminal.
+  fit.addEventListener('click', () => fitGrid())
   presets.appendChild(fit)
 
   const acts = {

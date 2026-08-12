@@ -23,9 +23,12 @@ test('the screen still has content a moment after attaching', async ({ page }) =
 
 test('the PTY grid matches what the client asked for', async ({ page }) => {
   await ready(page)
-  const rows = await page.evaluate(() => document.querySelectorAll('#screen .term-row:not(.term-scrollback-row)').length)
-  const text = await screenText(page)
-  expect(text).toMatch(new RegExp(`\\d+x${rows}`))
+  // The first fit waits for the output to go quiet, so this settles rather than
+  // being true immediately.
+  await expect.poll(async () => {
+    const rows = await page.evaluate(() => document.querySelectorAll('#screen .term-row:not(.term-scrollback-row)').length)
+    return new RegExp(`\\d+x${rows}`).test(await screenText(page))
+  }).toBe(true)
 })
 
 test('at phone size the grid fits the viewport, not the layout viewport', async ({ page }) => {

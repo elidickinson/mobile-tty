@@ -15,11 +15,11 @@ test('a grid wider than the screen pans horizontally rather than reflowing', asy
   await page.getByRole('button', { name: 'menu' }).tap()
   await page.getByRole('button', { name: '160×50' }).tap()
   await page.getByRole('button', { name: 'Done' }).tap()
-  const m = await page.evaluate(() => {
+  // Resizes wait for the output to go quiet, so this cannot be read at once.
+  await expect.poll(() => page.evaluate(() => {
     const v = document.getElementById('viewport')
-    return { scrollWidth: v.scrollWidth, clientWidth: v.clientWidth }
-  })
-  expect(m.scrollWidth).toBeGreaterThan(m.clientWidth)
+    return v.scrollWidth - v.clientWidth
+  })).toBeGreaterThan(0)
 })
 
 test('zoom changes only the render scale — the PTY grid stays pinned', async ({ page }) => {
@@ -134,4 +134,17 @@ test('the document is not scrollable and the terminal claims vertical drags', as
   })
   expect(m.screenTouch).toBe('pan-y')
   expect(m.docScrollable).toBeLessThanOrEqual(0)
+})
+
+test('Fit refits rather than throwing the click event at the layout', async ({ page }) => {
+  await ready(page)
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: '50×30' }).tap()
+  await expect.poll(() => page.evaluate(() => window.mtty.state.rows)).toBe(30)
+
+  await page.getByRole('button', { name: 'Fit' }).tap()
+  // A listener receives the event as its first argument; passing fitGrid
+  // directly made that the layout and threw on l.terminal.
+  await expect(page.locator('#diag-overlay')).toBeHidden()
+  await expect.poll(() => page.evaluate(() => window.mtty.state.rows)).toBeGreaterThan(30)
 })

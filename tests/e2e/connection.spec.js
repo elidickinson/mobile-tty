@@ -2,7 +2,7 @@
 import { test, expect } from '@playwright/test'
 import { spySocket, sentFrames, ready } from './helpers.js'
 
-test('reconnect keeps the screen and nudges the size to force a repaint', async ({ page }) => {
+test('reconnect keeps the screen up, and gets a live one back', async ({ page }) => {
   await ready(page)
   await page.locator('#screen textarea').pressSequentially('marker')
   await expect(page.locator('#screen')).toContainText('> marker')
@@ -14,11 +14,15 @@ test('reconnect keeps the screen and nudges the size to force a repaint', async 
   await page.evaluate(() => window.mtty.conn.ws.close())
   await expect(page.locator('#screen')).toContainText('> marker')
 
-  const resizes = () => sentFrames(page).then(f => f.filter(x => x[0] === '1').map(x => JSON.parse(x.slice(1))))
-  await expect.poll(() => resizes().then(r => r.length), { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
-  const nudge = (await resizes()).slice(0, 2)
-  expect(nudge[0].columns).toBe(nudge[1].columns - 1)
-  expect(nudge[0].rows).toBe(nudge[1].rows)
+  // What matters is a correct screen afterwards, however it arrives. Here the
+  // far side paints by itself, so no nudge is sent — resizing something that is
+  // already drawing is what desynchronises its parser.
+  await expect(page.locator('#screen')).toContainText('fake-pi ready', { timeout: 15_000 })
+  const resizes = (await sentFrames(page)).filter(x => x[0] === '1')
+  expect(resizes).toHaveLength(0)
+
+  await page.locator('#screen textarea').pressSequentially('again')
+  await expect(page.locator('#screen')).toContainText('> again')
 })
 
 test('a current build does not reload, and a newer one is fetched past the cache', async ({ page }) => {
