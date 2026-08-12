@@ -162,21 +162,36 @@ case "$cmd" in
     exec cloudflared tunnel --config "$config" run
     ;;
   down)
-    # No state to look things up by, so they are found by what they were started
-    # as, narrowed to this port and config. That is a fair trade for a command
-    # whose whole job is to end them.
+    # The server is found by its port, not by matching its argv. pgrep -f on a
+    # command line is both too wide (it matches anything that happens to contain
+    # the same string) and too narrow (it can miss a process whose argv is
+    # presented differently), and it has killed its own caller before. The port
+    # is ground truth: lsof reads the kernel's socket table.
     ended=""
+    server_pid=$(lsof -nP -tiTCP:$port -sTCP:LISTEN 2>/dev/null | head -1 || true)
+    if [[ -n "$server_pid" ]]; then
+      kill "$server_pid" 2>/dev/null || true
+      # Give the PTY and its program a beat to notice, then only claim it done
+      # if it is actually gone.
+      sleep 1
+      if lsof -nP -tiTCP:$port -sTCP:LISTEN 2>/dev/null | grep -q .; then
+        echo "mobile-tty: server on $port is still running" >&2
+        ended="$ended server(unconfirmed)"
+      else
+        ended="$ended server"
+      fi
+    fi
+    # The tunnel has no port of its own; it is the one started by this config.
+    # Narrow enough that it does not sweep up an unrelated tunnel.
     kill_matching() {
       local pids
-      pids=$(pgrep -f "$1" 2>/dev/null || true)
+      pids=$(pgrep -f "cloudflared tunnel --config $config" 2>/dev/null || true)
       [[ -n "$pids" ]] || return 0
       # shellcheck disable=SC2086
       kill $pids 2>/dev/null || true
-      ended="$ended $2"
+      ended="$ended tunnel"
     }
-    kill_matching "server/cli.js --port $port" server
-    kill_matching "cloudflared tunnel --config $config" tunnel
-    sleep 1
+    kill_matching
     if [[ -n "$ended" ]]; then
       echo "ended:$ended"
       [[ "$ended" == *server* ]] && echo "the program is gone, and so is whatever it was holding"
