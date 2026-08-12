@@ -21,6 +21,7 @@ export class Session {
     this.viewers = new Set()
     this.size = { cols, rows }
     this.exited = false
+    this.resizeFailing = false
     this.onData = null
     this.onExit = null
     this.onResize = null
@@ -74,10 +75,14 @@ export class Session {
         // that window reaches here with a pty that is already gone in every
         // sense but the flag. Committing `size` before the attempt would leave
         // it claiming a size the pty never reached, and `same()` would then
-        // skip every future resize back to it — so it moves here, after.
-        console.error('server: pty resize failed', err)
+        // skip every future resize back to it — so it moves here, after. Logged
+        // once, not on every retry: every viewer disconnecting in that same
+        // narrow window hits this too, and it is already the expected shape of
+        // "the pty is gone", not a fresh fault each time.
+        if (!this.resizeFailing) { console.error('server: pty resize failed', err); this.resizeFailing = true }
         return this.size
       }
+      this.resizeFailing = false
       this.size = next
       this.onResize?.(next)
     }
