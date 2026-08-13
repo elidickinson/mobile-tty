@@ -302,18 +302,29 @@ const BAR = [
 
 const terminalInput = () => screen.querySelector('textarea')
 
+// A bar key must not dismiss the keyboard. iOS ends editing when DOM focus
+// leaves the textarea, and a tap's default activation would move focus to the
+// button. Bar buttons are non-focusable and their press is prevented, so focus
+// never leaves the input and the keyboard stays up.
+
+/** The app's own close-the-keyboard buttons blur the input, deliberately. */
+function dismissKeyboard() {
+  const input = terminalInput()
+  if (document.activeElement === input) input.blur()
+}
+
 /**
  * Summon or dismiss the software keyboard without having to find something to
  * tap. iOS only opens it from inside a user gesture, which a pointerdown is.
  */
 function toggleKeyboard() {
-  if (document.activeElement === terminalInput()) terminalInput().blur()
+  if (document.activeElement === terminalInput()) dismissKeyboard()
   else term.focus()
 }
 
 /** The keyboard would cover most of the menu, so it goes away first. */
 function openMenu() {
-  terminalInput().blur()
+  dismissKeyboard()
   showDiagnostics()
   menu.hidden = false
 }
@@ -359,10 +370,18 @@ function buildBar() {
     b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
     if (item.label.length > 1) b.classList.add('word')
     if (item.cls) b.classList.add(item.cls)
+    // Keeps the terminal's textarea focused. A tap's default activation would
+    // move DOM focus to this (focusable) button, and iOS ends editing whenever
+    // focus leaves the editable input — that blur is what dismisses the
+    // keyboard. So the button drops out of tab order (tabindex=-1) and its
+    // default press/click is cancelled, which leaves the textarea focused
+    // through the whole gesture.
+    b.tabIndex = -1
+    b.addEventListener('pointerdown', e => e.preventDefault())
+    b.addEventListener('touchstart', e => e.preventDefault(), { passive: false })
     if (item.mod) {
       b.dataset.mod = item.mod
-      b.addEventListener('pointerdown', e => {
-        e.preventDefault()
+      b.addEventListener('pointerdown', () => {
         state.mods[item.mod] = !state.mods[item.mod]
         b.classList.toggle('sticky', state.mods[item.mod])
       })

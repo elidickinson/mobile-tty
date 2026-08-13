@@ -98,6 +98,27 @@ test('a sticky modifier reaches keys typed on the software keyboard', async ({ p
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
 })
 
+test('a bar tap never moves focus off the terminal input', async ({ page }) => {
+  await ready(page)
+  const focused = () => page.evaluate(() => document.activeElement === document.querySelector('#screen textarea'))
+  await page.evaluate(() => document.querySelector('#screen textarea').focus())
+  expect(await focused()).toBe(true)
+
+  // iOS dismisses the keyboard when a bar tap moves DOM focus to a button
+  // (that blur is what ends editing). Every button drops out of tab order and
+  // its default press is cancelled, so a tap leaves the textarea as the active
+  // element and no blur reaches it.
+  const barButtons = page.locator('#bar button')
+  expect(await barButtons.evaluateAll(bs => bs.every(b => b.tabIndex === -1))).toBe(true)
+
+  await page.getByRole('button', { name: 'Up', exact: true }).tap()
+  await expect.poll(() => focused()).toBe(true)
+  // The deferred iOS blur, when it happens at all, lands ~40ms after the tap —
+  // wait past that window and confirm it never arrived.
+  await page.waitForTimeout(150)
+  expect(await focused()).toBe(true)
+})
+
 test('using a modifier leaves the rest of the bar alone', async ({ page }) => {
   await ready(page)
   await page.getByRole('button', { name: 'ctrl', exact: true }).tap()

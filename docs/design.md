@@ -65,6 +65,10 @@ surviving rows go to its own input box and that window cannot be moved.
   +7 rows standalone buys. The bottom one is inside the viewport only while the keyboard is down,
   so the key bar grows to cover it.
 - **Standalone** via `apple-mobile-web-app-capable`, worth +7 rows.
+- **Bar keys never dismiss the keyboard.** iOS ends editing when DOM focus leaves the hidden
+  input, and a tap's default activation would move focus to the button. Bar buttons are
+  non-focusable (`tabindex="-1"`) and their press and tap are prevented, so focus never leaves
+  the input and the keyboard stays up. `⌨` and the menu blur the input themselves to dismiss on purpose.
 
 ## Scrolling and resizing
 
