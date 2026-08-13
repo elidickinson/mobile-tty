@@ -89,13 +89,21 @@ html, body {
   height: var(--bar-h);
   flex: 0 0 var(--bar-h);
   display: flex;
-  align-items: stretch;
-  gap: 1px;
+  flex-direction: column;
+  gap: 0;
   /* The bar bleeds to the edge of the glass; the keys stay out of the corner
      curve. Vertical clearance is the bar's own padding, set from the insets. */
   padding-inline: 8px;
   background: var(--edge);
   border-top: 1px solid var(--edge);
+}
+
+#keys {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
 }
 
 #bar button {
@@ -113,6 +121,24 @@ html, body {
 #bar button.word { font-size: 14px; }
 #bar button.wide { font-size: 22px; }
 #bar button.sticky { background: var(--accent); color: #001; }
+
+/* The status strip: one grid row tall, under the keys. In standalone the
+   home-indicator band absorbs it, so the terminal keeps every row; where there
+   is no band (keyboard up, Safari) the bar grows by exactly the strip and the
+   terminal box gives up the row. Its height is set from the measured cell in
+   JS. The strip never touches the grid, so it never reflows pi. */
+#strip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--chrome);
+  border-top: 1px solid var(--edge);
+  color: #8a8a95;
+  font: 11px/1.35 var(--font);
+  white-space: nowrap;
+  overflow: hidden;
+}
 
 /* Only ever visible when the socket is not up. A frozen terminal otherwise
    looks exactly like a busy one. Kept clear of the notch in landscape. */

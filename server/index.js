@@ -4,9 +4,12 @@
 // the unwritten tail of a read whenever a client socket filled, which is where
 // the corrupt escape sequences came from; nothing here may repeat that.
 import { createServer } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
+import { watchFooter } from './footer.js'
 import { isAddress, originAllowed } from './origin.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
@@ -36,11 +39,19 @@ const MAX_FRAME = 1024 * 1024
  * with no option to raise it. A real terminal has its own scrollback and no
  * such cap, so the bytes are not wasted there.
  */
-export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = 750, onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = 750, footerPath = join(tmpdir(), `mtty-${process.pid}-footer.json`), onListen, onExit }) {
   const auth = new Auth(password)
-  const session = new Session({ command, args })
+  // The mtty-footer pi extension is gated on this variable, so any program can
+  // be served: only one that understands it writes the file.
+  const session = new Session({ command, args, env: { ...process.env, MTTY_FOOTER: footerPath } })
   const mirror = new Mirror({ ...session.size, scrollback })
   const viewers = new Set()
+
+  let lastFooter = null
+  const stopFooter = watchFooter(footerPath, text => {
+    lastFooter = text
+    for (const viewer of viewers) viewer.footer(text)
+  })
 
   // Non-null while a snapshot is being taken. The mirror stops consuming for
   // that moment so the screen it serializes is exactly the screen these bytes
@@ -126,10 +137,15 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
 
   const admit = viewer => {
     session.add(viewer)
-    return sendScreen(viewer)
+    // The latest strip line after the screen: a viewer that connects mid-session
+    // gets the current stats, not the stale screen's.
+    return sendScreen(viewer).then(() => {
+      if (viewer.open && lastFooter !== null) viewer.footer(lastFooter)
+    })
   }
 
   session.onExit = status => {
+    stopFooter()
     for (const viewer of viewers) viewer.close(1000, 'session ended')
     onExit?.(status)
   }
@@ -278,6 +294,7 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
     async close() {
       clearInterval(ping)
       clearTimeout(fitTimer)
+      stopFooter()
       session.kill()
       wss.close()
       await new Promise(res => http.close(res))

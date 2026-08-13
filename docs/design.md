@@ -89,6 +89,27 @@ keyboard never reflows pi. Involuntary events never touch the grid; **rotation d
 deliberate and worth 93 columns against portrait's 50. Insets are unresolved on the first layout
 pass, so one refit on the next frame keeps rows from stranding below the fold.
 
+## The status strip
+
+pi truncates its footer to the terminal width as it renders, so at phone width the model name on
+the right of it is never written to the PTY — there is no wider copy in the stream to recover. The
+strip captures the one thing it shows at the source: the `ext/mtty-footer.ts` pi extension writes
+the active model and thinking level (`provider/model - level`) to `$MTTY_FOOTER` whenever either
+changes, and the server polls that file and relays it to every viewer as a FOOTER frame, replays it
+to a latecomer after its snapshot, and stops watching when the session ends. The extension is inert
+without the variable, so it can be installed globally.
+
+Polling rather than fs.watch: the file exists only when the served program is pi, and watching a
+directory for a file that may never appear means noise from every other tmp file on the machine.
+The extension writes by rename, so the poller never sees a half-written line, and skips writes
+themselves when nothing changed.
+
+The strip is one row tall, under the keys inside the key bar. The home-indicator band absorbs it
+when there is one — the bar keeps its height, the pad under the keys shrinks by exactly the strip,
+and the terminal keeps every row — and where there is no band (keyboard up, Safari with no insets)
+the bar grows by the strip and the terminal box gives up one visible row. Either way the grid never
+learns about it: the same rule as the keyboard.
+
 ## Reconnect and attach
 
 The server holds the screen, so attaching costs nothing and prompts nobody. That matters because

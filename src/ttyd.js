@@ -6,6 +6,7 @@ export const RESIZE = '1'
 export const OUTPUT = '0'
 export const SET_TITLE = '1'
 export const SET_SIZE = '3'
+export const FOOTER = '4'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()

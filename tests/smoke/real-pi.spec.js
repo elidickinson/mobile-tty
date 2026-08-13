@@ -174,3 +174,12 @@ test('a resize does not dump a reader at the live edge', async ({ page }) => {
     .toBeLessThan(0.1)
   await expect.poll(() => fixtureIds(page)).toEqual(allIds)
 })
+
+test('the status strip carries the captured stats', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'standalone', { value: true, configurable: true })
+  })
+  await pageReady(page)
+  await expect(page.locator('#strip')).toBeVisible({ timeout: 15_000 })
+  expect((await page.locator('#strip').innerText()).length).toBeGreaterThan(0)
+})

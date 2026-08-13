@@ -42,6 +42,15 @@ test('connects with the tty subprotocol and sends the handshake first', () => {
   assert.deepEqual(JSON.parse(text(sock().sent[0])), { AuthToken: '', columns: 50, rows: 30 })
 })
 
+test('the footer frame reaches onFooter as text', () => {
+  const events = []
+  const { c, sock } = setup({ onFooter: t => events.push({ footer: t }) })
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  sock().message([0x34, 0x7b, 0x7d])
+  assert.deepEqual(events[0], { footer: '{}' })
+})
+
 test('output frames arrive as raw bytes', () => {
   const { c, events, sock } = setup()
   c.connect({ cols: 50, rows: 30 })

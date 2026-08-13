@@ -1,6 +1,6 @@
 // The connection: framing and reconnect. The server owns the PTY size and says
 // what it is, so there are no size games left here.
-import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE, SET_SIZE } from './ttyd.js'
+import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE, SET_SIZE, FOOTER } from './ttyd.js'
 
 const BACKOFF_MIN = 500
 const BACKOFF_MAX = 10_000
@@ -13,7 +13,7 @@ const BACKOFF_MAX = 10_000
  * server kept.
  */
 export class TtydConnection {
-  constructor({ url, token = '', socketFactory, schedule, onOutput, onTitle, onSize, onState }) {
+  constructor({ url, token = '', socketFactory, schedule, onOutput, onTitle, onSize, onFooter, onState }) {
     this.url = url
     this.token = token
     this.socketFactory = socketFactory
@@ -21,6 +21,7 @@ export class TtydConnection {
     this.onOutput = onOutput
     this.onTitle = onTitle
     this.onSize = onSize
+    this.onFooter = onFooter
     this.onState = onState
 
     this.cols = 0
@@ -60,6 +61,7 @@ export class TtydConnection {
       if (f.cmd === OUTPUT) this.onOutput(f.payload)
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
       else if (f.cmd === SET_SIZE) this.onSize?.({ cols: f.json.columns, rows: f.json.rows })
+      else if (f.cmd === FOOTER) this.onFooter?.(f.text)
     }
 
     ws.onclose = () => {

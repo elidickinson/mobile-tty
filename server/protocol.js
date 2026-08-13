@@ -10,6 +10,7 @@ export const RESIZE = 0x31       // '1'
 export const OUTPUT = 0x30       // '0'
 export const SET_TITLE = 0x31    // '1'
 export const SET_SIZE = 0x33     // '3'  the grid the PTY actually has
+export const FOOTER = 0x34       // '4'  the status-strip line, verbatim from the mtty-footer extension
 
 /**
  * A size off the wire, from either the handshake or a RESIZE frame.

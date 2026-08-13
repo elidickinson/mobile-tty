@@ -23,6 +23,7 @@ export const test = base.extend({
       '-ne', '--offline', '--no-session', '--no-builtin-tools', '--no-skills',
       '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-approve',
       '--tui-mode', 'regular', '-e', 'tests/real-pi/fixture-extension.ts',
+      '-e', 'ext/mtty-footer.ts',
     ], {
       stdio: ['ignore', 'pipe', 'inherit'],
       env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },

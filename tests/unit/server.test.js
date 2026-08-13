@@ -4,6 +4,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join as pathJoin } from 'node:path'
 import { WebSocket } from 'ws'
 import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
@@ -93,7 +96,50 @@ const viewer = (url, columns, rows) => {
   return { seen, close: () => ws.close() }
 }
 
-const settle = () => new Promise(resolve => setTimeout(resolve, 500))
+const settle = (ms = 500) => new Promise(resolve => setTimeout(resolve, ms))
+
+test('the status strip: relayed on change, replayed to latecomers', async () => {
+  const dir = await mkdtemp(pathJoin(tmpdir(), 'mobile-tty-footer-'))
+  const footerPath = pathJoin(dir, 'footer.json')
+  const { server, url } = await start('sh', ['-c', 'sleep 60'], { footerPath })
+  const frames = []
+  const stripViewer = () => {
+    const ws = new WebSocket(url, ['tty'])
+    ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns: 50, rows: 20 })))
+    ws.on('message', d => {
+      if (Buffer.from(d)[0] === 0x34) frames.push(Buffer.from(d).subarray(1).toString())
+    })
+    return ws
+  }
+  try {
+    const first = stripViewer()
+    await settle()
+    assert.equal(frames.length, 0, 'nothing until the program writes one')
+
+    await writeFile(footerPath, JSON.stringify({ ts: 1, text: 'first' }))
+    await settle(700)
+    assert.deepEqual(frames, ['{"ts":1,"text":"first"}'])
+
+    // The same content under a new mtime is not broadcast again.
+    await writeFile(footerPath, JSON.stringify({ ts: 1, text: 'first' }))
+    await settle(700)
+    assert.equal(frames.length, 1)
+
+    await writeFile(footerPath, JSON.stringify({ ts: 3, text: 'second' }))
+    await settle(700)
+    assert.equal(frames.length, 2, 'the changed line reaches the same viewer')
+
+    // A viewer arriving after the fact gets the latest line after its screen.
+    const late = stripViewer()
+    await settle(700)
+    assert.deepEqual(frames.at(-1), '{"ts":3,"text":"second"}')
+    first.close()
+    late.close()
+  } finally {
+    await server.close()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
 
 test('the narrowest viewer sets the grid, and leaving hands it back', async () => {
   const { server, url } = await start()

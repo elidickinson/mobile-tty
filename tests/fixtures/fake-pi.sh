@@ -39,6 +39,14 @@ draw() {
 size=$(stty size)
 in_esc=0       # 0 none, 1 after ESC, 2 inside a CSI/SS3 sequence
 ttyd=$PPID
+
+# The status strip, once: what the mtty-footer pi extension writes on the real
+# program, so the e2e suite can see the strip without pi.
+if [[ -n "${MTTY_FOOTER:-}" ]]; then
+  printf '{"ts":%s,"text":"fake-pi stats"}\n' "$(date +%s)" > "$MTTY_FOOTER.tmp"
+  mv "$MTTY_FOOTER.tmp" "$MTTY_FOOTER"
+fi
+
 draw
 # macOS ships bash 3.2, so the poll timeout has to be a whole number of seconds.
 while true; do

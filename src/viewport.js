@@ -57,8 +57,13 @@ export function measureCell(fontSize) {
  * viewport in standalone mode, so honouring it again would throw away the +7
  * rows standalone buys. The bottom inset sits inside the viewport and must be
  * reserved.
+ *
+ * `stripHeight` is the status strip's row, when it is visible. It lives under
+ * the keys inside the bar: the home-indicator band absorbs it when it fits, so
+ * the bar keeps its height and the terminal keeps every row; where there is no
+ * band (keyboard up, or no insets at all) the bar grows by exactly the strip.
  */
-export function deriveLayout(s) {
+export function deriveLayout(s, { stripHeight = 0 } = {}) {
   const keyboardHeight = Math.max(0, Math.round(s.innerHeight - s.visualHeight - s.offsetTop))
   const keyboardUp = keyboardHeight >= KEYBOARD_MIN
   const appHeight = s.visualHeight
@@ -70,7 +75,8 @@ export function deriveLayout(s) {
   // of the indicator — reserving it below the bar instead just leaves a gap.
   const bottomReserve = s.insetBottom + BOTTOM_CLEARANCE
   const bottomInset = keyboardUp ? 0 : bottomReserve
-  const keyBarHeight = KEY_BAR_H + bottomInset
+  const keyBarHeight = Math.max(KEY_BAR_H + bottomInset, KEY_BAR_H + stripHeight)
+  const keyBarPadBottom = Math.max(0, bottomInset - stripHeight)
 
   return {
     keyboardHeight,
@@ -78,7 +84,7 @@ export function deriveLayout(s) {
     orientation: s.innerWidth > s.innerHeight ? 'landscape' : 'portrait',
     appHeight,
     keyBarHeight,
-    keyBarPadBottom: bottomInset,
+    keyBarPadBottom,
     // What to size the *grid* from. The layout viewport ignores the keyboard,
     // so the grid stays put when it opens and the visible window just shows
     // less of it — occlude and pan, rather than reflowing pi mid-sentence.

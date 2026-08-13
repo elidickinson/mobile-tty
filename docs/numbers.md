@@ -65,7 +65,8 @@ They behave oppositely. v1 targets pi; alternate-screen support is deferred.
 
 - **Cell at 13px:** **8.04 x 15 pt on device**, 7.83 x 16 in headless WebKit. Measured at
   runtime, never assumed -- at 402 pt wide that is the difference between 50 and 51 columns.
-- **Key bar:** 44 pt, plus the bottom inset when the keyboard is down.
+- **Key bar:** 44 pt, plus the bottom inset when the keyboard is down. The status strip's row
+  lives under the keys: the band absorbs it when it fits, otherwise the bar grows by the strip.
 - **Resize coalescing:** 100 ms, so a viewer flapping its size cannot make pi re-render its
   transcript repeatedly.
 - **Viewer backlog cap:** 4 MB of `bufferedAmount`, then that viewer is disconnected. It is
@@ -90,6 +91,7 @@ client -> server            server -> client
 INPUT    '0'                OUTPUT     '0'
 RESIZE   '1'                SET_TITLE  '1'
                             SET_SIZE   '3'
+                            FOOTER     '4'
 ```
 
 `RESIZE` and `SET_SIZE` carry `{"columns":N,"rows":M}`. The handshake is a bare
@@ -97,3 +99,6 @@ RESIZE   '1'                SET_TITLE  '1'
 
 `SET_SIZE` is the grid the PTY actually has, which is not always the one a viewer asked
 for: the narrowest viewer wins and the rest render at its size.
+
+`FOOTER` carries the mtty-footer pi extension's snapshot verbatim — `{"ts":N,"text":"..."}` —
+and is only sent when the served program writes `$MTTY_FOOTER`.

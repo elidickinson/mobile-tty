@@ -77,6 +77,25 @@ test('with the keyboard up the bottom inset is not reserved — it is over the k
   assert.ok(rows > reserved, 'that is a whole extra row of pi')
 })
 
+test('the strip is absorbed by the home-indicator band when it fits', () => {
+  const l = deriveLayout(FIXTURES['standalone portrait, kb down'], { stripHeight: 15 })
+  assert.equal(l.keyBarHeight, KEY_BAR_H + 34 + 10, 'the bar does not grow — the band has room')
+  assert.equal(l.keyBarPadBottom, 34 + 10 - 15, 'the pad under the keys shrinks by exactly the strip')
+  assert.equal(l.terminal.height, 812 - (34 + 10) - KEY_BAR_H, 'the terminal keeps every row')
+  assert.equal(l.stableHeight, 812 - (34 + 10) - KEY_BAR_H, 'and the grid is untouched')
+})
+
+test('where there is no band, the strip grows the bar by one row', () => {
+  // Safari has no insets at all; with the keyboard up the band is not reserved.
+  const safari = deriveLayout(FIXTURES['safari portrait, kb down'], { stripHeight: 15 })
+  assert.equal(safari.keyBarHeight, KEY_BAR_H + 15)
+  assert.equal(safari.keyBarPadBottom, 0)
+
+  const kbUp = deriveLayout(FIXTURES['standalone portrait, kb up'], { stripHeight: 15 })
+  assert.equal(kbUp.keyBarHeight, KEY_BAR_H + 15)
+  assert.equal(kbUp.keyBarPadBottom, 0)
+})
+
 test('the grid is sized from the layout viewport, so the keyboard never reflows it', () => {
   const down = deriveLayout(FIXTURES['standalone portrait, kb down'])
   const up = deriveLayout(FIXTURES['standalone portrait, kb up'])

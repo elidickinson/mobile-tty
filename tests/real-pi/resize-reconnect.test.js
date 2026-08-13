@@ -12,6 +12,7 @@ import { createTerminalServer } from '../../server/index.js'
 const INPUT = 0x30
 const OUTPUT = 0x30
 const SET_SIZE = 0x33
+const FOOTER = 0x34
 const execFileAsync = promisify(execFile)
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -36,6 +37,7 @@ const connectViewer = async (url, columns, rows) => {
   const ws = new WebSocket(url, ['tty'])
   let lastOutput = Date.now()
   let outputCount = 0
+  const footers = []
 
   ws.on('message', data => {
     const frame = Buffer.from(data)
@@ -48,6 +50,8 @@ const connectViewer = async (url, columns, rows) => {
       if (size.columns !== core.getCols() || size.rows !== core.getRows()) {
         core.resize(size.columns, size.rows)
       }
+    } else if (frame[0] === FOOTER) {
+      footers.push(JSON.parse(frame.subarray(1).toString()))
     }
   })
 
@@ -71,6 +75,7 @@ const connectViewer = async (url, columns, rows) => {
     text,
     quiet,
     outputCount: () => outputCount,
+    footers: () => footers,
     input: text => ws.send(Buffer.concat([Buffer.from([INPUT]), Buffer.from(text)])),
     resize: (cols, nextRows) => ws.send(Buffer.from(`1${JSON.stringify({ columns: cols, rows: nextRows })}`)),
     close: () => ws.terminate(),
@@ -83,6 +88,7 @@ const expectedIds = Array.from({ length: 100 }, (_, i) => i)
 test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_000 }, async t => {
   const agentDir = await mkdtemp(join(tmpdir(), 'mobile-tty-real-pi-'))
   const extension = resolve('tests/real-pi/fixture-extension.ts')
+  const footerExtension = resolve('ext/mtty-footer.ts')
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR
   const previousOffline = process.env.PI_OFFLINE
   const restoreEnvironment = () => {
@@ -108,7 +114,8 @@ test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_
       args: [
         '-ne', '--offline', '--no-session', '--no-builtin-tools',
         '--no-skills', '--no-prompt-templates', '--no-themes', '--no-context-files',
-        '--no-approve', '--tui-mode', 'regular', '-e', extension,
+        '--no-approve', '--tui-mode', 'regular',
+        '-e', extension, '-e', footerExtension,
       ],
     })
     restoreEnvironment()
@@ -119,6 +126,10 @@ test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_
     const early = await connectViewer(url, 80, 24)
     viewers.push(early)
     await waitFor(() => early.text().includes('MTTY_EXTENSION_READY'), 'real pi and test extension startup')
+    await waitFor(() => early.footers().length > 0, 'a status-strip frame from the mtty-footer extension')
+    const footer = early.footers().at(-1)
+    assert.equal(typeof footer.ts, 'number', 'the strip line carries a timestamp')
+    assert.ok(footer.text.length > 0, 'the strip line carries pi\'s stats')
     const ready = early.text().match(/MTTY_EXTENSION_READY pid=(\d+)/)
     assert.ok(ready, 'extension readiness marker has the scratch pi PID')
     piPid = Number(ready[1])

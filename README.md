@@ -35,6 +35,8 @@ Keystrokes queued while disconnected are replayed in full on reconnect, even aft
 
 **Key bar**, left to right: `⌃ ⇧` are sticky -- tap one, then the next key you press (including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then `esc`, `⇥` tab, `⌫` backspace, arrows, `⌨` to summon or dismiss the keyboard, and `≡` for the menu. Backspace and the arrows repeat when held; the software keyboard's own backspace does not, because the field it types into is emptied after every keystroke.
 
+**Status strip**: a row under the key-bar keys showing the active model and thinking level (`provider/model - max`) — the part pi's own footer truncates at phone width. It comes from `ext/mtty-footer.ts`, a pi extension: install it once with `ln -s "$PWD/ext/mtty-footer.ts" ~/.pi/agent/extensions/`. It stays inert for every pi outside mobile-tty. In standalone it sits in the home-indicator band under the keys and costs the terminal nothing; where there is no band it takes one row of the terminal box, never the grid.
+
 There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes as alt+b.
 
 **Scrolling** is a normal drag. When you scroll away from the live screen a **↓ latest** button appears; typing also jumps you back. New output while you are reading history leaves you where you are.

@@ -11,6 +11,8 @@ const viewport = $('viewport')
 const stage = $('stage')
 const screen = $('screen')
 const bar = $('bar')
+const keys = $('keys')
+const strip = $('strip')
 const toBottom = $('to-bottom')
 const menu = $('menu')
 
@@ -65,6 +67,7 @@ const conn = new TtydConnection({
   onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); applyPendingGrid() },
   onTitle: title => { document.title = title },
   onSize: ({ cols, rows }) => applyServerSize(cols, rows),
+  onFooter: showFooter,
   onState: showConnection,
 })
 
@@ -82,12 +85,49 @@ function showConnection(status) {
 // Published before startup finishes so nothing has to guess when it appears.
 window.mtty = { conn, term, state, checkForNewBuild }
 
+// ---------------------------------------------------------------- strip
+
+let footerText = null
+
+/**
+ * pi's stats in full, captured by the mtty-footer extension and relayed by the
+ * server, but only worth a row in standalone: there the strip sits in the
+ * home-indicator band and costs nothing while the keyboard is down. In a
+ * Safari tab the band is too small and every row is one visible fewer, so the
+ * strip stays hidden there entirely.
+ */
+function showFooter(text) {
+  // Standalone only. `navigator.standalone` is a stable fact of how the page
+  // was opened, so checking it here without storing it is enough. In a Safari
+  // tab the strip is never even parsed: it would cost a row for no gain.
+  if (!readViewport().standalone) return
+  try {
+    footerText = JSON.parse(text).text
+  } catch (err) {
+    // The extension renames the file into place, so a half-written line is a
+    // bug in this chain, not noise to swallow.
+    return reportFatal(`footer: ${err.message}`)
+  }
+  strip.textContent = footerText
+  if (strip.hidden) {
+    // Where the bar grows for the strip the terminal window narrows by a row,
+    // and that must not move the eye: parked readers keep their position, and a
+    // view pinned to the live screen stays pinned (sizeScreen's own
+    // bottom-pinning does that).
+    const pinned = atBottom()
+    const top = screen.scrollTop
+    strip.hidden = false
+    applyLayout()
+    if (!pinned) screen.scrollTop = top
+  }
+}
+
 // ---------------------------------------------------------------- layout
 
 /** Size the app to the visual viewport — the space above the keyboard. */
 function applyLayout() {
   const snap = readViewport()
-  const l = deriveLayout(snap)
+  const l = deriveLayout(snap, { stripHeight: strip.hidden ? 0 : state.cell.height })
   app.style.height = `${l.appHeight}px`
   app.style.transform = `translateY(${snap.offsetTop}px)`
   app.style.paddingLeft = `${snap.insetLeft}px`
@@ -401,7 +441,7 @@ function clearMods() {
   for (const m of Object.keys(state.mods)) state.mods[m] = false
   // Only the modifier keys carry the highlight. `toggle(cls, undefined)` flips
   // rather than removes, so touching the others lit up half the bar.
-  for (const b of bar.children) if (b.dataset.mod) b.classList.remove('sticky')
+  for (const b of keys.children) if (b.dataset.mod) b.classList.remove('sticky')
 }
 
 function buildBar() {
@@ -429,7 +469,7 @@ function buildBar() {
     } else {
       bindRepeat(b, item.act ?? (() => sendKey(item.key)), item.repeat)
     }
-    bar.appendChild(b)
+    keys.appendChild(b)
   }
 }
 
@@ -478,6 +518,7 @@ function diagnosticText() {
     `bar      ${l.keyBarHeight} (pad ${l.keyBarPadBottom})  rect ${JSON.stringify(bar.getBoundingClientRect().toJSON().top)}..${Math.round(bar.getBoundingClientRect().bottom)}`,
     `app      ${Math.round(app.getBoundingClientRect().top)}..${Math.round(app.getBoundingClientRect().bottom)}  screen ${window.screen.width}x${window.screen.height}`,
     `grid     ${state.cols}x${state.rows} cell ${state.cell.width.toFixed(2)}x${state.cell.height} scale ${state.scale}`,
+    `strip    ${footerText ?? 'off'}`,
     `term     ${Math.round(l.terminal.width)}x${Math.round(l.terminal.height)}  stable ${Math.round(l.stableHeight)}`,
     `scroll   top ${screen.scrollTop} of ${screen.scrollHeight} in ${screen.clientHeight}`,
     `sb       ${sb}   domRows ${screen.querySelectorAll('.term-row').length}`,
@@ -557,6 +598,7 @@ async function main() {
   screen.style.setProperty('--term-row-height', `${state.cell.height}px`)
 
   document.documentElement.style.setProperty('--bar-h', `${KEY_BAR_H}px`)
+  strip.style.flexBasis = `${state.cell.height}px`
   buildBar()
   buildMenu()
   $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })

@@ -1,7 +1,7 @@
 // ttyd frame encoding and decoding.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../../src/ttyd.js'
+import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE, FOOTER, encodeInput, encodeResize, encodeHandshake, decodeFrame } from '../../src/ttyd.js'
 
 const bytes = a => new Uint8Array(a)
 const str = u => new TextDecoder().decode(u)
@@ -40,6 +40,13 @@ test('decodeFrame reads title as text and the size as JSON', () => {
   assert.equal(decodeFrame(enc.encode('3{"columns":50,"rows":20}').buffer).cmd, SET_SIZE)
   assert.deepEqual(decodeFrame(enc.encode('3{"columns":50,"rows":20}').buffer).json,
     { columns: 50, rows: 20 })
+})
+
+test('decodeFrame reads the status strip as text', () => {
+  const enc = new TextEncoder()
+  const f = decodeFrame(enc.encode('4{"ts":1,"text":"a"}').buffer)
+  assert.equal(f.cmd, FOOTER)
+  assert.equal(f.text, '{"ts":1,"text":"a"}')
 })
 
 test('decodeFrame on an empty message is a programming error', () => {
