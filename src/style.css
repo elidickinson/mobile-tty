@@ -219,6 +219,10 @@ html, body {
 .menu-head { margin: 10px 0 5px; color: #8a8a95; font-size: 11px; text-transform: uppercase; }
 .menu-toggle { padding: 5px 0; }
 .menu-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* Rows are usually separated by their heading. Where two run together the gap
+   has to come from somewhere, or the paste field sits straight on the buttons
+   under it. */
+.menu-row + .menu-row { margin-top: 8px; }
 .menu-row input[type=text] {
   flex: 2;
   min-width: 0;
