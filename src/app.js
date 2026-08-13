@@ -421,10 +421,18 @@ function toggleKeyboard() {
 }
 
 /** The keyboard would cover most of the menu, so it goes away first. */
+/** Show the readout instead of the menu, or the menu instead of the readout. */
+function foldDiag(open) {
+  $('diag').hidden = !open
+  $('menu-main').hidden = open
+  $('diag-caret').textContent = open ? '▾' : '▸'
+}
+
 function openMenu() {
   dismissKeyboard()
-  // Only when it is on screen. The readout is folded away by default.
-  if (!$('diag').hidden) showDiagnostics()
+  // Always on the ordinary view: the menu is mostly the folder switcher now,
+  // and opening into last time's diagnostics would be a puzzle.
+  foldDiag(false)
   // Asked for on the way in rather than held from last time: pi is used from
   // other terminals too, so the list goes stale between openings.
   conn.askPlaces()
@@ -696,13 +704,12 @@ function buildMenu() {
       field.value = ''
       menu.hidden = true
     },
-    // Folded away by default: it is a dozen lines of readout, most of a phone
-    // screen, and only ever wanted when something has gone wrong.
+    // A view rather than another section. The readout is a dozen lines, and
+    // stacked under everything else it fills the screen — while nobody reading
+    // it wants the folder list and the grid presets in the way.
     diag: () => {
-      const box = $('diag')
-      box.hidden = !box.hidden
-      $('diag-caret').textContent = box.hidden ? '▸' : '▾'
-      if (!box.hidden) showDiagnostics()
+      foldDiag($('diag').hidden)
+      if (!$('diag').hidden) showDiagnostics()
     },
     reconnect: () => conn.reconnectNow(),
     // Local only: pi's own screen is untouched and its next repaint restores it.

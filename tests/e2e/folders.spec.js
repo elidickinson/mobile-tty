@@ -44,10 +44,22 @@ test('the menu fits the screen, with the readout folded away', async ({ page }) 
   // over a terminal somebody is trying to read.
   expect(card.visible).toBeLessThan(card.viewport * 0.75)
 
-  // Still reachable for the times it is the only thing that can explain a fault.
+  // Still reachable for the times it is the only thing that can explain a
+  // fault — and it stands in for the menu rather than stacking under it, or
+  // unfolding it would fill the screen it is meant to be explaining.
   await page.locator('[data-act=diag]').click()
-  await expect(page.locator('#diag')).toBeVisible()
   await expect(page.locator('#diag')).toContainText('build')
+  await expect(page.locator('#places')).toBeHidden()
+  const open = await page.evaluate(() => ({
+    visible: document.querySelector('.menu-card').clientHeight,
+    viewport: window.innerHeight,
+  }))
+  expect(open.visible).toBeLessThan(card.visible)
+
+  // And folding it back brings the menu with it.
+  await page.locator('[data-act=diag]').click()
+  await expect(page.locator('#places')).toBeVisible()
+  await expect(page.locator('#diag')).toBeHidden()
 })
 
 test('a row asks before it acts: one tap opens the choice, it does not switch', async ({ page }) => {

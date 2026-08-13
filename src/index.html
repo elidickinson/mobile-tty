@@ -44,6 +44,8 @@
       <button data-act="clear-view">Clear view</button>
       <button data-act="reload">Reload app</button>
     </div>
+    <!-- Everything the diagnostics view stands in for. -->
+    <div id="menu-main">
     <div class="menu-head">Folder <span id="place-now"></span></div>
     <div id="places"></div>
     <div class="menu-head">Grid</div>
@@ -61,6 +63,7 @@
       <input id="paste" type="text" placeholder="tap here to paste"
              autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off">
       <button data-act="send-paste">Send</button>
+    </div>
     </div>
     <div class="menu-head menu-toggle" data-act="diag">Diagnostics <span id="diag-caret">▸</span></div>
     <pre id="diag" hidden></pre>
