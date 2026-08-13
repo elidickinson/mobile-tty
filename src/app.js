@@ -423,7 +423,8 @@ function toggleKeyboard() {
 /** The keyboard would cover most of the menu, so it goes away first. */
 function openMenu() {
   dismissKeyboard()
-  showDiagnostics()
+  // Only when it is on screen. The readout is folded away by default.
+  if (!$('diag').hidden) showDiagnostics()
   // Asked for on the way in rather than held from last time: pi is used from
   // other terminals too, so the list goes stale between openings.
   conn.askPlaces()
@@ -694,6 +695,14 @@ function buildMenu() {
       conn.send(field.value)
       field.value = ''
       menu.hidden = true
+    },
+    // Folded away by default: it is a dozen lines of readout, most of a phone
+    // screen, and only ever wanted when something has gone wrong.
+    diag: () => {
+      const box = $('diag')
+      box.hidden = !box.hidden
+      $('diag-caret').textContent = box.hidden ? '▸' : '▾'
+      if (!box.hidden) showDiagnostics()
     },
     reconnect: () => conn.reconnectNow(),
     // Local only: pi's own screen is untouched and its next repaint restores it.

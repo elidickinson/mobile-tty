@@ -40,10 +40,13 @@
     <div id="places"></div>
     <div class="menu-head">Grid</div>
     <div class="menu-row" id="presets"></div>
-    <div class="menu-head">Scroll</div>
+    <div class="menu-head">Scroll and zoom <span id="scale-val"></span></div>
     <div class="menu-row">
-      <button data-act="top">⤒ Top</button>
-      <button data-act="bottom">⤓ Bottom</button>
+      <button data-act="top">Top</button>
+      <button data-act="bottom">Bottom</button>
+      <button data-act="zoom-out">−</button>
+      <button data-act="zoom-reset">100%</button>
+      <button data-act="zoom-in">+</button>
     </div>
     <div class="menu-head">Paste</div>
     <div class="menu-row">
@@ -51,16 +54,13 @@
              autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off">
       <button data-act="send-paste">Send</button>
     </div>
-    <div class="menu-head">Zoom <span id="scale-val"></span></div>
     <div class="menu-row">
-      <button data-act="zoom-out">−</button>
-      <button data-act="zoom-reset">100%</button>
-      <button data-act="zoom-in">+</button>
+      <button data-act="reconnect">Reconnect</button>
+      <button data-act="clear-view">Clear view</button>
+      <button data-act="reload">Reload app</button>
     </div>
-    <div class="menu-row"><button data-act="reconnect">Reconnect</button><button data-act="clear-view">Clear view</button></div>
-    <div class="menu-row"><button data-act="reload">Reload app</button></div>
-    <div class="menu-head">Diagnostics</div>
-    <pre id="diag"></pre>
+    <div class="menu-head menu-toggle" data-act="diag">Diagnostics <span id="diag-caret">▸</span></div>
+    <pre id="diag" hidden></pre>
   </div>
 </div>
 

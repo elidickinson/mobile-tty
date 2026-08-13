@@ -43,7 +43,7 @@ There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes 
 
 **Rotate to landscape** and the screen should automatically reflow to 93 columns instead of 50. The grid never resizes on its own when the keyboard opens -- only the visible window shrinks.
 
-**Menu** (`≡`): **Folder**, which is [switching folders](#switching-folders); **Top** / **Bottom** jump to either end of the scrollback; **Paste** -- long-press the field, paste, then Send, since iOS only offers its callout on a visible field; grid presets and **Fit**; zoom, which is render scale only and leaves the grid alone; **Reconnect**; **Clear view**, local only; **Reload app**, since standalone has no reload button; and a live readout of viewport, insets, grid and scroll state. A ⚡ in the corner means the socket is down, and errors paint a red panel at the top.
+**Menu** (`≡`): **Folder**, which is [switching folders](#switching-folders); **Top** / **Bottom** jump to either end of the scrollback; **Paste** -- long-press the field, paste, then Send, since iOS only offers its callout on a visible field; grid presets and **Fit**; zoom, which is render scale only and leaves the grid alone; **Reconnect**; **Clear view**, local only; **Reload app**, since standalone has no reload button; and **Diagnostics**, folded away by default, which unfolds a live readout of viewport, insets, grid and scroll state. A ⚡ in the corner means the socket is down, and errors paint a red panel at the top.
 
 ## Reach it from anywhere
 

@@ -209,9 +209,15 @@ html, body {
   background: var(--chrome);
   border-top: 1px solid var(--edge);
   padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+  /* The sheet grows from the bottom, so without a ceiling a tall card runs off
+     the top of the screen taking `Done` with it — and the folder list is as
+     long as the number of projects you have. */
+  max-height: 88vh;
+  overflow-y: auto;
 }
 
-.menu-head { margin: 14px 0 6px; color: #8a8a95; font-size: 11px; text-transform: uppercase; }
+.menu-head { margin: 10px 0 5px; color: #8a8a95; font-size: 11px; text-transform: uppercase; }
+.menu-toggle { padding: 5px 0; }
 .menu-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .menu-row input[type=text] {
   flex: 2;

@@ -24,6 +24,32 @@ test('the menu lists the folders pi has history in, and says which is current', 
   await expect(page.locator('#place-now')).toContainText('mobile-tty')
 })
 
+test('the menu fits the screen, with the readout folded away', async ({ page }) => {
+  await ready(page)
+  await openMenu(page)
+  await expect.poll(() => rows(page).count()).toBe(3)
+
+  // The folder list is as long as the number of projects you have, so the sheet
+  // has to stay inside the screen — `Done` scrolling off the top is how a menu
+  // becomes a trap.
+  await expect(page.locator('#diag')).toBeHidden()
+  const card = await page.evaluate(() => {
+    const el = document.querySelector('.menu-card')
+    const box = el.getBoundingClientRect()
+    return { top: box.top, bottom: box.bottom, viewport: window.innerHeight, visible: el.clientHeight }
+  })
+  expect(card.top).toBeGreaterThanOrEqual(0)
+  expect(card.bottom).toBeLessThanOrEqual(card.viewport + 1)
+  // Against a short list, which is the case that has no excuse: the sheet is
+  // over a terminal somebody is trying to read.
+  expect(card.visible).toBeLessThan(card.viewport * 0.75)
+
+  // Still reachable for the times it is the only thing that can explain a fault.
+  await page.locator('[data-act=diag]').click()
+  await expect(page.locator('#diag')).toBeVisible()
+  await expect(page.locator('#diag')).toContainText('build')
+})
+
 test('a row asks before it acts: one tap opens the choice, it does not switch', async ({ page }) => {
   await ready(page)
   await openMenu(page)

@@ -7,12 +7,12 @@ test('the menu jumps to the top and back to the bottom', async ({ page }) => {
   expect(bottom).toBeGreaterThan(0)
 
   await page.getByRole('button', { name: 'menu' }).tap()
-  await page.getByRole('button', { name: '⤒ Top' }).tap()
+  await page.getByRole('button', { name: 'Top', exact: true }).tap()
   expect(await scrollTop(page)).toBe(0)
   await expect(page.locator('#menu')).toBeHidden()
 
   await page.getByRole('button', { name: 'menu' }).tap()
-  await page.getByRole('button', { name: '⤓ Bottom' }).tap()
+  await page.getByRole('button', { name: 'Bottom', exact: true }).tap()
   await expect.poll(() => distanceFromBottom(page)).toBeLessThan(8)
 })
 
