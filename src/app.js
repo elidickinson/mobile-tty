@@ -275,6 +275,47 @@ function onViewportChange() {
 const AT_BOTTOM_PX = 5
 const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < AT_BOTTOM_PX
 
+/**
+ * wterm decides whether to redraw scrollback by comparing the core's line count
+ * against the count it last drew. The core's scrollback is a ring capped at 1000
+ * lines, so once it is full that number never changes again and the rendered
+ * scrollback freezes: history from the moment the buffer filled, spliced onto
+ * the live grid, until a reload. See eli/wterm-scrollback-bug.md.
+ *
+ * Lying to the renderer about what it has drawn makes it redraw the lot.
+ */
+function rebuildScrollback() {
+  const r = term.renderer
+  // The rebuild produces the same number of rows it replaces, so the position
+  // survives the swap — though the content under it has moved on, which is the
+  // whole point of refreshing.
+  const top = screen.scrollTop
+  for (const el of r._scrollbackRowEls) el.remove()
+  r._scrollbackRowEls = []
+  r._renderedScrollbackCount = 0
+  r.syncScrollback(term.bridge)
+  screen.scrollTop = top
+}
+
+// Rebuilding a full buffer costs about 6ms, so it happens once on the way into
+// history rather than on every write. Leaving it frozen while you read is the
+// point: what you are reading does not squirm as output keeps arriving, and the
+// gesture that refreshes it is the one that got you here. Deferred until the
+// drag settles — mutating a thousand rows mid-momentum loses the gesture.
+const REFRESH_AFTER_MS = 80
+let leftBottom = false
+let refresh = null
+
+function onScroll() {
+  const bottom = atBottom()
+  toBottom.hidden = bottom
+  if (bottom) { leftBottom = false; return }
+  if (leftBottom) return
+  leftBottom = true
+  clearTimeout(refresh)
+  refresh = setTimeout(rebuildScrollback, REFRESH_AFTER_MS)
+}
+
 // ---------------------------------------------------------------- key bar
 
 // For a letter key, meta is just an ESC prefix, so `esc` then `b` is
@@ -523,7 +564,17 @@ async function main() {
 
   await term.init()
 
-  screen.addEventListener('scroll', () => { toBottom.hidden = atBottom() })
+  // The renderer's state is private to TypeScript only, so reaching into it is
+  // safe but not guaranteed. If an upgrade renames any of it the refresh turns
+  // into a silent no-op, which looks exactly like the bug it works around.
+  const r = term.renderer
+  if (!Array.isArray(r?._scrollbackRowEls) ||
+      typeof r._renderedScrollbackCount !== 'number' ||
+      typeof r.syncScrollback !== 'function') {
+    throw new Error('wterm renderer internals moved — the scrollback refresh needs rewriting')
+  }
+
+  screen.addEventListener('scroll', onScroll)
   toBottom.addEventListener('click', () => { stopReading(); screen.scrollTop = screen.scrollHeight })
 
   const first = applyLayout()
