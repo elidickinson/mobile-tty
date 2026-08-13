@@ -17,6 +17,7 @@ export class Viewer {
   constructor(ws) {
     this.ws = ws
     this.size = { cols: 0, rows: 0 }
+    this.kind = 'browser'
     this.started = false
     // Cleared before each ping and set by the pong that answers it.
     this.alive = true

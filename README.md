@@ -63,7 +63,7 @@ For a network you already trust -- a LAN, a tailnet -- `$MTTY_PASSWORD` is the l
 
 **`--hostname` is required behind any proxy.** A page on any site you visit can open a WebSocket to your loopback -- nothing in the browser stops it -- so a socket is refused unless its `Origin` is the address it connected to. Addresses work as-is; a name (Cloudflare, MagicDNS, any reverse proxy) has to be declared, by flag or `$MTTY_HOSTNAME`. Miss it and the page loads but never connects, with the reason on stderr.
 
-The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though, and **the narrowest viewer wins** -- this is meant to be read on a phone, and a desktop showing a phone-width column is legible where the reverse is not. The server tells every viewer the size it actually picked.
+The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though, and **the narrowest viewer wins** -- this is meant to be read on a phone, and a desktop showing a phone-width column is legible where the reverse is not. The server tells every viewer the size it actually picked. `attach` relies on the program handling `SIGWINCH` to redraw after a resize; pi does, but a program that does not may need a reattach.
 
 ## Picking up a new build
 

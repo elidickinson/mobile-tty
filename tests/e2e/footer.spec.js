@@ -21,3 +21,13 @@ test('the strip shows the captured line and never resizes the grid', async ({ pa
   const resizes = (await sentFrames(page)).filter(f => f.startsWith('1'))
   expect(resizes).toHaveLength(0)
 })
+
+test('disconnecting clears the old strip until the next session reports one', async ({ page }) => {
+  await asStandalone(page)
+  await ready(page)
+  await expect(page.locator('#strip')).toBeVisible()
+
+  await page.evaluate(() => window.mtty.conn.ws.close())
+  await expect(page.locator('#strip')).toBeHidden()
+  await expect(page.locator('#strip')).toHaveText('')
+})

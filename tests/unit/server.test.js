@@ -4,7 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
 import { WebSocket } from 'ws'
@@ -135,9 +135,43 @@ test('the status strip: relayed on change, replayed to latecomers', async () => 
     assert.deepEqual(frames.at(-1), '{"ts":3,"text":"second"}')
     first.close()
     late.close()
+    await writeFile(`${footerPath}.tmp`, 'orphan')
   } finally {
     await server.close()
+    await assert.rejects(stat(footerPath), { code: 'ENOENT' })
+    await assert.rejects(stat(`${footerPath}.tmp`), { code: 'ENOENT' })
     await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('attach avoids a second snapshot reset on a grid change', async () => {
+  const { server, url } = await start('sh', ['-c', 'printf ready; sleep 30'])
+  const output = []
+  const sizes = []
+  const attach = new WebSocket(url, ['tty'])
+  attach.on('open', () => attach.send(JSON.stringify({
+    AuthToken: '', client: 'attach', columns: 80, rows: 24,
+  })))
+  attach.on('message', d => {
+    const buf = Buffer.from(d)
+    if (buf[0] === 0x30) output.push(buf.subarray(1))
+    if (buf[0] === 0x33) sizes.push(JSON.parse(buf.subarray(1)))
+  })
+  let narrow
+  try {
+    await settle()
+    assert.ok(output[0]?.toString().startsWith('\x1bc\x1b[3J'),
+      'attach gets the normal replacement snapshot on its initial admission')
+
+    narrow = viewer(url, 40, 12)
+    await settle()
+    assert.deepEqual(sizes.at(-1), { columns: 40, rows: 12 })
+    assert.equal(output.slice(1).some(bytes => bytes.includes(Buffer.from('\x1bc'))), false,
+      'a grid change does not clear attach scrollback with RIS')
+  } finally {
+    narrow?.close()
+    attach.close()
+    await server.close()
   }
 })
 

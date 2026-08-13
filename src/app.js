@@ -16,10 +16,10 @@ const strip = $('strip')
 const toBottom = $('to-bottom')
 const menu = $('menu')
 
-// iOS keeps its own copy of a home-screen app's launch document however ttyd
-// labels it — the served response is already `cache-control: no-store`. So the
-// page checks for a newer build itself. A meta tag survives minification and
-// reads the same from the live DOM and from a re-fetched copy.
+// iOS keeps its own copy of a home-screen app's launch document despite the
+// server's `cache-control: no-cache`. So the page checks for a newer build
+// itself. A meta tag survives minification and reads the same from the live DOM
+// and from a re-fetched copy.
 const buildIdOf = doc => doc.querySelector('meta[name=build]')?.content ?? ''
 const BUILD_ID = buildIdOf(document)
 
@@ -73,6 +73,7 @@ const conn = new TtydConnection({
 
 /** The menu is hidden by default, so connection state has to live outside it. */
 function showConnection(status) {
+  if (status === 'disconnected') clearFooter()
   $('menu-state').textContent = `${status} · ${BUILD_ID}`
   const bolt = $('conn')
   bolt.textContent = '⚡'
@@ -96,6 +97,24 @@ let footerText = null
  * Safari tab the band is too small and every row is one visible fewer, so the
  * strip stays hidden there entirely.
  */
+function setStripVisibility(visible) {
+  if (strip.hidden === !visible) return
+  // Where the bar changes size for the strip, that must not move the eye:
+  // parked readers keep their position, and a view pinned to the live screen
+  // stays pinned (sizeScreen's own bottom-pinning does that).
+  const pinned = atBottom()
+  const top = screen.scrollTop
+  strip.hidden = !visible
+  applyLayout()
+  if (!pinned) screen.scrollTop = top
+}
+
+function clearFooter() {
+  footerText = null
+  strip.textContent = ''
+  setStripVisibility(false)
+}
+
 function showFooter(text) {
   // Standalone only. `navigator.standalone` is a stable fact of how the page
   // was opened, so checking it here without storing it is enough. In a Safari
@@ -109,17 +128,7 @@ function showFooter(text) {
     return reportFatal(`footer: ${err.message}`)
   }
   strip.textContent = footerText
-  if (strip.hidden) {
-    // Where the bar grows for the strip the terminal window narrows by a row,
-    // and that must not move the eye: parked readers keep their position, and a
-    // view pinned to the live screen stays pinned (sizeScreen's own
-    // bottom-pinning does that).
-    const pinned = atBottom()
-    const top = screen.scrollTop
-    strip.hidden = false
-    applyLayout()
-    if (!pinned) screen.scrollTop = top
-  }
+  setStripVisibility(true)
 }
 
 // ---------------------------------------------------------------- layout
@@ -561,7 +570,7 @@ function buildMenu() {
       field.value = ''
       menu.hidden = true
     },
-    reconnect: () => conn.ws?.close(),
+    reconnect: () => conn.reconnectNow(),
     // Local only: pi's own screen is untouched and its next repaint restores it.
     'clear-view': () => term.write(CURSOR_HOME + ERASE_SCREEN + ERASE_SAVED),
     // Standalone has no browser chrome, so this is the only way to pick up a

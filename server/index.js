@@ -3,18 +3,19 @@
 // It replaces ttyd and dtach both. dtach is gone because it silently discarded
 // the unwritten tail of a read whenever a client socket filled, which is where
 // the corrupt escape sequences came from; nothing here may repeat that.
+import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
-import { watchFooter } from './footer.js'
+import { removeFooterFiles, watchFooter } from './footer.js'
 import { isAddress, originAllowed } from './origin.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
-import { INPUT, RESIZE, decodeSize } from './protocol.js'
+import { INPUT, RESIZE, decodeHandshake, decodeSize } from './protocol.js'
 
 // Cloudflare drops idle sockets and the phone sleeps, so the socket has to be
 // spoken to even when pi is silent. ttyd did this and it is why `up` survived a
@@ -26,12 +27,13 @@ const RESIZE_COALESCE_MS = 100
 // Generous for a paste, far short of what it takes to matter. Without it a
 // viewer could hand the PTY a hundred megabytes in one frame.
 const MAX_FRAME = 1024 * 1024
+export const DEFAULT_SCROLLBACK = 1000
 
 /**
  * `scrollback` is how much history a reconnecting viewer gets back. It is worth
  * tuning: pi does not page its own transcript, so this is the only way to read
- * back through a conversation on a phone. Roughly 75 bytes a line — 750 lines is
- * about 56 KB per connect, against a pi transcript re-render that starts at
+ * back through a conversation on a phone. Roughly 75 bytes a line — 1000 lines
+ * is about 75 KB per connect, against a pi transcript re-render that starts at
  * 12 KB and grows with every turn.
  *
  * Raising it past 1000 only helps `attach`: the browser client's VT core keeps
@@ -39,8 +41,9 @@ const MAX_FRAME = 1024 * 1024
  * with no option to raise it. A real terminal has its own scrollback and no
  * such cap, so the bytes are not wasted there.
  */
-export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = 750, footerPath = join(tmpdir(), `mtty-${process.pid}-footer.json`), onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
   const auth = new Auth(password)
+  removeFooterFiles(footerPath)
   // The mtty-footer pi extension is gated on this variable, so any program can
   // be served: only one that understands it writes the file.
   const session = new Session({ command, args, env: { ...process.env, MTTY_FOOTER: footerPath } })
@@ -70,6 +73,12 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
   session.onResize = size => {
     mirror.resize(size.cols, size.rows)
     for (const viewer of viewers) if (viewer.queue === null) {
+      if (viewer.kind === 'attach') {
+        // A real terminal receives pi's redraw through the PTY. Sending it a
+        // fresh snapshot would clear its scrollback again.
+        viewer.sendSize(size)
+        continue
+      }
       // Same unhandled-rejection guard as admit(): a throw while serializing the
       // snapshot after a resize must not take the server (and the pi it owns)
       // down with it. The viewer just loses the refresh.
@@ -233,10 +242,11 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
     ws.on('message', data => {
       const buf = Buffer.from(data)
       if (!viewer.started) {
-        const size = decodeSize(buf)
-        if (!size) return void viewer.close(1002, 'bad handshake')
+        const hello = decodeHandshake(buf)
+        if (!hello) return void viewer.close(1002, 'bad handshake')
         viewer.started = true
-        viewer.size = size
+        viewer.kind = hello.client === 'attach' ? 'attach' : 'browser'
+        viewer.size = { cols: hello.cols, rows: hello.rows }
         viewer.title(command)
         // Nothing about one viewer's admission may reach another, so a failure
         // here costs that viewer its connection and nothing else.

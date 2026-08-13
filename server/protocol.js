@@ -20,14 +20,28 @@ export const FOOTER = 0x34       // '4'  the status-strip line, verbatim from th
  * reach the PTY, so both get the same scrutiny. Returns null for anything
  * unparseable or unreasonable, which closes that viewer rather than the server.
  */
+const decodeDimensions = value => {
+  const { columns, rows } = value
+  if (!Number.isInteger(columns) || !Number.isInteger(rows)) return null
+  // The upper bound is not theatre: the grid is allocated server-side, in the
+  // mirror as well as the PTY.
+  if (columns < 1 || rows < 1 || columns > 1000 || rows > 1000) return null
+  return { cols: columns, rows }
+}
+
+export const decodeHandshake = buf => {
+  try {
+    const value = JSON.parse(buf.toString())
+    const size = decodeDimensions(value)
+    return size && { ...size, client: value.client }
+  } catch {
+    return null
+  }
+}
+
 export const decodeSize = buf => {
   try {
-    const { columns, rows } = JSON.parse(buf.toString())
-    if (!Number.isInteger(columns) || !Number.isInteger(rows)) return null
-    // The upper bound is not theatre: the grid is allocated server-side, in the
-    // mirror as well as the PTY.
-    if (columns < 1 || rows < 1 || columns > 1000 || rows > 1000) return null
-    return { cols: columns, rows }
+    return decodeDimensions(JSON.parse(buf.toString()))
   } catch {
     return null
   }

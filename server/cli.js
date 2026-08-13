@@ -1,6 +1,6 @@
 // Command line for the server, so `mobile-tty serve` can start it the way it
 // started ttyd. The server owns the session, so this process ending ends pi.
-import { createTerminalServer } from './index.js'
+import { createTerminalServer, DEFAULT_SCROLLBACK } from './index.js'
 
 const arg = name => {
   const i = process.argv.indexOf(name)
@@ -36,7 +36,7 @@ const server = createTerminalServer({
   hostname: arg('--hostname'),
   // Never a flag: a command line is readable by every process on the machine.
   password: process.env.MTTY_PASSWORD,
-  scrollback: number('--scrollback', 750),
+  scrollback: number('--scrollback', DEFAULT_SCROLLBACK),
   command,
   args,
   onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}` +

@@ -91,6 +91,31 @@ test('backoff grows on repeated failure and resets once connected', () => {
   assert.equal(timers[0].ms, delays[0], 'a successful connection resets the backoff')
 })
 
+test('reconnectNow replaces an open socket immediately', () => {
+  const { c, sock } = setup()
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  const old = sock()
+
+  c.reconnectNow()
+  assert.notEqual(sock(), old)
+})
+
+test('reconnectNow opens immediately and invalidates the pending retry', () => {
+  const { c, sock, timers } = setup()
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  sock().drop()
+  const old = sock()
+  assert.equal(timers.length, 1)
+
+  c.reconnectNow()
+  const fresh = sock()
+  assert.notEqual(fresh, old)
+  timers.shift().fn()
+  assert.equal(sock(), fresh, 'the cancelled retry did not open a second socket')
+})
+
 test('state changes are reported for the connection indicator', () => {
   const { c, events, sock } = setup()
   c.connect({ cols: 50, rows: 30 })

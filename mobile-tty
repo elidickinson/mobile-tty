@@ -19,7 +19,7 @@ cd "$root" || { echo "mobile-tty: cannot enter $root" >&2; exit 1; }
 port="${PORT:-7681}"
 # Lines of history a reconnecting viewer gets back. pi does not page its own
 # transcript, so this is the only way to read back through a conversation.
-scrollback="${MTTY_SCROLLBACK:-750}"
+scrollback="${MTTY_SCROLLBACK:-1000}"
 bind="${MTTY_BIND:-127.0.0.1}"
 # The one hostname a proxy in front of this may present. Only needed when you
 # reach it by name rather than by address; see --hostname in the usage.
@@ -46,7 +46,7 @@ Options
   --bind ADDR    listen on one address (default 127.0.0.1, or $MTTY_BIND)
   --port N       default 7681, or $PORT
   --scrollback N lines of history a reconnecting viewer gets back
-                 (default 750, or $MTTY_SCROLLBACK)
+                 (default 1000, or $MTTY_SCROLLBACK)
   --hostname NAME the name a proxy in front of this presents, e.g. the
                  Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
   --tunnel       run the Cloudflare tunnel alongside the server

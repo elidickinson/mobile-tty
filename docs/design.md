@@ -114,8 +114,8 @@ learns about it: the same rule as the keyboard.
 
 The server holds the screen, so attaching costs nothing and prompts nobody. That matters because
 pi renders relatively and re-draws its **entire transcript** on SIGWINCH, a cost that grows with
-the conversation. The snapshot carries the screen and 750 lines above it, because pi does not
-page itself and scrollback is the only way to read back through a conversation; `--scrollback N`
+the conversation. The snapshot carries the screen and 1000 lines above it by default, because pi does
+not page itself and scrollback is the only way to read back through a conversation; `--scrollback N`
 moves it, though past 1000 lines only `attach` sees the difference. The terminal object outlives
 the socket, so a drop leaves the stale screen up rather than blanking; input queues while down,
 resizes do not, since the handshake carries the size.
@@ -123,8 +123,10 @@ resizes do not, since the handshake carries the size.
 `attach` is a client of the same protocol, so the desktop cannot resize the PTY behind the
 server's back. It has to act like a terminal on its own account: raw mode restored on every exit
 path, pi's and the snapshot's modes undone on the way out, SIGWINCH forwarded, `Ctrl-C` and
-`Ctrl-Z` passed through, `Ctrl-]` to detach. That chord cannot be discovered, so `attach` names
-it on a cleared screen and holds its hello back briefly; the server sends nothing until the
+`Ctrl-Z` passed through, `Ctrl-]` to detach. Its initial snapshot takes over the current terminal
+and replaces its existing scrollback; later grid changes send the new size and let pi's real PTY
+redraw update it instead of replaying another reset. That chord cannot be discovered, so `attach`
+names it on a cleared screen and holds its hello back briefly; the server sends nothing until the
 hello, so nothing is buffered or lost.
 
 One PTY has one size, and **the narrowest wins**: a desktop showing a phone-width column is

@@ -72,7 +72,7 @@ They behave oppositely. v1 targets pi; alternate-screen support is deferred.
 - **Viewer backlog cap:** 4 MB of `bufferedAmount`, then that viewer is disconnected. It is
   never sent a gap.
 - **Smallest shared grid:** 20x8, so no viewer can shrink everyone to nothing.
-- **Snapshot scrollback:** 750 lines by default, about 56 KB -- roughly 75 bytes a line. pi
+- **Snapshot scrollback:** 1000 lines by default, about 75 KB -- roughly 75 bytes a line. pi
   cannot page itself, so this is the only history a reloaded page gets. Tune it with
   `--scrollback N` or `$MTTY_SCROLLBACK`.
 - **Browser scrollback cap: 1000 lines.** Measured by writing 26,000 lines into the client's

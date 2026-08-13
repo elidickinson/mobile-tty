@@ -13,11 +13,12 @@ const BACKOFF_MAX = 10_000
  * server kept.
  */
 export class TtydConnection {
-  constructor({ url, token = '', socketFactory, schedule, onOutput, onTitle, onSize, onFooter, onState }) {
+  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout, onOutput, onTitle, onSize, onFooter, onState }) {
     this.url = url
     this.token = token
     this.socketFactory = socketFactory
     this.schedule = schedule
+    this.cancel = cancel
     this.onOutput = onOutput
     this.onTitle = onTitle
     this.onSize = onSize
@@ -29,7 +30,8 @@ export class TtydConnection {
     this.ws = null
     this.queue = []
     this.backoff = BACKOFF_MIN
-
+    this.retry = null
+    this.started = false
   }
 
   get connected() { return this.ws?.readyState === 1 }
@@ -37,6 +39,36 @@ export class TtydConnection {
   connect({ cols, rows }) {
     this.cols = cols
     this.rows = rows
+    this.started = true
+    this._cancelRetry()
+    this._open()
+  }
+
+  _cancelRetry() {
+    if (!this.retry) return
+    this.cancel(this.retry.handle)
+    this.retry = null
+  }
+
+  _scheduleRetry() {
+    this._cancelRetry()
+    const retry = {}
+    this.retry = retry
+    retry.handle = this.schedule(() => {
+      if (this.retry !== retry) return
+      this.retry = null
+      this._open()
+    }, this.backoff)
+    this.backoff = Math.min(BACKOFF_MAX, this.backoff * 2)
+  }
+
+  reconnectNow() {
+    if (!this.started) return
+    this._cancelRetry()
+    this.backoff = BACKOFF_MIN
+    const old = this.ws
+    this.ws = null
+    if (old && old.readyState !== 3) old.close()
     this._open()
   }
 
@@ -47,6 +79,7 @@ export class TtydConnection {
     this.ws = ws
 
     ws.onopen = () => {
+      if (this.ws !== ws) return
       // The server holds the screen and sends it on connect, so attaching costs
       // nothing and needs no prompting. It also answers with the grid the PTY
       // actually has, which is not always the one asked for here.
@@ -57,6 +90,7 @@ export class TtydConnection {
     }
 
     ws.onmessage = ev => {
+      if (this.ws !== ws) return
       const f = decodeFrame(ev.data)
       if (f.cmd === OUTPUT) this.onOutput(f.payload)
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
@@ -65,9 +99,9 @@ export class TtydConnection {
     }
 
     ws.onclose = () => {
+      if (this.ws !== ws) return
       this.onState?.('disconnected')
-      this.schedule(() => this._open(), this.backoff)
-      this.backoff = Math.min(BACKOFF_MAX, this.backoff * 2)
+      this._scheduleRetry()
     }
   }
 

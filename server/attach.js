@@ -107,7 +107,7 @@ export async function attach({ url }) {
       if (started) return
       started = true
       clearTimeout(timer)
-      ws.send(JSON.stringify({ AuthToken: '', ...size() }))
+      ws.send(JSON.stringify({ AuthToken: '', client: 'attach', ...size() }))
       stdout.on('resize', () => ws.send(frame(RESIZE, JSON.stringify(size()))))
     }
     const timer = setTimeout(start, BANNER_MS)
