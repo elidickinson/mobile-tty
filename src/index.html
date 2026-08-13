@@ -36,6 +36,14 @@
 <div id="menu" hidden>
   <div class="menu-card">
     <div class="menu-row"><span id="menu-state">connecting…</span><button data-act="close">Done</button></div>
+    <!-- Under the connection state deliberately, which is what makes it read
+         without a heading of its own: the line above says what is wrong, and
+         these are the three things to try about it. -->
+    <div class="menu-row">
+      <button data-act="reconnect">Reconnect</button>
+      <button data-act="clear-view">Clear view</button>
+      <button data-act="reload">Reload app</button>
+    </div>
     <div class="menu-head">Folder <span id="place-now"></span></div>
     <div id="places"></div>
     <div class="menu-head">Grid</div>
@@ -53,11 +61,6 @@
       <input id="paste" type="text" placeholder="tap here to paste"
              autocorrect="off" autocapitalize="off" spellcheck="false" autocomplete="off">
       <button data-act="send-paste">Send</button>
-    </div>
-    <div class="menu-row">
-      <button data-act="reconnect">Reconnect</button>
-      <button data-act="clear-view">Clear view</button>
-      <button data-act="reload">Reload app</button>
     </div>
     <div class="menu-head menu-toggle" data-act="diag">Diagnostics <span id="diag-caret">▸</span></div>
     <pre id="diag" hidden></pre>
