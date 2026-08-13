@@ -223,6 +223,15 @@ html, body {
    has to come from somewhere, or the paste field sits straight on the buttons
    under it. */
 .menu-row + .menu-row { margin-top: 8px; }
+
+/* The state line is the sheet's title bar, and Done sits at the end of it —
+   directly over Reload app, which is not what anyone reaching for Done meant
+   to hit. A rule and some room make them two different things. */
+.menu-card > .menu-row:first-child {
+  padding-bottom: 10px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--edge);
+}
 .menu-row input[type=text] {
   flex: 2;
   min-width: 0;
