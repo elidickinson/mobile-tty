@@ -236,6 +236,59 @@ html, body {
 
 #menu-state { flex: 1; color: #8a8a95; }
 
+/* Its own scroller: there is a folder here for every directory pi has ever run
+   in, which on a working machine is a hundred of them. The card must not grow
+   off the top of the screen to hold them. */
+#places {
+  max-height: 34vh;
+  overflow-y: auto;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: #0d0d11;
+}
+
+.place + .place { border-top: 1px solid var(--edge); }
+.place.open { background: #17171d; }
+
+.place-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: 13px var(--font);
+  text-align: left;
+}
+
+/* The folder is the name; the path is what tells two `extensions` apart. */
+.place-path { color: #8a8a95; font-size: 11px; }
+
+/* Where you already are, so a list of a hundred rows still says which is this. */
+.place.here .place-name::after { content: ' ·'; color: var(--accent); }
+
+/* After `here`, so a row that is both says the more urgent thing. Waiting is
+   not failure: `failed` means no answer came, and a late one is still taken. */
+.place.switching .place-name::after { content: ' — switching…'; color: #8a8a95; }
+.place.failed .place-name::after { content: ' — no answer'; color: #d08a70; }
+.place.switching .place-actions button { opacity: .5; pointer-events: none; }
+
+.place-actions { display: flex; gap: 8px; padding: 0 10px 10px; }
+
+.place-actions button {
+  flex: 1;
+  padding: 9px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: #22222a;
+  color: var(--fg);
+  font: 13px var(--font);
+}
+
+#place-now { text-transform: none; color: #6f6f7a; }
+
 #diag {
   margin: 0;
   padding: 8px;

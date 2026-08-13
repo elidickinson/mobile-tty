@@ -64,6 +64,10 @@ narrowest one decides the size, because this is meant to be read on a phone.
 `attach` joins a server that is already running; it does not start one. To end
 the session, exit the program or run `down`.
 
+The menu offers every folder pi has history in. Choosing one ends the program
+and starts it there instead, which is how you reach another project from a
+phone that has no shell to cd with.
+
 Set $MTTY_PASSWORD for a login page and a cookie: an opt-in alternative to
 Access for a network you already trust. Not a flag, because a command line is
 readable by every process on the machine, and not basic auth, because Safari

@@ -43,7 +43,7 @@ There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes 
 
 **Rotate to landscape** and the screen should automatically reflow to 93 columns instead of 50. The grid never resizes on its own when the keyboard opens -- only the visible window shrinks.
 
-**Menu** (`≡`): **Top** / **Bottom** jump to either end of the scrollback; **Paste** -- long-press the field, paste, then Send, since iOS only offers its callout on a visible field; grid presets and **Fit**; zoom, which is render scale only and leaves the grid alone; **Reconnect**; **Clear view**, local only; **Reload app**, since standalone has no reload button; and a live readout of viewport, insets, grid and scroll state. A ⚡ in the corner means the socket is down, and errors paint a red panel at the top.
+**Menu** (`≡`): **Folder**, which is [switching folders](#switching-folders); **Top** / **Bottom** jump to either end of the scrollback; **Paste** -- long-press the field, paste, then Send, since iOS only offers its callout on a visible field; grid presets and **Fit**; zoom, which is render scale only and leaves the grid alone; **Reconnect**; **Clear view**, local only; **Reload app**, since standalone has no reload button; and a live readout of viewport, insets, grid and scroll state. A ⚡ in the corner means the socket is down, and errors paint a red panel at the top.
 
 ## Reach it from anywhere
 
@@ -70,6 +70,44 @@ The desktop can watch or type at the same time, either by opening the same URL o
 - **Every load** revalidates: the document is `no-cache` with the bundle's hash as its ETag, so an unchanged client costs a 304 instead of 74 KB.
 - **On startup** the page refetches past the cache and compares build stamps; a newer one on the server redirects to `?b=<hash>`, a URL iOS has no cached copy of. This is what actually works in standalone, where the launch document is held whatever the headers say.
 - **Never mid-session.** A page already open will not notice a new build -- use **Reload app** in the menu.
+
+## Switching folders
+
+The menu lists every folder pi has history in -- read out of pi's own store at
+`~/.pi/agent/sessions`, newest first, and always including the one the server
+started in. Tap one and it offers **Start here**, plus **Continue here** when the
+served program is pi, which passes `--continue` and picks that folder's last
+session back up.
+
+Choosing one **ends the program that is running** and starts another over there.
+There is one PTY here and it is the session, so this is a switch rather than a
+second window: every viewer follows it, the phone and an attached desktop alike.
+The conversation itself is safe -- pi writes it down, and **Continue here** comes
+back to it -- but a turn in flight when you switch is lost, and a `bash` tool
+call running under it is killed. That is why a row asks before it acts, and why
+this is worth a second tap on a phone.
+
+The menu stays open until the switch is confirmed. There is no acknowledgement
+frame: a switch that worked always restates the title with the new folder, and
+that is what closes the menu. A tap that never left the phone -- asleep, or the
+tunnel down -- and one the server refused because the folder went away both look
+the same from here, so after a few seconds the row says **no answer** rather than
+pretending. A late switch still lands, and is still taken when it does.
+
+This is the one thing an extension inside pi cannot do for you. A process cannot
+change its own working directory, so `/resume` in one folder only ever reaches
+that folder's sessions, and a phone has no shell to `cd` with. Spawning is the
+only way to be somewhere else, and the server is the only part of this that
+spawns anything.
+
+Only a folder the server itself listed is honoured. That frame is the one which
+would otherwise turn a terminal into a general way to start programs anywhere;
+it is already behind the same login and Origin check as everything else on the
+socket, and this keeps it to the folders you have actually worked in.
+
+`$PI_CODING_AGENT_SESSION_DIR` moves the list along with pi's store, and a
+program named by a relative path is resolved once at startup, so it still means
+the same program after a switch.
 
 ## Keeping a conversation
 

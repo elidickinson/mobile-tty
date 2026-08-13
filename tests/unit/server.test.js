@@ -4,7 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
 import { WebSocket } from 'ws'
@@ -254,6 +254,209 @@ test('a resize leaves every viewer with the same history, whenever it joined', a
   } finally {
     narrow?.close(); early?.close(); late?.close()
     await server.close()
+  }
+})
+
+// ---------------------------------------------------------------- switching
+
+/** A store like pi's, holding history for folders that really exist. */
+const storeFor = async cwds => {
+  // Resolved, because a place is always reported at the folder's one true path
+  // and a switch is only honoured for a path the server itself listed.
+  const root = await realpath(await mkdtemp(pathJoin(tmpdir(), 'mtty-switch-')))
+  const sessionDir = pathJoin(root, 'sessions')
+  await mkdir(sessionDir)
+  for (const name of cwds) {
+    const cwd = pathJoin(root, name)
+    await mkdir(cwd)
+    await mkdir(pathJoin(sessionDir, `-${cwd.replaceAll('/', '-')}-`))
+    await writeFile(pathJoin(sessionDir, `-${cwd.replaceAll('/', '-')}-`, 'a.jsonl'),
+      `${JSON.stringify({ type: 'session', version: 3, cwd })}\n`)
+  }
+  return { root, sessionDir, at: name => pathJoin(root, name) }
+}
+
+/** A viewer that can also send the frames the key bar and the menu send. */
+const talker = (url, columns = 50, rows = 20) => {
+  const ws = new WebSocket(url, ['tty'])
+  let output = ''
+  let places = null
+  ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns, rows })))
+  ws.on('message', d => {
+    const buf = Buffer.from(d)
+    if (buf[0] === 0x30) output += buf.subarray(1).toString()
+    if (buf[0] === 0x35) places = JSON.parse(buf.subarray(1))
+  })
+  const send = (cmd, text) => ws.send(Buffer.concat([Buffer.from([cmd]), Buffer.from(text)]))
+  return {
+    get output() { return output },
+    get places() { return places },
+    clear: () => { output = '' },
+    ask: () => send(0x33, ''),
+    switchTo: (cwd, resume = false) => send(0x32, JSON.stringify({ cwd, resume })),
+    close: () => ws.close(),
+  }
+}
+
+/** Poll for something that arrives through a serialized queue, not on a clock. */
+const until = async (check, what, ms = 5_000) => {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (check()) return
+    await settle(100)
+  }
+  assert.fail(`timed out waiting for ${what}`)
+}
+
+test('a switch ends the program and starts one in the folder chosen', async () => {
+  const store = await storeFor(['target-project'])
+  const { server, url } = await start(undefined, [], { sessionDir: store.sessionDir })
+  const viewer = talker(url)
+  try {
+    // fake-pi draws its own cwd, so the screen says where the program is.
+    await until(() => viewer.output.includes('mobile-tty'), 'the first screen')
+
+    viewer.switchTo(store.at('target-project'))
+    await until(() => viewer.output.includes('target-project'), 'the new folder')
+
+    // The program was replaced, not the server: everyone is still connected and
+    // the session did not end underneath them.
+    assert.equal(server.http.listening, true)
+  } finally {
+    viewer.close()
+    await server.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a switch to a folder the server never offered is refused, and costs nothing', async () => {
+  const store = await storeFor(['known'])
+  const { server, url } = await start(undefined, [], { sessionDir: store.sessionDir })
+  const viewer = talker(url)
+  try {
+    await until(() => viewer.output.includes('mobile-tty'), 'the first screen')
+
+    // This frame is the one that would turn a terminal into a way to start
+    // programs anywhere, so a cwd nobody listed must not be honoured.
+    viewer.switchTo('/etc')
+    await settle(700)
+
+    // A viewer arriving now is given the screen of whatever is running, which
+    // is the only proof that it was never replaced.
+    const late = talker(url)
+    await until(() => late.output.includes('mobile-tty'), 'the original program still running')
+    assert.equal(late.output.includes('/etc'), false)
+    late.close()
+  } finally {
+    viewer.close()
+    await server.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('the folder list names the current folder and only offers continue for pi', async () => {
+  const store = await storeFor(['one', 'two'])
+  const { server, url } = await start(undefined, [], { sessionDir: store.sessionDir })
+  const viewer = talker(url)
+  try {
+    // Only once it is actually admitted: the menu cannot open before then either.
+    await until(() => viewer.output.length > 0, 'the first screen')
+    viewer.ask()
+    await until(() => viewer.places, 'the folder list')
+
+    assert.equal(viewer.places.cwd, process.cwd(), 'the folder the server started in is where it says it is')
+    assert.deepEqual(viewer.places.places.map(place => place.name).sort(), ['mobile-tty', 'one', 'two'].sort())
+    // fake-pi.sh is not pi, and `--continue` is pi's flag.
+    assert.equal(viewer.places.resume, false)
+  } finally {
+    viewer.close()
+    await server.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('the folder you are in stays in the list even when pi\'s store forgets it', async () => {
+  const store = await storeFor(['elsewhere'])
+  const { server, url } = await start(undefined, [], { sessionDir: store.sessionDir })
+  const viewer = talker(url)
+  try {
+    await until(() => viewer.output.length > 0, 'the first screen')
+    viewer.switchTo(store.at('elsewhere'))
+    await until(() => viewer.output.includes('elsewhere'), 'the switch')
+
+    // The store is pruned under us, which is ordinary — it is full of folders
+    // that come and go. The list must still be one you can find your way back
+    // through, or the folder in front of you becomes unreachable.
+    await rm(pathJoin(store.sessionDir, `-${store.at('elsewhere').replaceAll('/', '-')}-`), { recursive: true })
+
+    viewer.ask()
+    await until(() => viewer.places, 'the folder list')
+    assert.equal(viewer.places.cwd, store.at('elsewhere'))
+    assert.ok(viewer.places.places.some(place => place.cwd === store.at('elsewhere')),
+      'the current folder is missing from the list')
+  } finally {
+    viewer.close()
+    await server.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a switch sends attach a fresh screen — nothing on its end will redraw it', async () => {
+  const store = await storeFor(['elsewhere'])
+  const { server, url } = await start(undefined, [], { sessionDir: store.sessionDir })
+  const output = []
+  const ws = new WebSocket(url, ['tty'])
+  ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', client: 'attach', columns: 80, rows: 24 })))
+  ws.on('message', d => {
+    const buf = Buffer.from(d)
+    if (buf[0] === 0x30) output.push(buf.subarray(1).toString())
+  })
+  try {
+    await until(() => output.join('').includes('mobile-tty'), 'the first screen')
+
+    // A resize deliberately spares attach the replacement snapshot, because the
+    // program redraws through the PTY for it. A switch is the opposite case:
+    // the program that would have redrawn is the one that just went away, so
+    // skipping it here leaves a real terminal showing a session that is gone
+    // while its keystrokes reach the new one.
+    const before = output.length
+    ws.send(Buffer.concat([
+      Buffer.from([0x32]),
+      Buffer.from(JSON.stringify({ cwd: store.at('elsewhere'), resume: false })),
+    ]))
+    await until(() => output.slice(before).some(chunk => chunk.startsWith('\x1bc\x1b[3J')),
+      'the screen to be replaced')
+    await until(() => output.slice(before).join('').includes('elsewhere'), 'the new folder')
+  } finally {
+    ws.close()
+    await server.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('continuing a folder is offered only for pi, and reaches it as --continue', async () => {
+  const store = await storeFor(['work'])
+  // Named `pi`, because that is what decides whether continuing means anything.
+  // It reports its own cwd and argv, which is all this needs to see.
+  const program = pathJoin(store.root, 'pi')
+  await writeFile(program, '#!/bin/bash\necho "cwd=$PWD args=$*"\nsleep 30\n')
+  await chmod(program, 0o755)
+
+  const { server, url } = await start(program, [], { sessionDir: store.sessionDir })
+  const viewer = talker(url)
+  try {
+    await until(() => viewer.output.length > 0, 'the first screen')
+    viewer.ask()
+    await until(() => viewer.places, 'the folder list')
+    assert.equal(viewer.places.resume, true)
+
+    viewer.switchTo(store.at('work'), true)
+    await until(() => viewer.output.includes('args=--continue'), 'the flag reaching the program')
+    assert.ok(viewer.output.includes(store.at('work')), 'and in the folder chosen')
+  } finally {
+    viewer.close()
+    await server.close()
+    await rm(store.root, { recursive: true, force: true })
   }
 })
 

@@ -3,19 +3,24 @@
 // It replaces ttyd and dtach both. dtach is gone because it silently discarded
 // the unwritten tail of a read whenever a client socket filled, which is where
 // the corrupt escape sequences came from; nothing here may repeat that.
+//
+// There is exactly one program at a time, and switching folders ends it and
+// starts another — so every invariant below is still "one PTY, N viewers, one
+// screen". What changes on a switch is which program that screen belongs to.
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { removeFooterFiles, watchFooter } from './footer.js'
 import { isAddress, originAllowed } from './origin.js'
+import { PI_SESSIONS, placeFor, readPlaces } from './places.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
-import { INPUT, RESIZE, decodeHandshake, decodeSize } from './protocol.js'
+import { INPUT, RESIZE, SWITCH, ASK_PLACES, decodeHandshake, decodeSize, decodeSwitch } from './protocol.js'
 
 // Cloudflare drops idle sockets and the phone sleeps, so the socket has to be
 // spoken to even when pi is silent. ttyd did this and it is why `up` survived a
@@ -29,6 +34,24 @@ const RESIZE_COALESCE_MS = 100
 const MAX_FRAME = 1024 * 1024
 export const DEFAULT_SCROLLBACK = 1000
 
+// pi's own flag for picking a folder's last session back up, and the test for
+// whether offering it means anything: `bash --continue` is not a thing.
+const RESUME_FLAG = '--continue'
+const isPi = command => basename(command) === 'pi'
+
+// A switch waits for the old program to be gone before starting the next one,
+// so the two can never both hold the footer file or the grid. SIGTERM is what
+// pi is asked with; this is how long it gets before the question stops being
+// one, because a program that will not leave must not strand the server with
+// nothing to serve.
+const KILL_GRACE_MS = 2_000
+
+// A switch the server declines, as against one that goes wrong. A client only
+// ever names a folder the server listed, so a refusal means a list that went
+// stale under an open menu, or a client that made something up: expected
+// either way, and worth one line rather than a stack.
+class Refused extends Error {}
+
 /**
  * `scrollback` is how much history a reconnecting viewer gets back. It is worth
  * tuning: pi does not page its own transcript, so this is the only way to read
@@ -41,62 +64,135 @@ export const DEFAULT_SCROLLBACK = 1000
  * with no option to raise it. A real terminal has its own scrollback and no
  * such cap, so the bytes are not wasted there.
  */
-export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, sessionDir = PI_SESSIONS, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
   const auth = new Auth(password)
-  removeFooterFiles(footerPath)
-  // The mtty-footer pi extension is gated on this variable, so any program can
-  // be served: only one that understands it writes the file.
-  const session = new Session({ command, args, env: { ...process.env, MTTY_FOOTER: footerPath } })
-  const mirror = new Mirror({ ...session.size, scrollback })
+
+  const startCwd = process.cwd()
+  // A program named by path means that program, not whatever happens to sit at
+  // the same relative path in the folder we switch to. A bare name is a PATH
+  // lookup and is already independent of the cwd.
+  const program = command.includes('/') ? resolve(startCwd, command) : command
+  const resumable = isPi(program)
   const viewers = new Set()
 
-  let lastFooter = null
-  const stopFooter = watchFooter(footerPath, text => {
-    lastFooter = text
-    for (const viewer of viewers) viewer.footer(text)
-  })
+  // The program, its screen, and the folder it is in. Replaced wholesale by a
+  // switch; never two at once, and never absent once the first one has started.
+  // A switch retires the outgoing one before its replacement exists, so this
+  // keeps pointing at something a keystroke or a handshake can safely land on
+  // for the moment in between.
+  let active = null
 
   // Non-null while a snapshot is being taken. The mirror stops consuming for
   // that moment so the screen it serializes is exactly the screen these bytes
   // come after — see admit().
   let held = null
 
+  // Work queued on the admitting chain can outlive the server, and a switch
+  // that ran after close() would start a program nothing is left to serve.
+  let closed = false
+
   /**
-   * A resize re-sends the screen rather than letting viewers reflow it.
+   * Start a program in a folder and make it the session.
    *
-   * The client's VT core loses a third to two-thirds of its text on a column
-   * shrink, so a viewer that reflows its own history ends up with something the
-   * mirror disagrees with — content in the wrong places, and different again
-   * from what the next viewer to connect is given. The mirror reflows correctly,
-   * so it is the only thing allowed to: everyone else is handed the result.
+   * `active` is assigned in here rather than by the caller: the PTY can produce
+   * bytes as soon as it exists, and a handler that cannot yet recognise itself
+   * as the active one would throw them away.
    */
-  session.onResize = size => {
-    mirror.resize(size.cols, size.rows)
-    for (const viewer of viewers) if (viewer.queue === null) {
-      if (viewer.kind === 'attach') {
-        // A real terminal receives pi's redraw through the PTY. Sending it a
-        // fresh snapshot would clear its scrollback again.
-        viewer.sendSize(size)
-        continue
+  const start = ({ place, resume, size }) => {
+    // Before the program exists, so nothing of the last one's is left for this
+    // one's watcher to read as its own — a program on its way out can write the
+    // file after it has been told to stop.
+    removeFooterFiles(footerPath)
+    const session = new Session({
+      command: program,
+      args: resume ? [...args, RESUME_FLAG] : args,
+      cwd: place.cwd,
+      // The mtty-footer pi extension is gated on this variable, so any program
+      // can be served: only one that understands it writes the file.
+      env: { ...process.env, MTTY_FOOTER: footerPath },
+      ...size,
+    })
+    // `retired` is set the moment a switch decides this one is over, which is
+    // before it has actually gone and before there is anything to replace it
+    // with. Everything below asks it rather than comparing against `active`,
+    // which still points here until the replacement exists.
+    const unit = { session, place, resume, mirror: new Mirror({ ...session.size, scrollback }), lastFooter: null, retired: false }
+    unit.gone = new Promise(resolve => { unit.resolveGone = resolve })
+
+    unit.stopFooter = watchFooter(footerPath, text => {
+      if (unit.retired) return
+      unit.lastFooter = text
+      for (const viewer of viewers) viewer.footer(text)
+    })
+
+    /**
+     * A resize re-sends the screen rather than letting viewers reflow it.
+     *
+     * The client's VT core loses a third to two-thirds of its text on a column
+     * shrink, so a viewer that reflows its own history ends up with something
+     * the mirror disagrees with — content in the wrong places, and different
+     * again from what the next viewer to connect is given. The mirror reflows
+     * correctly, so it is the only thing allowed to: everyone else is handed
+     * the result.
+     */
+    session.onResize = size => {
+      if (unit.retired) return
+      unit.mirror.resize(size.cols, size.rows)
+      for (const viewer of viewers) if (viewer.queue === null) {
+        if (viewer.kind === 'attach') {
+          // A real terminal receives pi's redraw through the PTY. Sending it a
+          // fresh snapshot would clear its scrollback again.
+          viewer.sendSize(size)
+          continue
+        }
+        // Same unhandled-rejection guard as admit(): a throw while serializing
+        // the snapshot after a resize must not take the server (and the pi it
+        // owns) down with it. The viewer just loses the refresh.
+        sendScreen(viewer).catch(err => {
+          console.error('server: could not re-send the screen after a resize', err)
+          viewer.close()
+        })
       }
-      // Same unhandled-rejection guard as admit(): a throw while serializing the
-      // snapshot after a resize must not take the server (and the pi it owns)
-      // down with it. The viewer just loses the refresh.
-      sendScreen(viewer).catch(err => {
-        console.error('server: could not re-send the screen after a resize', err)
-        viewer.close()
-      })
     }
+
+    session.onData = data => {
+      // A program on its way out after a switch still produces bytes — pi
+      // repaints on the way down. They belong to a screen nobody is looking at
+      // any more.
+      if (unit.retired) return
+      // Viewers first: the mirror is a convenience, and a failure in it must not
+      // cost anyone bytes it was about to be sent.
+      for (const viewer of viewers) {
+        if (viewer.queue) viewer.queue.push(data)
+        else if (viewer.queue === null && !viewer.output(data)) viewers.delete(viewer)
+      }
+      if (held) held.push(data)
+      else unit.mirror.write(data)
+    }
+
+    session.onExit = status => {
+      unit.resolveGone()
+      // Ended by a switch, which is already starting its replacement. Only the
+      // program that is still the session ends the server with it.
+      if (unit.retired) return
+      unit.stopFooter()
+      for (const viewer of viewers) viewer.close(1000, 'session ended')
+      onExit?.(status)
+    }
+
+    active = unit
+    return unit
   }
-  session.onData = data => {
-    // Viewers first: the mirror is a convenience, and a failure in it must not
-    // cost anyone bytes it was about to be sent.
-    for (const viewer of viewers) {
-      if (viewer.queue) viewer.queue.push(data)
-      else if (viewer.queue === null && !viewer.output(data)) viewers.delete(viewer)
-    }
-    if (held) held.push(data)
-    else mirror.write(data)
+
+  /** Wait for a program to actually be gone, asking nicely first. */
+  const end = async unit => {
+    unit.session.kill()
+    // Unconditional: node-pty swallows the ESRCH from signalling a process that
+    // has already gone, so this needs no guard against losing the race.
+    const escalate = setTimeout(() => unit.session.kill('SIGKILL'), KILL_GRACE_MS)
+    escalate.unref()
+    await unit.gone
+    clearTimeout(escalate)
   }
 
   /**
@@ -108,6 +204,8 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
    * Holding them out of the mirror instead makes the boundary a real one.
    *
    * Admissions are serialized, since two at once would fight over what is held.
+   * Switching runs on the same chain, so no admission is ever in flight while
+   * the program underneath it is being replaced.
    */
   let admitting = Promise.resolve()
   const sendScreen = viewer => {
@@ -116,53 +214,139 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
     // the server is the session, means until pi is killed.
     admitting = admitting.catch(() => {}).then(async () => {
       if (!viewer.open) return
+      const unit = active
 
       held = []
       viewer.queue = []
       try {
-        await mirror.drain()
-        const snapshot = Buffer.from(mirror.snapshot())
+        await unit.mirror.drain()
+        const snapshot = Buffer.from(unit.mirror.snapshot())
 
         // Size before screen: the snapshot is drawn for the PTY's grid, so a
         // viewer that asked for a different one has to be rendering at this
         // size before it arrives.
-        viewer.sendSize(session.size)
+        viewer.sendSize(unit.session.size)
         // Screen, then the bytes the screen could not contain yet, then what
         // arrived while it was being taken.
         if (viewer.output(snapshot)) {
-          const rest = mirror.pending.length ? [Buffer.from(mirror.pending), ...viewer.queue] : viewer.queue
+          const rest = unit.mirror.pending.length ? [Buffer.from(unit.mirror.pending), ...viewer.queue] : viewer.queue
           for (const chunk of rest) if (!viewer.output(chunk)) break
         }
       } finally {
         // Whatever happened to this viewer, the mirror has to be fed again or
         // every screen after this one is stale.
         viewer.queue = null
-        for (const chunk of held) mirror.write(chunk)
+        for (const chunk of held) unit.mirror.write(chunk)
         held = null
       }
     })
     return admitting
   }
 
+  const titleFor = place => `${basename(program)} — ${place.path}`
+
   const admit = viewer => {
-    session.add(viewer)
+    active.session.add(viewer)
+    viewer.title(titleFor(active.place))
     // The latest strip line after the screen: a viewer that connects mid-session
     // gets the current stats, not the stale screen's.
     return sendScreen(viewer).then(() => {
-      if (viewer.open && lastFooter !== null) viewer.footer(lastFooter)
+      if (viewer.open && active.lastFooter !== null) viewer.footer(active.lastFooter)
     })
   }
 
-  session.onExit = status => {
-    stopFooter()
-    for (const viewer of viewers) viewer.close(1000, 'session ended')
-    onExit?.(status)
+  /**
+   * The folders that can be switched to.
+   *
+   * The folder in front of you is always among them, and so is the one the
+   * server started in, whether or not pi's store knows about either yet — a
+   * list you cannot find your way back to is a trap. Only prepended when the
+   * store does not have them already, so a folder with history of its own keeps
+   * its place in the recency order.
+   */
+  const listPlaces = async () => {
+    const places = await readPlaces({ sessionDir })
+    for (const cwd of [active.place.cwd, startCwd]) {
+      if (!places.some(place => place.cwd === cwd)) places.unshift(placeFor(cwd))
+    }
+    return places
   }
+
+  const sendPlaces = async viewer => {
+    const places = await listPlaces()
+    viewer.places(JSON.stringify({ cwd: active.place.cwd, resume: resumable, places }))
+  }
+
+  /**
+   * End the program and start one in another folder.
+   *
+   * The cwd is checked against the folders the server found for itself, not
+   * taken on the client's word. The socket is authenticated and origin-checked
+   * before it can send anything at all, so this is not the only thing standing
+   * there — but it is the difference between "start pi in a folder I have used"
+   * and a general way to run programs anywhere, and only one of those is a
+   * feature.
+   */
+  const switchTo = async ({ cwd, resume }) => {
+    if (resume && !resumable) throw new Refused(`${command} has no ${RESUME_FLAG}`)
+    const place = (await listPlaces()).find(candidate => candidate.cwd === cwd)
+    if (!place) throw new Refused(`no pi history in ${cwd}`)
+
+    admitting = admitting.catch(() => {}).then(async () => {
+      // The server came down, or the program ended by itself, while this waited
+      // its turn behind other work on the chain. Either way the session is over
+      // and there is nothing here to replace.
+      if (closed || active.session.exited) return
+
+      const outgoing = active
+      // Over, from here: its remaining output is dropped and its exit no longer
+      // ends the server. `active` still points at it until there is something
+      // to point at instead.
+      outgoing.retired = true
+      outgoing.stopFooter()
+      await end(outgoing)
+
+      try {
+        // Started at the grid the last one had, so the new program paints at
+        // the size the viewers are already rendering and nothing has to resize.
+        start({ place, resume, size: outgoing.session.size })
+      } catch (err) {
+        // The old program is already gone, so there is nothing to fail back to:
+        // this is the session ending, and it has to end the way any other
+        // ending does. Otherwise `active` points at a corpse for ever — input
+        // silently dropped, and every viewer left in front of a screen with
+        // nothing behind it.
+        console.error('server: the session ended: could not start the program', err)
+        for (const viewer of viewers) viewer.close(1000, 'session ended')
+        onExit?.({ exitCode: 1, signal: 0 })
+        return
+      }
+
+      for (const viewer of viewers) {
+        // Nothing may be sent to a viewer that has not said hello — `attach`
+        // holds its handshake back to give its banner the screen.
+        if (!viewer.started) continue
+        active.session.add(viewer)
+        viewer.title(titleFor(place))
+        // Every viewer gets a fresh screen, `attach` included. Unlike a resize
+        // there is no program on the other side that will redraw for them, and
+        // the screen they are holding belongs to something that no longer
+        // exists. Queued behind this body rather than awaited inside it.
+        sendScreen(viewer).catch(err => {
+          console.error('server: could not send the screen after a switch', err)
+          viewer.close()
+        })
+      }
+    })
+    await admitting
+  }
+
+  start({ place: placeFor(startCwd), resume: false })
 
   let fitTimer = null
   const scheduleFit = () => {
     if (fitTimer) return
-    fitTimer = setTimeout(() => { fitTimer = null; session.fit() }, RESIZE_COALESCE_MS)
+    fitTimer = setTimeout(() => { fitTimer = null; active?.session.fit() }, RESIZE_COALESCE_MS)
     fitTimer.unref()
   }
 
@@ -247,7 +431,6 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
         viewer.started = true
         viewer.kind = hello.client === 'attach' ? 'attach' : 'browser'
         viewer.size = { cols: hello.cols, rows: hello.rows }
-        viewer.title(command)
         // Nothing about one viewer's admission may reach another, so a failure
         // here costs that viewer its connection and nothing else.
         admit(viewer).catch(err => {
@@ -259,7 +442,10 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
       if (buf.length === 0) return
       switch (buf[0]) {
         case INPUT:
-          session.write(buf.subarray(1))
+          // Dropped while a switch is in flight: these were typed at a program
+          // that is on its way out, and writing to a pty whose fd has closed
+          // throws from inside this handler.
+          if (!active.retired) active.session.write(buf.subarray(1))
           break
         case RESIZE: {
           const size = decodeSize(buf.subarray(1))
@@ -269,6 +455,27 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
           }
           break
         }
+        case ASK_PLACES:
+          // Read fresh every time rather than cached: the store changes under
+          // us as pi is used elsewhere, and this is a hundred stats, not work.
+          sendPlaces(viewer).catch(err => console.error('server: could not list the folders', err))
+          break
+        case SWITCH: {
+          const target = decodeSwitch(buf.subarray(1))
+          if (!target) {
+            console.error('server: ignored a malformed switch')
+            break
+          }
+          // One viewer's switch is everyone's — there is one screen here. A
+          // refusal is logged and nothing happens; the program in front of you
+          // is not worth losing to a bad frame.
+          switchTo(target).catch(err => err instanceof Refused
+            ? console.error(`server: did not switch: ${err.message}`)
+            // Anything else is a fault rather than an answer, and its stack is
+            // the only account of it there will be.
+            : console.error('server: did not switch:', err))
+          break
+        }
         default:
           break
       }
@@ -276,7 +483,7 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
 
     const drop = () => {
       viewers.delete(viewer)
-      session.remove(viewer)
+      active?.session.remove(viewer)
     }
     ws.on('close', drop)
     ws.on('error', drop)
@@ -302,10 +509,11 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
   return {
     http,
     async close() {
+      closed = true
       clearInterval(ping)
       clearTimeout(fitTimer)
-      stopFooter()
-      session.kill()
+      active?.stopFooter()
+      active?.session.kill()
       wss.close()
       await new Promise(res => http.close(res))
     },

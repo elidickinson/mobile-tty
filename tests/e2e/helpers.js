@@ -2,6 +2,9 @@
 // spying, and the scroll measurements that need a settled baseline.
 import { test as base, expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 export { expect }
 
@@ -15,12 +18,39 @@ export { expect }
 export const test = base.extend({
   // Off unless a spec asks for it with test.use({ password }).
   password: [undefined, { option: true }],
-  baseURL: async ({ password }, use) => {
+  // Folders the picker should offer, named by a spec with test.use({ folders }).
+  folders: [[], { option: true }],
+  /**
+   * A session store shaped like pi's, holding history for folders made here.
+   *
+   * Every test gets one, empty by default. The point is as much what it keeps
+   * out: without it the picker would enumerate the real ~/.pi store, so an e2e
+   * run would depend on which projects the machine happens to have.
+   */
+  store: async ({ folders }, use) => {
+    const root = await mkdtemp(join(tmpdir(), 'mtty-e2e-store-'))
+    const sessionDir = join(root, 'sessions')
+    await mkdir(sessionDir)
+    for (const name of folders) {
+      const cwd = join(root, name)
+      const slug = join(sessionDir, `-${cwd.replaceAll('/', '-')}-`)
+      await mkdir(cwd)
+      await mkdir(slug)
+      await writeFile(join(slug, 'a.jsonl'), `${JSON.stringify({ type: 'session', version: 3, cwd })}\n`)
+    }
+    await use({ root, sessionDir, at: name => join(root, name) })
+    await rm(root, { recursive: true, force: true })
+  },
+  baseURL: async ({ password, store }, use) => {
     const server = spawn('node',
       ['server/cli.js', '--port', '0', '--', 'tests/fixtures/fake-pi.sh'],
       {
         stdio: ['ignore', 'pipe', 'inherit'],
-        env: password ? { ...process.env, MTTY_PASSWORD: password } : process.env,
+        env: {
+          ...process.env,
+          PI_CODING_AGENT_SESSION_DIR: store.sessionDir,
+          ...(password ? { MTTY_PASSWORD: password } : {}),
+        },
       })
     const port = await new Promise((resolve, reject) => {
       server.stdout.on('data', d => {

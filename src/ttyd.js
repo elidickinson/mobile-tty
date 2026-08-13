@@ -2,11 +2,14 @@
 // `server/protocol.js` is the other half.
 export const INPUT = '0'
 export const RESIZE = '1'
+export const SWITCH = '2'
+export const ASK_PLACES = '3'
 
 export const OUTPUT = '0'
 export const SET_TITLE = '1'
 export const SET_SIZE = '3'
 export const FOOTER = '4'
+export const PLACES = '5'
 
 const enc = new TextEncoder()
 const dec = new TextDecoder()
@@ -22,6 +25,12 @@ const frame = (cmd, text) => {
 export const encodeInput = text => frame(INPUT, text)
 
 export const encodeResize = (columns, rows) => frame(RESIZE, JSON.stringify({ columns, rows }))
+
+// Ending the program and starting one in `cwd`. The server only honours a
+// folder it listed itself, so this cannot name somewhere it did not offer.
+export const encodeSwitch = (cwd, resume) => frame(SWITCH, JSON.stringify({ cwd, resume }))
+
+export const encodeAskPlaces = () => frame(ASK_PLACES, '')
 
 // The handshake is a bare JSON object rather than a prefixed frame, and must be
 // the first message on the socket.
@@ -42,6 +51,6 @@ export function decodeFrame(buffer) {
   const payload = all.subarray(1)
   if (cmd === OUTPUT) return { cmd, payload }
   const text = dec.decode(payload)
-  if (cmd === SET_SIZE) return { cmd, text, json: JSON.parse(text) }
+  if (cmd === SET_SIZE || cmd === PLACES) return { cmd, text, json: JSON.parse(text) }
   return { cmd, text }
 }

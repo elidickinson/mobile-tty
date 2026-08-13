@@ -15,6 +15,8 @@ const keys = $('keys')
 const strip = $('strip')
 const toBottom = $('to-bottom')
 const menu = $('menu')
+const places = $('places')
+const placeNow = $('place-now')
 
 // iOS keeps its own copy of a home-screen app's launch document despite the
 // server's `cache-control: no-cache`. So the page checks for a newer build
@@ -65,9 +67,15 @@ const conn = new TtydConnection({
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); applyPendingGrid() },
-  onTitle: title => { document.title = title },
+  // The title is only restated when the session is (a fresh admission, or a
+  // switch to another folder), and the strip belongs to whichever program was
+  // running before that. Drop it rather than leave the last one's model and
+  // thinking level sitting under a different session; the new one's own line
+  // arrives within a poll.
+  onTitle: title => { document.title = title; clearFooter(); confirmSwitch(title) },
   onSize: ({ cols, rows }) => applyServerSize(cols, rows),
   onFooter: showFooter,
+  onPlaces: showPlaces,
   onState: showConnection,
 })
 
@@ -416,7 +424,124 @@ function toggleKeyboard() {
 function openMenu() {
   dismissKeyboard()
   showDiagnostics()
+  // Asked for on the way in rather than held from last time: pi is used from
+  // other terminals too, so the list goes stale between openings.
+  conn.askPlaces()
   menu.hidden = false
+}
+
+// ---------------------------------------------------------------- folders
+
+/**
+ * The folders pi has history in, newest first, as the server found them.
+ *
+ * Switching ends the program that is running now — there is one PTY, and it is
+ * the session. So a row does not act on its own: tapping it opens the two ways
+ * to go, which is the confirmation as much as it is the choice. An accidental
+ * brush against a list on a phone must not be able to kill a working agent.
+ */
+function showPlaces({ cwd, resume, places: list }) {
+  // The folder in front of you is always in the list, so this cannot miss.
+  placeNow.textContent = list.find(place => place.cwd === cwd).path
+  clearSwitching()
+  places.textContent = ''
+
+  const go = (place, wantResume, row) => {
+    clearSwitching()
+    row.classList.remove('failed')
+    row.classList.add('switching')
+    // The menu deliberately stays open. A tap can fail to arrive at all — a
+    // sleeping phone, a dropped tunnel — or be refused by the server for a
+    // folder that has gone since the list was built, and both look exactly
+    // like a slow switch from here. Closing now would call all three a success.
+    switching = { path: place.path, row, timer: null }
+    if (!conn.switchTo(place.cwd, wantResume)) return void fellSilent()
+    switching.timer = setTimeout(fellSilent, SWITCH_ACK_MS)
+  }
+
+  for (const place of list) {
+    const row = document.createElement('div')
+    row.className = place.cwd === cwd ? 'place here' : 'place'
+
+    const name = document.createElement('span')
+    name.className = 'place-name'
+    name.textContent = place.name
+    const path = document.createElement('span')
+    path.className = 'place-path'
+    path.textContent = place.path
+
+    const head = document.createElement('button')
+    head.className = 'place-head'
+    head.append(name, path)
+
+    const actions = document.createElement('div')
+    actions.className = 'place-actions'
+    actions.hidden = true
+    actions.append(placeAction('Start here', () => go(place, false, row)))
+    // Only where continuing means something. `--continue` is pi's flag, and the
+    // server serves whatever program it was given.
+    if (resume) actions.append(placeAction('Continue here', () => go(place, true, row)))
+
+    head.addEventListener('click', () => {
+      const opening = actions.hidden
+      closePlaces()
+      actions.hidden = !opening
+      row.classList.toggle('open', opening)
+    })
+
+    row.append(head, actions)
+    places.append(row)
+  }
+}
+
+// Long enough to cover a real switch — the outgoing program gets a two-second
+// grace before it is killed, and the new one has to start after that — so this
+// is not a deadline the ordinary case can trip over.
+const SWITCH_ACK_MS = 5000
+
+let switching = null
+
+/**
+ * The title, restated with the new folder, is the server saying it happened.
+ *
+ * There is no acknowledgement frame and none is needed: a switch that worked
+ * always retitles, and matching the folder we asked for distinguishes it from
+ * the retitle a plain reconnection sends.
+ */
+function confirmSwitch(title) {
+  if (!switching || !title.endsWith(`— ${switching.path}`)) return
+  clearSwitching()
+  menu.hidden = true
+}
+
+/**
+ * Nothing came back. Not the same as knowing it failed — a switch that is
+ * merely slow still lands, and is still believed when it does, because this
+ * only marks the row and leaves the wait running.
+ */
+function fellSilent() {
+  switching.row.classList.remove('switching')
+  switching.row.classList.add('failed')
+}
+
+function clearSwitching() {
+  if (!switching) return
+  clearTimeout(switching.timer)
+  switching.row.classList.remove('switching')
+  switching = null
+}
+
+/** Collapse every row, so only one folder is ever asking to be chosen. */
+function closePlaces() {
+  for (const el of places.querySelectorAll('.place-actions')) el.hidden = true
+  for (const el of places.querySelectorAll('.place')) el.classList.remove('open')
+}
+
+function placeAction(label, act) {
+  const button = document.createElement('button')
+  button.textContent = label
+  button.addEventListener('click', act)
+  return button
 }
 
 /**
