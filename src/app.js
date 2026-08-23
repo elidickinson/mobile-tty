@@ -332,6 +332,44 @@ function onViewportChange() {
 const AT_BOTTOM_PX = 5
 const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < AT_BOTTOM_PX
 
+/** One scrollback line from the core, trailing blanks trimmed for compare. */
+const coreLine = (b, off) => {
+  let s = ''
+  const len = b.getScrollbackLineLen(off)
+  for (let c = 0; c < len; c++) s += String.fromCodePoint(b.getScrollbackCell(off, c).char)
+  return s.replace(/\s+$/, '')
+}
+
+// Enough rows that a coincidental match elsewhere in the ring is not a thing;
+// few enough that locating the tail stays cheap.
+const TURN_WINDOW = 16
+
+/**
+ * How many lines the ring has taken on since the DOM last drew it.
+ *
+ * Only answerable where the bug lives: a growing count keeps every drawn row
+ * where it is (new rows append below the old ones), so nothing needs undoing
+ * and the answer is zero by construction. At the cap the count is pinned and
+ * the rotation is invisible to arithmetic — but the DOM's newest row names a
+ * line, and how deep that line now sits in the ring is exactly the rotation.
+ * Compared as a block so a repeated row (a blank, a rule) cannot fake a match;
+ * the first block found wins, which can only undercount.
+ *
+ * Zero also means "gone": past the point where the tail could sit, the lines
+ * the reader might have been on have fallen out of the ring entirely.
+ */
+const ringTurn = (b, els, oldCount) => {
+  const tail = []
+  for (let m = 0; m < TURN_WINDOW && m < oldCount; m++) {
+    tail.push(els[oldCount - 1 - m].textContent.replace(/\s+$/, ''))
+  }
+  const count = b.getScrollbackCount()
+  for (let turn = 0; turn + tail.length <= count; turn++) {
+    if (tail.every((text, m) => coreLine(b, turn + m) === text)) return turn
+  }
+  return 0
+}
+
 /**
  * wterm decides whether to redraw scrollback by comparing the core's line count
  * against the count it last drew. The core's scrollback is a ring capped at 1000
@@ -339,19 +377,40 @@ const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHei
  * scrollback freezes: history from the moment the buffer filled, spliced onto
  * the live grid, until a reload. See eli/wterm-scrollback-bug.md.
  *
- * Lying to the renderer about what it has drawn makes it redraw the lot.
+ * Lying to the renderer about what it has drawn makes it redraw the lot — and
+ * redrawing the lot moves everything up by the rotation, so the position put
+ * back has to hold the reader's line, not the reader's pixel: the box steps up
+ * by the same distance the content did.
  */
 function rebuildScrollback() {
   const r = term.renderer
-  // The rebuild produces the same number of rows it replaces, so the position
-  // survives the swap — though the content under it has moved on, which is the
-  // whole point of refreshing.
+  const b = term.bridge
+  const count = b.getScrollbackCount()
+  const oldCount = r._renderedScrollbackCount
   const top = screen.scrollTop
+  // The height a row actually renders at, not the app's own cell metric: the
+  // two are measured separately (ceil vs round) and a pixel off per row, times
+  // the rotation, would land the reader between lines. offsetHeight is layout
+  // px, so zoom's transform does not scale it.
+  const rowH = r._scrollbackRowEls.length
+    ? r._scrollbackRowEls[r._scrollbackRowEls.length - 1].offsetHeight
+    : state.cell.height
+
+  // A view parked in the grid has no scrollback under it to move; a growing
+  // count moves nothing already drawn. Only a pinned count under a parked
+  // reader rotates.
+  const turn = count === oldCount && top < oldCount * rowH
+    ? ringTurn(b, r._scrollbackRowEls, oldCount)
+    : 0
+
   for (const el of r._scrollbackRowEls) el.remove()
   r._scrollbackRowEls = []
   r._renderedScrollbackCount = 0
-  r.syncScrollback(term.bridge)
-  screen.scrollTop = top
+  r.syncScrollback(b)
+
+  // Clamped at zero, the line has fallen out of the ring and the oldest
+  // survivor is the best on offer.
+  screen.scrollTop = Math.max(0, top - turn * rowH)
 }
 
 // Rebuilding a full buffer costs about 6ms, so it happens once on the way into

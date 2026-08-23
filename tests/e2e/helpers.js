@@ -110,6 +110,71 @@ export const settled = async page => {
 
 export const scrollbackCount = page => page.evaluate(() => window.mtty.term.bridge.getScrollbackCount())
 
+/**
+ * Sample the scroller and the line under a fixed eye-point, every frame.
+ *
+ * A reading position is two facts: where the box is (scrollTop) and which line
+ * sits at the top of it. The squirm being chased can move either while no
+ * finger is down, and it lasts a frame or two — so nothing that asserts after
+ * the fact can see it. The trace makes it countable instead.
+ *
+ * `eye` is the row under a fixed point 60px into the screen: literally the line
+ * the reader is looking at, independent of how scrollTop or row indices move.
+ * The fixture numbers every line uniquely, so `head` is an identity — content
+ * sliding under a still box shows up as an identity change even when the row
+ * count, the scrollHeight and the scrollTop are all unchanged (the rebuild's
+ * signature). `height` separates the other suspect: growing geometry is the
+ * below-cap append path, frozen geometry with moving content is the rebuild.
+ *
+ * `parkAt` sets scrollTop in the same turn the sampler starts, so the first
+ * sample is taken before app.js's 80ms scrollback-rebuild timer can fire.
+ */
+export const startScrollTrace = (page, { parkAt } = {}) => page.evaluate(fraction => {
+  cancelAnimationFrame(window.__traceRaf)
+  const screen = document.getElementById('screen')
+  if (fraction !== undefined) {
+    const max = screen.scrollHeight - screen.clientHeight
+    screen.scrollTop = Math.round(max * fraction)
+  }
+  const rect = screen.getBoundingClientRect()
+  const eyeX = rect.left + Math.min(200, rect.width / 2)
+  const eyeY = rect.top + 60
+  window.__trace = []
+  const sample = () => {
+    // A sample whose eye-point hits nothing is recorded as null, never
+    // synthesized from scrollTop: mid-rebuild is exactly when the point can
+    // go missing, and a synthesized identity would launder whatever moved the
+    // box into a matching trace. Consumers skip nulls.
+    const el = document.elementFromPoint(eyeX, eyeY)?.closest('.term-row') ?? null
+    window.__trace.push({
+      t: Math.round(performance.now()),
+      top: Math.round(screen.scrollTop),
+      height: screen.scrollHeight,
+      head: el?.textContent.slice(0, 24) ?? null,
+    })
+    window.__traceRaf = requestAnimationFrame(sample)
+  }
+  window.__traceRaf = requestAnimationFrame(sample)
+}, parkAt)
+
+/** Stop sampling and hand back the trace; samples carry test-local time. */
+export const stopScrollTrace = page => page.evaluate(() => {
+  cancelAnimationFrame(window.__traceRaf)
+  const trace = window.__trace ?? []
+  window.__trace = null
+  return trace
+})
+
+/** The line number in a traced head; NaN when the row is not fixture-numbered. */
+export const lineNo = head => Number(/(?:scrollback|stream) line (\d+)/.exec(head)?.[1] ?? NaN)
+
+/** Widest swing in line identity over the trace, from its first sample. */
+export const maxHeadShift = trace => {
+  const base = lineNo(trace[0]?.head)
+  if (Number.isNaN(base)) return NaN
+  return trace.reduce((m, s) => s.head == null ? m : Math.max(m, Math.abs(lineNo(s.head) - base)), 0)
+}
+
 // Push real history above the fold. `/lines` makes the fixture scroll a fixed
 // block off the top, so the depth does not depend on the grid or on how many
 // keystrokes survive a busy machine.

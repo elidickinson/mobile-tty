@@ -68,11 +68,35 @@ while true; do
     case "${ch:-$'\n'}" in
       $'\r'|$'\n')
         [[ "$buf" == '/quit' ]] && break
-        if [[ "$buf" == '/lines' ]]; then
+        if [[ "$buf" == '/lines'* ]]; then
           # Scroll real lines off the top so the client accrues scrollback. The
           # redraw below clears the screen but not the scrollback (no \e[3J),
-          # so these survive above the fold.
-          for ((i = 0; i < 80; i++)); do printf 'scrollback line %d\r\n' "$i"; done
+          # so these survive above the fold. A count past 1000 also saturates
+          # the client's ring, where history stops appending and starts
+          # rotating.
+          count=${buf#/lines}
+          for ((i = 0; i < ${count:-80}; i++)); do printf 'scrollback line %d\r\n' "$i"; done
+          buf=''
+        elif [[ "$buf" == '/stream'* ]]; then
+          # A line every 100ms: the shape of pi writing a long answer. Each line
+          # is a real newline on the bottom row, so the screen scrolls and the
+          # top of the transcript lands in the client's scrollback — that
+          # rotation under a reader is the point. draw() then repaints the tail
+          # and the input box, as pi does after appending. bash 3.2's read -t
+          # takes no fraction, so the tick is /bin/sleep.
+          count=${buf#/stream}
+          for ((i = 0; i < ${count:-40}; i++)); do
+            history+=("stream line $i")
+            # Size is read per tick, not from $size: the poll loop only
+            # refreshes that when input has been idle for a second, and aiming
+            # the bottom-row newline at a stale row scrolls nothing — the whole
+            # point of the command.
+            read -r rows cols <<< "$(stty size)"
+            printf '\e[%d;1Hstream line %d\r\n' "$rows" "$i"
+            draw
+            kill -0 "$ttyd" 2>/dev/null || break
+            sleep 0.1
+          done
           buf=''
         else
           history+=("> $buf" "ok: ${#buf} chars")
