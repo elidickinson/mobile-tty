@@ -81,36 +81,47 @@ test('a zoomed scroller keeps the reader through the same rebuild', async ({ pag
   expect(maxHeadShift(trace)).toBe(0)
 })
 
-test('parking between a write and its render does not snap back to the bottom', async ({ page }) => {
+test('a parked reader does not creep with output after the rebuild', async ({ page }) => {
   await ready(page)
   await fillScrollback(page)
 
-  // wterm decides follow-output when the write arrives but acts on it a frame
-  // later, so a write that lands while the box is at the bottom holds a
-  // "pin this" decision through the moment the reader scrolls up — and its
-  // render then yanks the box back down. Reproduce the bracket deliberately:
-  // park as soon as a streaming write is seen, inside that frame.
-  await page.evaluate(() => {
-    const t = window.mtty.term
-    const orig = t.write.bind(t)
-    window.__writeSeen = false
-    t.write = d => { window.__writeSeen = true; return orig(d) }
-  })
+  // The rebuild detaches every scrollback row — the engine's scroll anchor
+  // included — and WebKit then anchors on a live grid row below the insertion
+  // point, so every later history append pushes the anchor down and walks the
+  // box with it: one row per line of output, forever. Anchoring is off on the
+  // scroller (style.css), so park, let the rebuild fire, and hold the spot
+  // through more output.
   await stream(page, 40)
-  await page.waitForFunction(() => window.__writeSeen)
   await startScrollTrace(page, { parkAt: 0.3 })
-  await page.waitForTimeout(600)
+  await page.waitForTimeout(900)               // rebuild at +200ms, then ticks
   const trace = await stopScrollTrace(page)
 
-  const dom = await page.evaluate(() => {
-    const screen = document.getElementById('screen')
-    const rows = [...screen.querySelectorAll('.term-row')]
-    const find = n => rows.findIndex(r => r.textContent.trim() === `scrollback line ${n}`)
-    const sb = rows.filter(r => r.classList.contains('term-scrollback-row')).length
-    return { top: Math.round(screen.scrollTop), sb, n0: find(0), n1: find(1), off0: rows[find(0)]?.offsetTop, off10: rows[find(10)]?.offsetTop }
-  })
-  console.log('DOM', JSON.stringify(dom), 'firstTop', trace[0].top, 'lastTop', trace[trace.length-1].top)
+  const rowH = await page.evaluate(() => window.mtty.state.cell.height)
+  const max = Math.max(...trace.map(s => s.top))
   expect(max).toBeLessThan(trace[0].top + rowH)   // the box never left the park
+})
+
+test('a park inside the write-to-render bracket is not snapped to the bottom', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+
+  // wterm decides follow-output when a write arrives but acts a frame later,
+  // so a write that lands while the box is at the bottom holds its decision
+  // through the moment the reader scrolls up, and the render yanks them back
+  // down. The bracket is real time — park from inside the page in the same
+  // timer drain as wterm's own, before its rAF; a round trip from the test
+  // would land after the render and test nothing.
+  const held = await page.evaluate(() => new Promise(resolve => {
+    const screen = document.getElementById('screen')
+    const parked = Math.round((screen.scrollHeight - screen.clientHeight) * 0.3)
+    const t = window.mtty.term
+    t.write('a line that latches the pin\r\n')
+    setTimeout(() => {
+      screen.scrollTop = parked
+      setTimeout(() => resolve(Math.abs(screen.scrollTop - parked) < 5), 350)
+    }, 0)
+  }))
+  expect(held).toBe(true)
 })
 
 test('a growing scrollback does not push content past a parked reader', async ({ page }) => {
