@@ -1,6 +1,7 @@
 // The client: wires the terminal to the socket, and owns the layout, the key
 // bar, the menu and the on-screen diagnostics.
 import { WTerm } from '@wterm/dom'
+import { WasmBridge } from '@wterm/core'
 import { TtydConnection } from './transport.js'
 import { readViewport, deriveLayout, gridFor, measureCell, KEY_BAR_H } from './viewport.js'
 import { keySequence } from './keys.js'
@@ -252,6 +253,7 @@ function applyServerSize(cols, rows) {
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
+  meter?.resize(cols, rows)             // wrapping is width-dependent, so the meter must match
   sizeScreen()
   if (share !== null) keepReading(share)
 }
@@ -461,7 +463,19 @@ const HELD_MAX = 4 * 1024 * 1024
 const TO_BOTTOM_LABEL = toBottom.textContent
 const held = []
 let heldBytes = 0
-let heldLines = 0
+// An honest "N new" needs a terminal, not byte arithmetic: a repainting
+// program emits a newline per rewritten row while scrolling nothing, and
+// wrapping emits none while scrolling plenty. A second core, fed the held
+// bytes out-of-band, scrolls for real — its scrollback count IS the rows the
+// stream would have pushed past the eye. That count pins at the ring cap;
+// "1000+" is all a reader that far behind needs to know.
+let meter = null
+const ED3 = new Uint8Array([0x1b, 0x5b, 0x33, 0x4a])
+
+const labelHeld = () => {
+  const n = meter.getScrollbackCount()
+  toBottom.textContent = n >= 1000 ? '↓ 1000+ new' : `↓ ${n} new`
+}
 // Set on (re)connect: the first output frame is the server's snapshot — a
 // screen reset and scrollback wipe — which must land, never queue. Held, it
 // would leave the reader looking at a pre-drop screen that the return to
@@ -472,11 +486,11 @@ function flushHeld() {
   // Shift-per-write, not splice-then-write: a write that throws mid-replay
   // costs the rest of the queue, not the whole of it.
   while (held.length) {
-    const chunk = held.shift()
-    heldBytes -= chunk.bytes.length
-    heldLines -= chunk.lines
-    term.write(chunk.bytes)
+    const bytes = held.shift()
+    heldBytes -= bytes.length
+    term.write(bytes)
   }
+  meter.writeRaw(ED3)                 // scrollback count back to zero
   toBottom.textContent = TO_BOTTOM_LABEL
   applyPendingGrid()
 }
@@ -485,7 +499,7 @@ function flushHeld() {
 function dropHeld() {
   held.length = 0
   heldBytes = 0
-  heldLines = 0
+  meter.writeRaw(ED3)
   toBottom.textContent = TO_BOTTOM_LABEL
 }
 
@@ -501,23 +515,15 @@ function deliver(bytes) {
   // that race: whatever is held goes first, always.
   if (held.length && atBottom()) flushHeld()
   if (atBottom()) { term.write(bytes); applyPendingGrid(); return }
-  held.push({ bytes, lines: countLines(bytes) })
+  held.push(bytes)
   heldBytes += bytes.length
-  heldLines += held[held.length - 1].lines
+  meter.writeRaw(bytes)
   // Past the cap this is a memory valve, nothing more: the wave lands where
   // the box stands and the hold resumes with the next chunk. No rebuild is
   // re-armed for it — a reader this far ahead of the stream is not reading,
   // and the once-per-visit pass happens on the way back down regardless.
   if (heldBytes > HELD_MAX) flushHeld()
-  else toBottom.textContent = `↓ ${heldLines} new`
-}
-
-// A newline byte cannot appear inside a multi-byte UTF-8 sequence, so
-// counting 0x0a over raw bytes cannot split one.
-const countLines = bytes => {
-  let n = 0
-  for (let i = 0; i < bytes.length; i++) n += bytes[i] === 10
-  return n
+  else labelHeld()
 }
 
 // The one rebuild each visit still has to happen: the fossil formed while
@@ -946,6 +952,8 @@ async function main() {
   setScale(1)
 
   await term.init()
+  meter = await WasmBridge.load()
+  meter.init(state.cols, state.rows)
 
   // The renderer's state is private to TypeScript only, so reaching into it is
   // safe but not guaranteed. If an upgrade renames any of it the refresh turns
