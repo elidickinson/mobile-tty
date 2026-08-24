@@ -144,6 +144,72 @@ test('a park inside the write-to-render bracket is not snapped to the bottom', a
   expect(held).toBe(true)
 })
 
+test('a keystroke while held returns to live rather than type blind', async ({ page }) => {
+  await ready(page)
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('/lines 600')
+  await ta.press('Enter')
+  await settled(page)
+
+  // Park until the hold is counting, then type: wterm's own keystroke jump
+  // returns the box to the bottom, the hold flushes from there, and the echo
+  // renders instead of queueing behind the reader's back.
+  await stream(page, 40)
+  await startScrollTrace(page, { parkAt: 0.5 })
+  await expect(page.locator('#to-bottom')).toContainText(/\d+ new/)
+
+  await ta.pressSequentially('echo typed-live')
+  await expect.poll(() => page.evaluate(() => {
+    const screen = document.getElementById('screen')
+    return screen.scrollHeight - screen.scrollTop - screen.clientHeight < 5
+  })).toBe(true)
+  await expect(page.locator('#to-bottom')).toHaveText('↓ latest')
+  // fake-pi reads input between stream ticks, so the echo trails the stream.
+  await expect.poll(() => page.evaluate(() => {
+    const rows = [...document.getElementById('screen').querySelectorAll('.term-row')].slice(-14)
+    return rows.map(r => r.textContent).join('\n')
+  }), { timeout: 12_000 }).toContain('typed-live')
+  await stopScrollTrace(page)
+})
+
+test('a reconnect snapshot lands rather than queue behind a parked reader', async ({ page }) => {
+  await ready(page)
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('/lines 600')
+  await ta.press('Enter')
+  await settled(page)
+
+  await stream(page, 40)
+  await startScrollTrace(page, { parkAt: 0.5 })
+  await expect(page.locator('#to-bottom')).toContainText(/\d+ new/)
+  await page.waitForTimeout(600)               // let the visit's rebuild land first
+  const eye = () => page.evaluate(() => {
+    const screen = document.getElementById('screen')
+    const rect = screen.getBoundingClientRect()
+    const el = document.elementFromPoint(rect.left + Math.min(200, rect.width / 2), rect.top + 60)?.closest('.term-row')
+    return el?.textContent ?? null
+  })
+  const parkedOn = await eye()
+  expect(parkedOn).toMatch(/scrollback line \d+/)
+  const tall = await page.evaluate(() => document.getElementById('screen').scrollHeight)
+
+  // Drop the socket from inside, the way a sleep/wake does from outside.
+  // The snapshot the server sends on reconnect serializes the whole screen
+  // with scrollback, and wterm renders it as an append of whatever the mirror
+  // is ahead by — so the parked view survives, and the proof the snapshot
+  // landed (rather than queueing behind the parked reader) is the geometry
+  // growing while the reader never left history. Held, nothing can grow.
+  await page.evaluate(() => window.mtty.conn.ws.close())
+  // Anchored: "disconnected" contains "connected" as a substring.
+  await expect.poll(() => page.locator('#menu-state').textContent(), { timeout: 10_000 }).toMatch(/^connected/)
+  await expect.poll(() => page.evaluate(() => document.getElementById('screen').scrollHeight), { timeout: 5_000 }).toBeGreaterThan(tall)
+  expect(await eye()).toBe(parkedOn)
+
+  // The hold still works after the snapshot: parked means new output counts.
+  await expect.poll(() => page.locator('#to-bottom').textContent(), { timeout: 5_000 }).toMatch(/\d+ new/)
+  await stopScrollTrace(page)
+})
+
 test('a growing scrollback holds output rather than push past a parked reader', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')

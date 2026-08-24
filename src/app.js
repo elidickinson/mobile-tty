@@ -76,7 +76,11 @@ const conn = new TtydConnection({
   onSize: ({ cols, rows }) => applyServerSize(cols, rows),
   onFooter: showFooter,
   onPlaces: showPlaces,
-  onState: showConnection,
+  onState: status => {
+    if (status === 'disconnected') dropHeld()
+    if (status === 'connected') snapshotPending = true
+    showConnection(status)
+  },
 })
 
 /** The menu is hidden by default, so connection state has to live outside it. */
@@ -458,38 +462,62 @@ const TO_BOTTOM_LABEL = toBottom.textContent
 const held = []
 let heldBytes = 0
 let heldLines = 0
+// Set on (re)connect: the first output frame is the server's snapshot — a
+// screen reset and scrollback wipe — which must land, never queue. Held, it
+// would leave the reader looking at a pre-drop screen that the return to
+// the bottom then destroys without ever having shown the new one.
+let snapshotPending = false
 
 function flushHeld() {
-  if (!held.length) return
-  const chunks = held.splice(0)
+  // Shift-per-write, not splice-then-write: a write that throws mid-replay
+  // costs the rest of the queue, not the whole of it.
+  while (held.length) {
+    const chunk = held.shift()
+    heldBytes -= chunk.bytes.length
+    heldLines -= chunk.lines
+    term.write(chunk.bytes)
+  }
+  toBottom.textContent = TO_BOTTOM_LABEL
+  applyPendingGrid()
+}
+
+/** The hold is dropped, not flushed, on a disconnect: the reconnect snapshot supersedes it. */
+function dropHeld() {
+  held.length = 0
   heldBytes = 0
   heldLines = 0
   toBottom.textContent = TO_BOTTOM_LABEL
-  // A flush while parked is the memory-cap release below; the wave it lands
-  // is new content, so the next quiet spell gets another defossil pass.
-  refreshedVisit = false
-  for (const bytes of chunks) term.write(bytes)
-  applyPendingGrid()
-  if (!atBottom()) armRefresh()
 }
 
 function deliver(bytes) {
+  if (snapshotPending) {
+    snapshotPending = false
+    term.write(bytes)
+    applyPendingGrid()
+    return
+  }
   // The scroll event normally flushes on return to the bottom, but its
   // dispatch can trail the next chunk, and replay order must not depend on
   // that race: whatever is held goes first, always.
   if (held.length && atBottom()) flushHeld()
   if (atBottom()) { term.write(bytes); applyPendingGrid(); return }
-  held.push(bytes)
+  held.push({ bytes, lines: countLines(bytes) })
   heldBytes += bytes.length
-  // A newline byte cannot appear inside a multi-byte UTF-8 sequence, so
-  // counting 0x0a over raw bytes cannot split one.
-  for (let i = 0; i < bytes.length; i++) heldLines += bytes[i] === 10
-  // Past the cap, liveness wins over a reader who has, in effect, stopped
-  // reading: the hold flushes where it stands (below the cap rows append
-  // beneath a parked reader without moving them; at the cap the DOM is
-  // frozen either way) and the hold resumes with the next chunk.
+  heldLines += held[held.length - 1].lines
+  // Past the cap this is a memory valve, nothing more: the wave lands where
+  // the box stands and the hold resumes with the next chunk. No rebuild is
+  // re-armed for it — a reader this far ahead of the stream is not reading,
+  // and the once-per-visit pass happens on the way back down regardless.
   if (heldBytes > HELD_MAX) flushHeld()
   else toBottom.textContent = `↓ ${heldLines} new`
+}
+
+// A newline byte cannot appear inside a multi-byte UTF-8 sequence, so
+// counting 0x0a over raw bytes cannot split one.
+const countLines = bytes => {
+  let n = 0
+  for (let i = 0; i < bytes.length; i++) n += bytes[i] === 10
+  return n
 }
 
 // The one rebuild each visit still has to happen: the fossil formed while
