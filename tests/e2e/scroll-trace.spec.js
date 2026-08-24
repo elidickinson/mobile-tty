@@ -1,9 +1,8 @@
-// The squirm: reading history while output streams in. Two regimes, one
-// assertion each — the line under the reader's eye must keep its identity.
-// A saturated ring freezes the rendered history (geometry constant, content
-// swapped under it by the rebuild); a ring below the cap grows it (appends
-// above the reader). The trace's `height` field tells the two apart, `head`
-// says whether what the eye sees moved.
+// The squirm: reading history while output streams in. The answer is to
+// hold: output that arrives while the reader is parked is buffered, not
+// rendered, and replays in order when they return to the bottom. One rebuild
+// per visit unfreezes whatever the ring cap had fossilized before they
+// scrolled up; after it, nothing moves — the trace asserts exactly that.
 //
 // What this cannot cover: iOS flick momentum. Playwright WebKit has no touch
 // physics, so the momentum-killing half of the rebuild bug is on-device only;
@@ -21,17 +20,16 @@ const stream = async (page, lines) => {
 // when the reader settles on a line. Parking first would saturate-and-freeze
 // before any rotation — the rebuild would have nothing to swap, and the test
 // would pass with the bug live.
-const STREAM_TICK_MS = 100   // the fixture's /stream cadence: one line off the top per tick
 const TRACE_MS = 2500
 
 const parkAndTrace = async (page, at) => {
   await page.waitForTimeout(1200)               // ring rotates ~12 lines first
   await startScrollTrace(page, { parkAt: at })  // first sample beats the refresh timer
-  await page.waitForTimeout(TRACE_MS)           // several rebuilds land inside the window
+  await page.waitForTimeout(TRACE_MS)           // rebuild lands; the stream is held
   return stopScrollTrace(page)
 }
 
-test('a saturated scrollback does not swap content under a parked reader', async ({ page }) => {
+test('a saturated scrollback holds output rather than swap content under a parked reader', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')
   await ta.pressSequentially('/lines 1200')     // fill the 1000-line ring past its cap
@@ -44,38 +42,40 @@ test('a saturated scrollback does not swap content under a parked reader', async
   // Preconditions, so a bad park fails as one rather than as NaN arithmetic.
   expect(trace[0].head).toMatch(/(?:scrollback|stream) line \d+/)
 
-  // Frozen geometry is this regime's signature — it is what makes the content
-  // swap invisible to every position-only assertion. The rebuild keeps the
-  // reader's line by stepping the box to meet it, so the claim is not that the
-  // box never moves but that every move is a whole number of rows and the line
-  // under the eye never changes.
+  // Frozen geometry is this regime's signature — it is what made the content
+  // swap invisible to every position-only assertion. Holding output freezes
+  // it for real: after the rebuild's one correction, nothing is being
+  // rendered, so nothing can move.
   const heights = trace.map(s => s.height)
   expect(Math.max(...heights)).toBe(Math.min(...heights))
   const rowH = await page.evaluate(() => window.mtty.state.cell.height)
   const steps = []
   for (let i = 1; i < trace.length; i++) {
-    if (trace[i].top !== trace[i - 1].top) steps.push({ px: trace[i].top - trace[i - 1].top, at: trace[i].t })
+    if (trace[i].top !== trace[i - 1].top) steps.push(trace[i].top - trace[i - 1].top)
   }
-  for (const step of steps) expect(Math.abs(step.px % rowH)).toBe(0)   // abs: -340 % 17 is -0
-
-  // Rebuilds repeat while output arrives — that is what keeps history live
-  // under the reader instead of leaving a fossil spliced onto the grid — so
-  // the window holds several, not one.
-  expect(steps.length).toBeGreaterThan(3)
-
-  // The first step is the correction, and it is unbounded on purpose: a frozen
-  // render can be a non-contiguous splice, so the reader's line can sit
-  // hundreds of rows from where the stale geometry put it. Every step after it
-  // is the ring rotating under a still reader, which only ever moves the box
-  // up, and never further than the stream has fed in the meantime. A jump
-  // there would mean a rebuild landed somewhere else in history.
-  for (let i = 1; i < steps.length; i++) {
-    const rotated = (steps[i].at - steps[i - 1].at) / STREAM_TICK_MS
-    expect(steps[i].px).toBeLessThan(0)
-    expect(-steps[i].px / rowH).toBeLessThanOrEqual(rotated + 1)
-  }
-
+  // At most one step — the rebuild landing the eye's line, unbounded on
+  // purpose because a frozen render can be a non-contiguous splice — and a
+  // whole number of rows. A second step would mean output leaked past the
+  // hold and moved the box.
+  expect(steps.length).toBeLessThanOrEqual(1)
+  for (const px of steps) expect(Math.abs(px % rowH)).toBe(0)   // abs: -340 % 17 is -0
   expect(maxHeadShift(trace)).toBe(0)
+
+  // The stream fed the whole window and none of it rendered: it is waiting.
+  await expect(page.locator('#to-bottom')).toContainText(/\d+ new/)
+
+  // Returning to the bottom replays it, newest last — into the live grid.
+  // The poll watches the rows, not the button: the flush resets the label
+  // before wterm renders the bytes, so only the DOM proves the replay landed.
+  await page.evaluate(() => {
+    const screen = document.getElementById('screen')
+    screen.scrollTop = screen.scrollHeight
+  })
+  const newestIn = () => page.evaluate(() => {
+    const rows = [...document.getElementById('screen').querySelectorAll('.term-row')].slice(-40)
+    return Math.max(...rows.map(r => Number(/(?:scrollback|stream) line (\d+)/.exec(r.textContent)?.[1])).filter(Number.isFinite), 0)
+  })
+  await expect.poll(newestIn).toBeGreaterThanOrEqual(30)
 })
 
 test('a zoomed scroller keeps the reader through the same rebuild', async ({ page }) => {
@@ -113,7 +113,7 @@ test('a parked reader does not creep with output after the rebuild', async ({ pa
   // through more output.
   await stream(page, 40)
   await startScrollTrace(page, { parkAt: 0.3 })
-  await page.waitForTimeout(900)               // rebuild at +200ms, then ticks
+  await page.waitForTimeout(900)               // rebuild at +400ms, then held ticks
   const trace = await stopScrollTrace(page)
 
   const rowH = await page.evaluate(() => window.mtty.state.cell.height)
@@ -144,10 +144,10 @@ test('a park inside the write-to-render bracket is not snapped to the bottom', a
   expect(held).toBe(true)
 })
 
-test('a growing scrollback does not push content past a parked reader', async ({ page }) => {
+test('a growing scrollback holds output rather than push past a parked reader', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')
-  await ta.pressSequentially('/lines 600')      // below the cap: appends, no rotation
+  await ta.pressSequentially('/lines 600')      // below the cap: nothing fossilized
   await ta.press('Enter')
   await settled(page)
 
@@ -156,11 +156,22 @@ test('a growing scrollback does not push content past a parked reader', async ({
 
   expect(trace[0].head).toMatch(/(?:scrollback|stream) line \d+/)
 
-  // Geometry grows here — that is the point of the regime — but the reader's
-  // line must stay put, and with nothing rotating there is no step to forgive:
-  // the box holds still too.
-  expect(trace[trace.length - 1].height).toBeGreaterThan(trace[0].height)
+  // Below the cap the unfixed behavior appends rows beneath the reader —
+  // growth without movement. Held output does not even grow: the reader is
+  // parked over a terminal that has paused.
+  const heights = trace.map(s => s.height)
+  expect(Math.max(...heights)).toBe(Math.min(...heights))
   const tops = trace.map(s => s.top)
   expect(Math.max(...tops)).toBe(Math.min(...tops))
   expect(maxHeadShift(trace)).toBe(0)
+
+  await expect(page.locator('#to-bottom')).toContainText(/\d+ new/)
+
+  // The flush lands the held rows: growth resumes, beneath and unseen.
+  const before = trace[trace.length - 1].height
+  await page.evaluate(() => {
+    const screen = document.getElementById('screen')
+    screen.scrollTop = screen.scrollHeight
+  })
+  await expect.poll(() => page.evaluate(() => document.getElementById('screen').scrollHeight)).toBeGreaterThan(before)
 })

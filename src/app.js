@@ -66,7 +66,7 @@ const conn = new TtydConnection({
   url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
   schedule: (fn, ms) => setTimeout(fn, ms),
-  onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); noteOutput(); applyPendingGrid() },
+  onOutput: bytes => { lastOutput = Date.now(); deliver(bytes) },
   // The title is only restated when the session is (a fresh admission, or a
   // switch to another folder), and the strip belongs to whichever program was
   // running before that. Drop it rather than leave the last one's model and
@@ -446,30 +446,71 @@ function rebuildScrollback() {
   screen.scrollTop = parkTop()
 }
 
-// While the reader is in history the scrollback has to stay live — at the
-// ring cap wterm stops appending, so without rebuilds the reader is parked
-// over a fossil that meets flowing grid text at the seam. The rebuild
-// re-arms on output and holds the reader's line by content, so history
-// updates under a still eye, the way a terminal reads while output runs.
-//
-// Three guards shape when it fires. It waits for a quiet spell in scroll
-// events — drag, deceleration, rubber-band all stream events, and each one
-// restarts the wait — because writing scrollTop mid-momentum does not just
-// cancel the flick: iOS can wedge the scroller on a programmatic change
-// during deceleration, leaving a dead view with no way back to the bottom.
-// And it only fires when output has actually arrived since the last one:
-// the step a rebuild itself takes emits a scroll event, and without the
-// dirty check that event would arm the next rebuild in a loop of its own.
-const REFRESH_AFTER_MS = 400
-let sbWrites = 0
-let sbRefreshedAt = 0
-let refresh = null
+// Reading beats liveness. Output that arrives while the reader is up in
+// history is held back rather than rendered under them: at the ring cap the
+// rendered scrollback is a fossil, so a flowing stream reads as history that
+// lies next to a grid that moves — the seam this section exists to close.
+// Holding pauses the terminal rather than corrupting it: bytes replay in
+// order the moment the reader returns to the bottom, and the button that
+// offers the way back counts what is waiting.
+const HELD_MAX = 4 * 1024 * 1024
+const TO_BOTTOM_LABEL = toBottom.textContent
+const held = []
+let heldBytes = 0
+let heldLines = 0
 
-// The third guard, and the one no scroll event can express: iOS sends nothing
-// while a finger rests mid-drag, so the quiet spell elapses with the touch
-// still on the glass — and a programmatic scrollTop plus a teardown of every
-// row, inside WebKit's own gesture tracking, is exactly what wedges the
-// scroller. Held by pointer id so a release outside the element still counts.
+function flushHeld() {
+  if (!held.length) return
+  const chunks = held.splice(0)
+  heldBytes = 0
+  heldLines = 0
+  toBottom.textContent = TO_BOTTOM_LABEL
+  // A flush while parked is the memory-cap release below; the wave it lands
+  // is new content, so the next quiet spell gets another defossil pass.
+  refreshedVisit = false
+  for (const bytes of chunks) term.write(bytes)
+  applyPendingGrid()
+  if (!atBottom()) armRefresh()
+}
+
+function deliver(bytes) {
+  // The scroll event normally flushes on return to the bottom, but its
+  // dispatch can trail the next chunk, and replay order must not depend on
+  // that race: whatever is held goes first, always.
+  if (held.length && atBottom()) flushHeld()
+  if (atBottom()) { term.write(bytes); applyPendingGrid(); return }
+  held.push(bytes)
+  heldBytes += bytes.length
+  // A newline byte cannot appear inside a multi-byte UTF-8 sequence, so
+  // counting 0x0a over raw bytes cannot split one.
+  for (let i = 0; i < bytes.length; i++) heldLines += bytes[i] === 10
+  // Past the cap, liveness wins over a reader who has, in effect, stopped
+  // reading: the hold flushes where it stands (below the cap rows append
+  // beneath a parked reader without moving them; at the cap the DOM is
+  // frozen either way) and the hold resumes with the next chunk.
+  if (heldBytes > HELD_MAX) flushHeld()
+  else toBottom.textContent = `↓ ${heldLines} new`
+}
+
+// The one rebuild each visit still has to happen: the fossil formed while
+// the reader was at the bottom, and unfreezing it means redrawing the
+// scrollback and putting the reader's line back under the eye
+// (rebuildScrollback above). Two guards shape when. It waits for a quiet
+// spell in scroll events — drag, deceleration, rubber-band all stream
+// events, and each one restarts the wait — because writing scrollTop
+// mid-momentum does not just cancel the flick: iOS can wedge the scroller on
+// a programmatic change during deceleration, leaving a dead view with no way
+// back to the bottom. And it fires at most once per visit: output is held
+// while the reader is parked, so what it lands on cannot go stale again.
+const REFRESH_AFTER_MS = 400
+let refresh = null
+let refreshedVisit = false
+
+// The guard no scroll event can express: iOS sends nothing while a finger
+// rests mid-drag, so the quiet spell elapses with the touch still on the
+// glass — and a programmatic scrollTop plus a teardown of every row, inside
+// WebKit's own gesture tracking, is exactly what wedges the scroller. Held by
+// pointer id so a release outside the element still counts.
 const touching = new Set()
 screen.addEventListener('pointerdown', e => touching.add(e.pointerId), { passive: true })
 for (const ev of ['pointerup', 'pointercancel']) {
@@ -477,25 +518,21 @@ for (const ev of ['pointerup', 'pointercancel']) {
 }
 
 function armRefresh() {
+  if (refreshedVisit) return
   clearTimeout(refresh)
   refresh = setTimeout(() => {
-    if (touching.size) { armRefresh(); return }
     refresh = null
-    if (atBottom() || sbWrites === sbRefreshedAt) return
-    sbRefreshedAt = sbWrites
+    if (touching.size) return armRefresh()
+    if (atBottom() || refreshedVisit) return
+    refreshedVisit = true
     rebuildScrollback()
   }, REFRESH_AFTER_MS)
-}
-
-function noteOutput() {
-  sbWrites++
-  if (refresh === null && !atBottom()) armRefresh()
 }
 
 function onScroll() {
   const bottom = atBottom()
   toBottom.hidden = bottom
-  if (bottom) { clearTimeout(refresh); refresh = null; return }
+  if (bottom) { flushHeld(); clearTimeout(refresh); refresh = null; return }
   armRefresh()
 }
 
@@ -790,7 +827,7 @@ function diagnosticText() {
     `strip    ${footerText ?? 'off'}`,
     `term     ${Math.round(l.terminal.width)}x${Math.round(l.terminal.height)}  stable ${Math.round(l.stableHeight)}`,
     `scroll   top ${screen.scrollTop} of ${screen.scrollHeight} in ${screen.clientHeight}`,
-    `sb       ${sb}   domRows ${screen.querySelectorAll('.term-row').length}`,
+    `sb       ${sb}   domRows ${screen.querySelectorAll('.term-row').length}   held ${heldBytes}B`,
     `overflow ${getComputedStyle(screen).overflowY}   class ${screen.className}`,
   ].join('\n')
 }
