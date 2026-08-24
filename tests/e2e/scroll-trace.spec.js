@@ -9,7 +9,7 @@
 // physics, so the momentum-killing half of the rebuild bug is on-device only;
 // both symptoms share the same rebuildScrollback call, so the fix is driven
 // from here regardless.
-import { test, expect, ready, settled, startScrollTrace, stopScrollTrace, maxHeadShift } from './helpers.js'
+import { test, expect, ready, settled, fillScrollback, startScrollTrace, stopScrollTrace, maxHeadShift } from './helpers.js'
 
 const stream = async (page, lines) => {
   const ta = page.locator('#screen textarea')
@@ -79,6 +79,38 @@ test('a zoomed scroller keeps the reader through the same rebuild', async ({ pag
 
   expect(trace[0].head).toMatch(/(?:scrollback|stream) line \d+/)
   expect(maxHeadShift(trace)).toBe(0)
+})
+
+test('parking between a write and its render does not snap back to the bottom', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+
+  // wterm decides follow-output when the write arrives but acts on it a frame
+  // later, so a write that lands while the box is at the bottom holds a
+  // "pin this" decision through the moment the reader scrolls up — and its
+  // render then yanks the box back down. Reproduce the bracket deliberately:
+  // park as soon as a streaming write is seen, inside that frame.
+  await page.evaluate(() => {
+    const t = window.mtty.term
+    const orig = t.write.bind(t)
+    window.__writeSeen = false
+    t.write = d => { window.__writeSeen = true; return orig(d) }
+  })
+  await stream(page, 40)
+  await page.waitForFunction(() => window.__writeSeen)
+  await startScrollTrace(page, { parkAt: 0.3 })
+  await page.waitForTimeout(600)
+  const trace = await stopScrollTrace(page)
+
+  const dom = await page.evaluate(() => {
+    const screen = document.getElementById('screen')
+    const rows = [...screen.querySelectorAll('.term-row')]
+    const find = n => rows.findIndex(r => r.textContent.trim() === `scrollback line ${n}`)
+    const sb = rows.filter(r => r.classList.contains('term-scrollback-row')).length
+    return { top: Math.round(screen.scrollTop), sb, n0: find(0), n1: find(1), off0: rows[find(0)]?.offsetTop, off10: rows[find(10)]?.offsetTop }
+  })
+  console.log('DOM', JSON.stringify(dom), 'firstTop', trace[0].top, 'lastTop', trace[trace.length-1].top)
+  expect(max).toBeLessThan(trace[0].top + rowH)   // the box never left the park
 })
 
 test('a growing scrollback does not push content past a parked reader', async ({ page }) => {

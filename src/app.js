@@ -375,61 +375,92 @@ const ringTurn = (b, els, oldCount) => {
  * against the count it last drew. The core's scrollback is a ring capped at 1000
  * lines, so once it is full that number never changes again and the rendered
  * scrollback freezes: history from the moment the buffer filled, spliced onto
- * the live grid, until a reload. See eli/wterm-scrollback-bug.md.
+ * current output, until a reload. Worse, the freeze can leave a hole: when the
+ * ring saturates between two renders, wterm's append draws the newest lines
+ * and splices them onto the stale head, so the drawn rows are not even a
+ * contiguous run of history. See eli/wterm-scrollback-bug.md.
  *
  * Lying to the renderer about what it has drawn makes it redraw the lot — and
- * redrawing the lot moves everything up by the rotation, so the position put
- * back has to hold the reader's line, not the reader's pixel: the box steps up
- * by the same distance the content did.
+ * what the redraw means for position has to be answered for the row the reader
+ * is actually on, not for the buffer in aggregate. That row is matched by
+ * content in the redrawn DOM (the rotation measured at the tail is the search
+ * hint, not the answer, because a hole makes arithmetic off by the hole); the
+ * box is then set down so the same line sits at the same edge, sub-row offset
+ * and all. A line with no match has fallen out of the ring, and the oldest
+ * survivor is the best on offer.
  */
 function rebuildScrollback() {
   const r = term.renderer
   const b = term.bridge
   const count = b.getScrollbackCount()
+  const oldEls = r._scrollbackRowEls
   const oldCount = r._renderedScrollbackCount
   const top = screen.scrollTop
   // The height a row actually renders at, not the app's own cell metric: the
   // two are measured separately (ceil vs round) and a pixel off per row, times
   // the rotation, would land the reader between lines. offsetHeight is layout
   // px, so zoom's transform does not scale it.
-  const rowH = r._scrollbackRowEls.length
-    ? r._scrollbackRowEls[r._scrollbackRowEls.length - 1].offsetHeight
-    : state.cell.height
+  const rowH = oldEls.length ? oldEls[oldEls.length - 1].offsetHeight : state.cell.height
+  const eyeIdx = Math.floor(top / rowH)
+  const eyeFrac = top - eyeIdx * rowH
 
-  // A view parked in the grid has no scrollback under it to move; a growing
-  // count moves nothing already drawn. Only a pinned count under a parked
-  // reader rotates.
+  // The tail cannot sit in a hole, so it is where rotation is legible.
   const turn = count === oldCount && top < oldCount * rowH
-    ? ringTurn(b, r._scrollbackRowEls, oldCount)
+    ? ringTurn(b, oldEls, oldCount)
     : 0
 
-  for (const el of r._scrollbackRowEls) el.remove()
+  const parkTop = () => {
+    if (eyeIdx >= oldCount) return top              // parked in the grid: nothing above moved
+    const eyeText = oldEls[eyeIdx]?.textContent ?? ''
+    const probe = i => i >= 0 && i < r._scrollbackRowEls.length &&
+      r._scrollbackRowEls[i].textContent === eyeText
+    // Contiguous case: the hint lands on it at once. A hole means the row sits
+    // elsewhere (or nowhere); search outward through the whole buffer once.
+    const hint = eyeIdx - turn
+    let at = probe(hint) ? hint : -1
+    for (let d = 1; at < 0 && d < r._scrollbackRowEls.length; d++) {
+      if (probe(hint - d)) at = hint - d
+      else if (probe(hint + d)) at = hint + d
+    }
+    return at < 0 ? 0 : at * rowH + eyeFrac
+  }
+
+  for (const el of oldEls) el.remove()
   r._scrollbackRowEls = []
   r._renderedScrollbackCount = 0
   r.syncScrollback(b)
 
-  // Clamped at zero, the line has fallen out of the ring and the oldest
-  // survivor is the best on offer.
-  screen.scrollTop = Math.max(0, top - turn * rowH)
+  screen.scrollTop = parkTop()
 }
 
-// Rebuilding a full buffer costs about 6ms, so it happens once on the way into
-// history rather than on every write. Leaving it frozen while you read is the
-// point: what you are reading does not squirm as output keeps arriving, and the
-// gesture that refreshes it is the one that got you here. Deferred until the
-// drag settles — mutating a thousand rows mid-momentum loses the gesture.
-const REFRESH_AFTER_MS = 80
-let leftBottom = false
+// Rebuilding a full buffer costs about 6ms, so it happens once per visit
+// into history, after the scroll has ended, rather than on every write.
+// Leaving it frozen while you read is the point: what you are reading does
+// not squirm as output keeps arriving, and the gesture that refreshes it is
+// the one that got you here.
+//
+// "After the scroll has ended" is a quiet spell, not a fixed delay: scroll
+// events stream for as long as the box is moving — drag, deceleration,
+// rubber-band, all of it — so each one restarts the wait, and the rebuild
+// lands only once nothing has moved for a moment. Firing earlier writes
+// scrollTop mid-momentum, which does not just cancel the flick: iOS can
+// wedge the scroller on a programmatic change during deceleration, leaving
+// a view that ignores further scrolls — half frozen history, half live
+// grid, and no way back to the bottom without a reload. The step the rebuild
+// itself takes emits a scroll event, so the once-per-visit flag is what
+// keeps that event from arming another rebuild every quiet spell while
+// output streams.
+const REFRESH_AFTER_MS = 200
+let refreshedThisVisit = false
 let refresh = null
 
 function onScroll() {
   const bottom = atBottom()
   toBottom.hidden = bottom
-  if (bottom) { leftBottom = false; return }
-  if (leftBottom) return
-  leftBottom = true
+  if (bottom) { refreshedThisVisit = false; clearTimeout(refresh); return }
+  if (refreshedThisVisit) return
   clearTimeout(refresh)
-  refresh = setTimeout(rebuildScrollback, REFRESH_AFTER_MS)
+  refresh = setTimeout(() => { refreshedThisVisit = true; rebuildScrollback() }, REFRESH_AFTER_MS)
 }
 
 // ---------------------------------------------------------------- key bar
@@ -821,8 +852,22 @@ async function main() {
   const r = term.renderer
   if (!Array.isArray(r?._scrollbackRowEls) ||
       typeof r._renderedScrollbackCount !== 'number' ||
-      typeof r.syncScrollback !== 'function') {
+      typeof r.syncScrollback !== 'function' ||
+      typeof term._doRender !== 'function') {
     throw new Error('wterm renderer internals moved — the scrollback refresh needs rewriting')
+  }
+
+  // wterm decides follow-output when a write arrives — latching "was at the
+  // bottom" — but acts a frame later, so a write that lands while the reader
+  // is still at the bottom holds that decision through the moment they scroll
+  // up, and the render then snaps the box back down; mid-flick on a phone. A
+  // scroll event cannot void the latch in time (the queued render can beat the
+  // event's dispatch), so the render itself re-decides from where the box
+  // actually is. The keystroke jump is a different call site and stays as-is.
+  const renderOfRecord = term._doRender.bind(term)
+  term._doRender = () => {
+    if (term._shouldScrollToBottom && !term._isScrolledToBottom()) term._shouldScrollToBottom = false
+    renderOfRecord()
   }
 
   screen.addEventListener('scroll', onScroll)
