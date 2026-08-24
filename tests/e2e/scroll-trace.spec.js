@@ -10,6 +10,27 @@
 // from here regardless.
 import { test, expect, ready, settled, fillScrollback, startScrollTrace, stopScrollTrace, maxHeadShift } from './helpers.js'
 
+// How many rendered scrollback rows no longer match the core — the fossil
+// meter. At the ring cap the DOM freezes while the core rotates on, and a
+// reset+refill (a snapshot) leaves the count unchanged so nothing redraws;
+// only comparing rows to the core catches it.
+const fossilRows = page => page.evaluate(() => {
+  const b = window.mtty.term.bridge
+  const rows = [...document.getElementById('screen').querySelectorAll('.term-scrollback-row')]
+  const coreLine = off => {
+    let s = ''
+    const len = b.getScrollbackLineLen(off)
+    for (let c = 0; c < len; c++) s += String.fromCodePoint(b.getScrollbackCell(off, c).char)
+    return s.replace(/\s+$/, '')
+  }
+  let bad = 0
+  // Core offsets run newest-first; DOM rows run oldest-first.
+  for (let off = 0; off < rows.length; off++) {
+    if (rows[off].textContent.replace(/\s+$/, '') !== coreLine(rows.length - 1 - off)) bad++
+  }
+  return { bad, rows: rows.length, core: b.getScrollbackCount() }
+})
+
 const stream = async (page, lines) => {
   const ta = page.locator('#screen textarea')
   await ta.pressSequentially(`/stream ${lines}`)
@@ -175,38 +196,84 @@ test('a keystroke while held returns to live rather than type blind', async ({ p
 test('a reconnect snapshot lands rather than queue behind a parked reader', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')
-  await ta.pressSequentially('/lines 600')
+  await ta.pressSequentially('/lines 1400')     // saturate: the fossil regime
   await ta.press('Enter')
   await settled(page)
 
   await stream(page, 40)
-  await startScrollTrace(page, { parkAt: 0.5 })
+  await startScrollTrace(page, { parkAt: 0.4 })
   await expect(page.locator('#to-bottom')).toContainText(/\d+ new/)
-  await page.waitForTimeout(600)               // let the visit's rebuild land first
-  const eye = () => page.evaluate(() => {
-    const screen = document.getElementById('screen')
-    const rect = screen.getBoundingClientRect()
-    const el = document.elementFromPoint(rect.left + Math.min(200, rect.width / 2), rect.top + 60)?.closest('.term-row')
-    return el?.textContent ?? null
-  })
-  const parkedOn = await eye()
-  expect(parkedOn).toMatch(/scrollback line \d+/)
-  const tall = await page.evaluate(() => document.getElementById('screen').scrollHeight)
+  await page.waitForTimeout(600)               // the visit's rebuild lands first
 
   // Drop the socket from inside, the way a sleep/wake does from outside.
-  // The snapshot the server sends on reconnect serializes the whole screen
-  // with scrollback, and wterm renders it as an append of whatever the mirror
-  // is ahead by — so the parked view survives, and the proof the snapshot
-  // landed (rather than queueing behind the parked reader) is the geometry
-  // growing while the reader never left history. Held, nothing can grow.
+  // The snapshot bypasses the hold (a size report precedes it), and because
+  // it reset-and-refilled the core in one write, nothing redraws on its own
+  // — the quiet spell rebuild it re-arms is what actually replaces the
+  // fossil rows. Queued instead, none of that happens and the reader keeps
+  // looking at a screen from before the drop.
   await page.evaluate(() => window.mtty.conn.ws.close())
   // Anchored: "disconnected" contains "connected" as a substring.
   await expect.poll(() => page.locator('#menu-state').textContent(), { timeout: 10_000 }).toMatch(/^connected/)
-  await expect.poll(() => page.evaluate(() => document.getElementById('screen').scrollHeight), { timeout: 5_000 }).toBeGreaterThan(tall)
-  expect(await eye()).toBe(parkedOn)
+  await expect.poll(() => fossilRows(page), { timeout: 5_000 }).toEqual(expect.objectContaining({ bad: 0 }))
 
   // The hold still works after the snapshot: parked means new output counts.
   await expect.poll(() => page.locator('#to-bottom').textContent(), { timeout: 5_000 }).toMatch(/\d+ new/)
+  await stopScrollTrace(page)
+})
+
+test('the rebuild re-arms for the next visit into history', async ({ page }) => {
+  await ready(page)
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('/lines 1200')
+  await ta.press('Enter')
+  await settled(page)
+
+  // First visit: the rebuild runs, DOM and core agree.
+  await stream(page, 60)
+  await startScrollTrace(page, { parkAt: 0.4 })
+  await page.waitForTimeout(900)
+  await expect.poll(() => fossilRows(page)).toEqual(expect.objectContaining({ bad: 0 }))
+
+  // Return to the bottom — the visit ends, the hold flushes, and the ring
+  // rotates past what the frozen DOM shows. Park again: without a fresh
+  // rebuild the DOM is a fossil against the advanced core, and once per page
+  // load would leave it that way forever.
+  await page.evaluate(() => {
+    const screen = document.getElementById('screen')
+    screen.scrollTop = screen.scrollHeight
+  })
+  await expect.poll(() => page.locator('#to-bottom').textContent()).toBe('↓ latest')
+  await page.waitForTimeout(600)               // flush advances the core at the cap
+  await startScrollTrace(page, { parkAt: 0.6 })
+  await page.waitForTimeout(900)               // the second visit's rebuild
+  await expect.poll(() => fossilRows(page)).toEqual(expect.objectContaining({ bad: 0 }))
+  await stopScrollTrace(page)
+})
+
+test('a resize snapshot does not queue behind a parked reader', async ({ page }) => {
+  await ready(page)
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('/lines 600')
+  await ta.press('Enter')
+  await settled(page)
+
+  // Park with the hold counting, let the stream finish, then change the
+  // grid: the server answers every PTY resize with a fresh snapshot, and
+  // queued, that snapshot's whole screenful of newlines would land in the
+  // meter (and in the hold) — the label jumping by hundreds is the tell.
+  await stream(page, 40)
+  await startScrollTrace(page, { parkAt: 0.5 })
+  await expect.poll(() => page.locator('#to-bottom').textContent(), { timeout: 12_000 }).toMatch(/↓ (\d+) new/)
+  const before = Number(/↓ (\d+) new/.exec(await page.locator('#to-bottom').textContent())?.[1])
+
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: '50×30' }).tap()   // any preset but the current grid
+  await page.locator('[data-act="close"]').tap()
+  await page.waitForTimeout(1500)
+
+  const after = Number(/↓ (\d+) new/.exec(await page.locator('#to-bottom').textContent())?.[1] ?? '0')
+  expect(after).toBeLessThan(before + 100)     // a snapshot is ~600 "lines" if queued
+  expect(await page.evaluate(() => window.mtty.state.cols)).toBe(50)
   await stopScrollTrace(page)
 })
 

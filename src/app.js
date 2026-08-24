@@ -74,12 +74,13 @@ const conn = new TtydConnection({
   // thinking level sitting under a different session; the new one's own line
   // arrives within a poll.
   onTitle: title => { document.title = title; clearFooter(); confirmSwitch(title) },
-  onSize: ({ cols, rows }) => applyServerSize(cols, rows),
+  onSize: ({ cols, rows }) => { snapshotPending = true; applyServerSize(cols, rows) },
   onFooter: showFooter,
   onPlaces: showPlaces,
   onState: status => {
-    if (status === 'disconnected') dropHeld()
-    if (status === 'connected') snapshotPending = true
+    // 'connecting' covers reconnectNow (which closes the old socket so its
+    // onclose never fires) as well as every ordinary open.
+    if (status !== 'connected') dropHeld()
     showConnection(status)
   },
 })
@@ -255,7 +256,7 @@ function applyServerSize(cols, rows) {
   term.resize(cols, rows)
   meter?.resize(cols, rows)             // wrapping is width-dependent, so the meter must match
   sizeScreen()
-  if (share !== null) keepReading(share)
+  if (share !== null) { resettling = true; keepReading(share) }
 }
 
 // Long enough for wterm's own repaint to land after a resize; not a promise to
@@ -274,6 +275,7 @@ function keepReading(share) {
     // resize landing before the next frame calls this twice: once directly,
     // once from its own step's guard.
     if (stopReading === cancel) stopReading = () => {}
+    resettling = false
     screen.removeEventListener('pointerdown', cancel)
     screen.removeEventListener('wheel', cancel)
   }
@@ -463,6 +465,11 @@ const HELD_MAX = 4 * 1024 * 1024
 const TO_BOTTOM_LABEL = toBottom.textContent
 const held = []
 let heldBytes = 0
+// True across a resize's reflow: term.resize empties the rendered rows, so
+// for one turn the scroller is "at the bottom" by geometry alone, and output
+// or a flush acting on that would change content under a parked reader. Set
+// by applyServerSize, cleared when keepReading's re-pin settles or gives up.
+let resettling = false
 // An honest "N new" needs a terminal, not byte arithmetic: a repainting
 // program emits a newline per rewritten row while scrolling nothing, and
 // wrapping emits none while scrolling plenty. A second core, fed the held
@@ -476,23 +483,31 @@ const labelHeld = () => {
   const n = meter.getScrollbackCount()
   toBottom.textContent = n >= 1000 ? '↓ 1000+ new' : `↓ ${n} new`
 }
-// Set on (re)connect: the first output frame is the server's snapshot — a
-// screen reset and scrollback wipe — which must land, never queue. Held, it
-// would leave the reader looking at a pre-drop screen that the return to
-// the bottom then destroys without ever having shown the new one.
+// The client sends size with its handshake and the server answers with a
+// snapshot — and it sends the pair again on resize and folder switch, with
+// no connection-state transition to watch for. So a size report is the one
+// reliable "snapshot next" signal for this client, and the first output
+// after one bypasses the hold: queued behind a parked reader it would leave
+// them looking at a stale screen, and at the ring cap it would wipe their
+// history on return.
 let snapshotPending = false
 
 function flushHeld() {
+  if (!held.length) return
   // Shift-per-write, not splice-then-write: a write that throws mid-replay
-  // costs the rest of the queue, not the whole of it.
-  while (held.length) {
-    const bytes = held.shift()
-    heldBytes -= bytes.length
-    term.write(bytes)
+  // costs the rest of the queue, not the whole of it — and the finally puts
+  // the label and the pending grid back whatever happened.
+  try {
+    while (held.length) {
+      const bytes = held.shift()
+      heldBytes -= bytes.length
+      term.write(bytes)
+    }
+  } finally {
+    meter.writeRaw(ED3)               // scrollback count back to zero
+    toBottom.textContent = TO_BOTTOM_LABEL
+    applyPendingGrid()
   }
-  meter.writeRaw(ED3)                 // scrollback count back to zero
-  toBottom.textContent = TO_BOTTOM_LABEL
-  applyPendingGrid()
 }
 
 /** The hold is dropped, not flushed, on a disconnect: the reconnect snapshot supersedes it. */
@@ -508,13 +523,21 @@ function deliver(bytes) {
     snapshotPending = false
     term.write(bytes)
     applyPendingGrid()
+    // The snapshot reset the core and refilled it in one write, so at the
+    // ring cap the rendered count never changed and not one row redraws on
+    // its own — the DOM is a fossil until the next rebuild, which this
+    // visit has not spent yet.
+    refreshedVisit = false
+    if (!atBottom()) armRefresh()
     return
   }
   // The scroll event normally flushes on return to the bottom, but its
   // dispatch can trail the next chunk, and replay order must not depend on
-  // that race: whatever is held goes first, always.
-  if (held.length && atBottom()) flushHeld()
-  if (atBottom()) { term.write(bytes); applyPendingGrid(); return }
+  // that race: whatever is held goes first, always. A resize in flight
+  // suspends the at-bottom verdict entirely (see `resettling`).
+  const live = atBottom() && !resettling
+  if (held.length && live) flushHeld()
+  if (live) { term.write(bytes); applyPendingGrid(); return }
   held.push(bytes)
   heldBytes += bytes.length
   meter.writeRaw(bytes)
@@ -556,7 +579,11 @@ function armRefresh() {
   clearTimeout(refresh)
   refresh = setTimeout(() => {
     refresh = null
-    if (touching.size) return armRefresh()
+    // A hidden page emits no scroll events, so the quiet spell is satisfied
+    // by definition there — and a rebuild against a page WebKit is neither
+    // laying out nor painting is the glitch on the way back. Wait for
+    // visibility instead; the listener below re-arms on the return.
+    if (document.hidden || touching.size) return armRefresh()
     if (atBottom() || refreshedVisit) return
     refreshedVisit = true
     rebuildScrollback()
@@ -564,11 +591,24 @@ function armRefresh() {
 }
 
 function onScroll() {
-  const bottom = atBottom()
+  const bottom = atBottom() && !resettling
   toBottom.hidden = bottom
-  if (bottom) { flushHeld(); clearTimeout(refresh); refresh = null; return }
+  if (bottom) {
+    // The visit ends here, so the next one gets its own rebuild: held output
+    // means nothing changes while parked, but the fossil that forms at the
+    // bottom between visits still has to be dealt with on the way in.
+    refreshedVisit = false
+    flushHeld()
+    clearTimeout(refresh)
+    refresh = null
+    return
+  }
   armRefresh()
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !atBottom()) armRefresh()
+})
 
 // ---------------------------------------------------------------- key bar
 
@@ -857,7 +897,7 @@ function diagnosticText() {
     `keyboard ${l.keyboardHeight} (up ${l.keyboardUp})   ${l.orientation}`,
     `bar      ${l.keyBarHeight} (pad ${l.keyBarPadBottom})  rect ${JSON.stringify(bar.getBoundingClientRect().toJSON().top)}..${Math.round(bar.getBoundingClientRect().bottom)}`,
     `app      ${Math.round(app.getBoundingClientRect().top)}..${Math.round(app.getBoundingClientRect().bottom)}  screen ${window.screen.width}x${window.screen.height}`,
-    `grid     ${state.cols}x${state.rows} cell ${state.cell.width.toFixed(2)}x${state.cell.height} scale ${state.scale}`,
+    `grid     ${state.cols}x${state.rows} cell ${state.cell.width.toFixed(2)}x${state.cell.height} wtermRow ${term._rowHeight} scale ${state.scale}`,
     `strip    ${footerText ?? 'off'}`,
     `term     ${Math.round(l.terminal.width)}x${Math.round(l.terminal.height)}  stable ${Math.round(l.stableHeight)}`,
     `scroll   top ${screen.scrollTop} of ${screen.scrollHeight} in ${screen.clientHeight}`,
@@ -909,8 +949,10 @@ function buildMenu() {
       if (!$('diag').hidden) showDiagnostics()
     },
     reconnect: () => conn.reconnectNow(),
-    // Local only: pi's own screen is untouched and its next repaint restores it.
-    'clear-view': () => term.write(CURSOR_HOME + ERASE_SCREEN + ERASE_SAVED),
+    // Local only: pi's own screen is untouched and its next repaint restores
+    // it. The hold goes with the old screen — those bytes were drawn against
+    // a view that no longer exists.
+    'clear-view': () => { dropHeld(); term.write(CURSOR_HOME + ERASE_SCREEN + ERASE_SAVED) },
     // Standalone has no browser chrome, so this is the only way to pick up a
     // new build by hand. Re-fetch past the cache first, or the reload just
     // reinstates the copy iOS is already holding.
