@@ -243,20 +243,25 @@ function applyPendingGrid() {
 // gives up after a fixed window, and anything that moves the scroll on its
 // own terms — a drag, Top/Bottom, the back-to-live button — cancels it.
 let stopReading = () => {}
+// The share the re-pin in flight is holding the reader at, null when none is.
+let readingShare = null
 
 function applyServerSize(cols, rows) {
   if (cols === state.cols && rows === state.rows) return
   // How far up the history the eye is, as a share of the whole — the only
-  // measure that survives a reflow, since pixels and rows both change.
-  const share = atBottom() || screen.scrollHeight === 0
+  // measure that survives a reflow, since pixels and rows both change. A
+  // resize landing inside another one's reflow reads the emptied DOM as
+  // at-bottom and would abandon the reader on the strength of it, so a re-pin
+  // already in flight is the honest answer there.
+  const share = readingShare ?? (atBottom() || screen.scrollHeight === 0
     ? null
-    : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight
+    : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight)
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
   meter?.resize(cols, rows)             // wrapping is width-dependent, so the meter must match
   sizeScreen()
-  if (share !== null) { resettling = true; keepReading(share) }
+  if (share !== null) keepReading(share)
 }
 
 // Long enough for wterm's own repaint to land after a resize; not a promise to
@@ -266,6 +271,10 @@ const READING_MS = 600
 /** Re-apply the position on every frame until the repaint settles or gives up. */
 function keepReading(share) {
   stopReading() // a newer resize, or the user, cancels whatever was running
+  // After that cancel, never before it: the outgoing re-pin clears both of
+  // these on its way out, and the incoming one needs them set.
+  resettling = true
+  readingShare = share
   const deadline = performance.now() + READING_MS
   let last = -1
   let frames = 0
@@ -274,8 +283,11 @@ function keepReading(share) {
     // not clear that newer one's ownership — checked, not assumed, because a
     // resize landing before the next frame calls this twice: once directly,
     // once from its own step's guard.
-    if (stopReading === cancel) stopReading = () => {}
-    resettling = false
+    if (stopReading === cancel) {
+      stopReading = () => {}
+      resettling = false
+      readingShare = null
+    }
     screen.removeEventListener('pointerdown', cancel)
     screen.removeEventListener('wheel', cancel)
   }
@@ -468,7 +480,7 @@ let heldBytes = 0
 // True across a resize's reflow: term.resize empties the rendered rows, so
 // for one turn the scroller is "at the bottom" by geometry alone, and output
 // or a flush acting on that would change content under a parked reader. Set
-// by applyServerSize, cleared when keepReading's re-pin settles or gives up.
+// by keepReading, cleared when its re-pin settles or gives up.
 let resettling = false
 // An honest "N new" needs a terminal, not byte arithmetic: a repainting
 // program emits a newline per rewritten row while scrolling nothing, and
@@ -521,6 +533,11 @@ function dropHeld() {
 function deliver(bytes) {
   if (snapshotPending) {
     snapshotPending = false
+    // Everything being held is already inside the snapshot: the server writes
+    // its mirror the same bytes it sends us, and serializes it at a boundary
+    // behind them. Replaying the hold on top would apply it twice — history
+    // gaining lines that were only ever produced once.
+    dropHeld()
     term.write(bytes)
     applyPendingGrid()
     // The snapshot reset the core and refilled it in one write, so at the
@@ -581,9 +598,11 @@ function armRefresh() {
     refresh = null
     // A hidden page emits no scroll events, so the quiet spell is satisfied
     // by definition there — and a rebuild against a page WebKit is neither
-    // laying out nor painting is the glitch on the way back. Wait for
-    // visibility instead; the listener below re-arms on the return.
-    if (document.hidden || touching.size) return armRefresh()
+    // laying out nor painting is the glitch on the way back. The
+    // visibilitychange listener below arms it on the way in instead, so this
+    // drops the rebuild rather than spinning a throttled timer until then.
+    if (document.hidden) return
+    if (touching.size) return armRefresh()
     if (atBottom() || refreshedVisit) return
     refreshedVisit = true
     rebuildScrollback()

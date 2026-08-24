@@ -8,12 +8,14 @@
 // physics, so the momentum-killing half of the rebuild bug is on-device only;
 // both symptoms share the same rebuildScrollback call, so the fix is driven
 // from here regardless.
-import { test, expect, ready, settled, fillScrollback, startScrollTrace, stopScrollTrace, maxHeadShift } from './helpers.js'
+import { test, expect, ready, settled, fillScrollback, scrollbackCount, startScrollTrace, stopScrollTrace, maxHeadShift } from './helpers.js'
 
 // How many rendered scrollback rows no longer match the core — the fossil
 // meter. At the ring cap the DOM freezes while the core rotates on, and a
 // reset+refill (a snapshot) leaves the count unchanged so nothing redraws;
-// only comparing rows to the core catches it.
+// only comparing rows to the core catches it. `rows` and `core` are asserted
+// alongside `bad` because an empty DOM has nothing to disagree with, and a
+// poll would take that for a pass.
 const fossilRows = page => page.evaluate(() => {
   const b = window.mtty.term.bridge
   const rows = [...document.getElementById('screen').querySelectorAll('.term-scrollback-row')]
@@ -214,7 +216,7 @@ test('a reconnect snapshot lands rather than queue behind a parked reader', asyn
   await page.evaluate(() => window.mtty.conn.ws.close())
   // Anchored: "disconnected" contains "connected" as a substring.
   await expect.poll(() => page.locator('#menu-state').textContent(), { timeout: 10_000 }).toMatch(/^connected/)
-  await expect.poll(() => fossilRows(page), { timeout: 5_000 }).toEqual(expect.objectContaining({ bad: 0 }))
+  await expect.poll(() => fossilRows(page), { timeout: 5_000 }).toEqual({ bad: 0, rows: 1000, core: 1000 })
 
   // The hold still works after the snapshot: parked means new output counts.
   await expect.poll(() => page.locator('#to-bottom').textContent(), { timeout: 5_000 }).toMatch(/\d+ new/)
@@ -232,7 +234,7 @@ test('the rebuild re-arms for the next visit into history', async ({ page }) => 
   await stream(page, 60)
   await startScrollTrace(page, { parkAt: 0.4 })
   await page.waitForTimeout(900)
-  await expect.poll(() => fossilRows(page)).toEqual(expect.objectContaining({ bad: 0 }))
+  await expect.poll(() => fossilRows(page)).toEqual({ bad: 0, rows: 1000, core: 1000 })
 
   // Return to the bottom — the visit ends, the hold flushes, and the ring
   // rotates past what the frozen DOM shows. Park again: without a fresh
@@ -246,7 +248,7 @@ test('the rebuild re-arms for the next visit into history', async ({ page }) => 
   await page.waitForTimeout(600)               // flush advances the core at the cap
   await startScrollTrace(page, { parkAt: 0.6 })
   await page.waitForTimeout(900)               // the second visit's rebuild
-  await expect.poll(() => fossilRows(page)).toEqual(expect.objectContaining({ bad: 0 }))
+  await expect.poll(() => fossilRows(page)).toEqual({ bad: 0, rows: 1000, core: 1000 })
   await stopScrollTrace(page)
 })
 
@@ -274,6 +276,45 @@ test('a resize snapshot does not queue behind a parked reader', async ({ page })
   const after = Number(/↓ (\d+) new/.exec(await page.locator('#to-bottom').textContent())?.[1] ?? '0')
   expect(after).toBeLessThan(before + 100)     // a snapshot is ~600 "lines" if queued
   expect(await page.evaluate(() => window.mtty.state.cols)).toBe(50)
+  await stopScrollTrace(page)
+})
+
+test('a resize snapshot supersedes the hold rather than being replayed over', async ({ page }) => {
+  await ready(page)
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('/lines 600')     // under the cap, so a bogus write shows as growth
+  await ta.press('Enter')
+  await settled(page)
+
+  await stream(page, 25)
+  await startScrollTrace(page, { parkAt: 0.5 })
+  // Let the stream end before the resize, so the hold has stopped growing and
+  // what the snapshot is answering for is settled.
+  let last = null
+  await expect.poll(async () => {
+    const now = await page.locator('#to-bottom').textContent()
+    const same = now === last && /\d+ new/.test(now)
+    last = now
+    return same
+  }, { intervals: Array(24).fill(400) }).toBe(true)
+
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: '50×30' }).tap()
+  await page.locator('[data-act="close"]').tap()
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols), { timeout: 8_000 }).toBe(50)
+  await page.waitForTimeout(1500)              // the snapshot, and fake-pi's own redraw behind it
+
+  // The snapshot is the server's whole screen and history, and the mirror it
+  // was serialized from had already been written every byte being held. Kept,
+  // the hold replays over the top of itself on the way back down and history
+  // gains lines that were only ever produced once; dropped, there is nothing
+  // left to replay and the count cannot move. fake-pi's own repaints clear the
+  // screen rather than scroll it, so they add no lines either way.
+  const lines = await scrollbackCount(page)
+  await page.evaluate(() => { const s = document.getElementById('screen'); s.scrollTop = s.scrollHeight })
+  await expect.poll(() => page.locator('#to-bottom').isHidden()).toBe(true)
+  await page.waitForTimeout(600)
+  expect(await scrollbackCount(page)).toBe(lines)
   await stopScrollTrace(page)
 })
 
