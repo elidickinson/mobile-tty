@@ -127,7 +127,7 @@ export const scrollbackCount = page => page.evaluate(() => window.mtty.term.brid
  * below-cap append path, frozen geometry with moving content is the rebuild.
  *
  * `parkAt` sets scrollTop in the same turn the sampler starts, so the first
- * sample is taken before app.js's 80ms scrollback-rebuild timer can fire.
+ * sample is taken before app.js's scrollback-rebuild timer can fire.
  */
 export const startScrollTrace = (page, { parkAt } = {}) => page.evaluate(fraction => {
   cancelAnimationFrame(window.__traceRaf)

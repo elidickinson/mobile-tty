@@ -1,9 +1,9 @@
 // The squirm: reading history while output streams in. Two regimes, one
 // assertion each — the line under the reader's eye must keep its identity.
 // A saturated ring freezes the rendered history (geometry constant, content
-// swapped by the entry rebuild); a ring below the cap grows it (appends above
-// the reader). The trace's `height` field tells the two apart, `head` says
-// whether what the eye sees moved.
+// swapped under it by the rebuild); a ring below the cap grows it (appends
+// above the reader). The trace's `height` field tells the two apart, `head`
+// says whether what the eye sees moved.
 //
 // What this cannot cover: iOS flick momentum. Playwright WebKit has no touch
 // physics, so the momentum-killing half of the rebuild bug is on-device only;
@@ -21,10 +21,13 @@ const stream = async (page, lines) => {
 // when the reader settles on a line. Parking first would saturate-and-freeze
 // before any rotation — the rebuild would have nothing to swap, and the test
 // would pass with the bug live.
+const STREAM_TICK_MS = 100   // the fixture's /stream cadence: one line off the top per tick
+const TRACE_MS = 2500
+
 const parkAndTrace = async (page, at) => {
   await page.waitForTimeout(1200)               // ring rotates ~12 lines first
-  await startScrollTrace(page, { parkAt: at })  // first sample beats the 80ms timer
-  await page.waitForTimeout(2500)               // rebuild fires ~80ms in, mid-stream
+  await startScrollTrace(page, { parkAt: at })  // first sample beats the refresh timer
+  await page.waitForTimeout(TRACE_MS)           // several rebuilds land inside the window
   return stopScrollTrace(page)
 }
 
@@ -43,18 +46,35 @@ test('a saturated scrollback does not swap content under a parked reader', async
 
   // Frozen geometry is this regime's signature — it is what makes the content
   // swap invisible to every position-only assertion. The rebuild keeps the
-  // reader's line by stepping the box up to meet it, so the claim is not that
-  // the box never moves but that it moves once, by whole rows, and the line
+  // reader's line by stepping the box to meet it, so the claim is not that the
+  // box never moves but that every move is a whole number of rows and the line
   // under the eye never changes.
   const heights = trace.map(s => s.height)
   expect(Math.max(...heights)).toBe(Math.min(...heights))
   const rowH = await page.evaluate(() => window.mtty.state.cell.height)
   const steps = []
   for (let i = 1; i < trace.length; i++) {
-    if (trace[i].top !== trace[i - 1].top) steps.push(trace[i].top - trace[i - 1].top)
+    if (trace[i].top !== trace[i - 1].top) steps.push({ px: trace[i].top - trace[i - 1].top, at: trace[i].t })
   }
-  expect(steps.length).toBeLessThanOrEqual(1)
-  for (const step of steps) expect(Math.abs(step % rowH)).toBe(0)   // abs: -340 % 17 is -0
+  for (const step of steps) expect(Math.abs(step.px % rowH)).toBe(0)   // abs: -340 % 17 is -0
+
+  // Rebuilds repeat while output arrives — that is what keeps history live
+  // under the reader instead of leaving a fossil spliced onto the grid — so
+  // the window holds several, not one.
+  expect(steps.length).toBeGreaterThan(3)
+
+  // The first step is the correction, and it is unbounded on purpose: a frozen
+  // render can be a non-contiguous splice, so the reader's line can sit
+  // hundreds of rows from where the stale geometry put it. Every step after it
+  // is the ring rotating under a still reader, which only ever moves the box
+  // up, and never further than the stream has fed in the meantime. A jump
+  // there would mean a rebuild landed somewhere else in history.
+  for (let i = 1; i < steps.length; i++) {
+    const rotated = (steps[i].at - steps[i - 1].at) / STREAM_TICK_MS
+    expect(steps[i].px).toBeLessThan(0)
+    expect(-steps[i].px / rowH).toBeLessThanOrEqual(rotated + 1)
+  }
+
   expect(maxHeadShift(trace)).toBe(0)
 })
 

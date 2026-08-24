@@ -66,7 +66,7 @@ const conn = new TtydConnection({
   url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
   schedule: (fn, ms) => setTimeout(fn, ms),
-  onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); applyPendingGrid() },
+  onOutput: bytes => { lastOutput = Date.now(); term.write(bytes); noteOutput(); applyPendingGrid() },
   // The title is only restated when the session is (a fresh admission, or a
   // switch to another folder), and the strip belongs to whichever program was
   // running before that. Drop it rather than leave the last one's model and
@@ -386,8 +386,10 @@ const ringTurn = (b, els, oldCount) => {
  * content in the redrawn DOM (the rotation measured at the tail is the search
  * hint, not the answer, because a hole makes arithmetic off by the hole); the
  * box is then set down so the same line sits at the same edge, sub-row offset
- * and all. A line with no match has fallen out of the ring, and the oldest
- * survivor is the best on offer.
+ * and all. A line with no match is one the reader was parked over in stale or
+ * spliced-in content whose lines are long gone, so the box stays on the pixel
+ * it was already on: the next rebuild anchors whatever sits under the eye by
+ * then, which converges on live history without ever jumping.
  */
 function rebuildScrollback() {
   const r = term.renderer
@@ -412,8 +414,19 @@ function rebuildScrollback() {
   const parkTop = () => {
     if (eyeIdx >= oldCount) return top              // parked in the grid: nothing above moved
     const eyeText = oldEls[eyeIdx]?.textContent ?? ''
-    const probe = i => i >= 0 && i < r._scrollbackRowEls.length &&
-      r._scrollbackRowEls[i].textContent === eyeText
+    // wterm pads every row out to the full width, so blanks — and the rules and
+    // separators a transcript repeats — all share one textContent. One row is
+    // therefore not an identity: a neighbour has to agree too, or a search
+    // displaced by a hole settles on the wrong blank. At the edge of the drawn
+    // rows one neighbour is all there is.
+    const near = [-1, 1]
+      .filter(d => oldEls[eyeIdx + d])
+      .map(d => [d, oldEls[eyeIdx + d].textContent])
+    const probe = i => {
+      const els = r._scrollbackRowEls
+      return els[i]?.textContent === eyeText &&
+        near.some(([d, text]) => els[i + d]?.textContent === text)
+    }
     // Contiguous case: the hint lands on it at once. A hole means the row sits
     // elsewhere (or nowhere); search outward through the whole buffer once.
     const hint = eyeIdx - turn
@@ -422,7 +435,7 @@ function rebuildScrollback() {
       if (probe(hint - d)) at = hint - d
       else if (probe(hint + d)) at = hint + d
     }
-    return at < 0 ? 0 : at * rowH + eyeFrac
+    return at < 0 ? top : at * rowH + eyeFrac
   }
 
   for (const el of oldEls) el.remove()
@@ -433,34 +446,57 @@ function rebuildScrollback() {
   screen.scrollTop = parkTop()
 }
 
-// Rebuilding a full buffer costs about 6ms, so it happens once per visit
-// into history, after the scroll has ended, rather than on every write.
-// Leaving it frozen while you read is the point: what you are reading does
-// not squirm as output keeps arriving, and the gesture that refreshes it is
-// the one that got you here.
+// While the reader is in history the scrollback has to stay live — at the
+// ring cap wterm stops appending, so without rebuilds the reader is parked
+// over a fossil that meets flowing grid text at the seam. The rebuild
+// re-arms on output and holds the reader's line by content, so history
+// updates under a still eye, the way a terminal reads while output runs.
 //
-// "After the scroll has ended" is a quiet spell, not a fixed delay: scroll
-// events stream for as long as the box is moving — drag, deceleration,
-// rubber-band, all of it — so each one restarts the wait, and the rebuild
-// lands only once nothing has moved for a moment. Firing earlier writes
-// scrollTop mid-momentum, which does not just cancel the flick: iOS can
-// wedge the scroller on a programmatic change during deceleration, leaving
-// a view that ignores further scrolls — half frozen history, half live
-// grid, and no way back to the bottom without a reload. The step the rebuild
-// itself takes emits a scroll event, so the once-per-visit flag is what
-// keeps that event from arming another rebuild every quiet spell while
-// output streams.
-const REFRESH_AFTER_MS = 200
-let refreshedThisVisit = false
+// Three guards shape when it fires. It waits for a quiet spell in scroll
+// events — drag, deceleration, rubber-band all stream events, and each one
+// restarts the wait — because writing scrollTop mid-momentum does not just
+// cancel the flick: iOS can wedge the scroller on a programmatic change
+// during deceleration, leaving a dead view with no way back to the bottom.
+// And it only fires when output has actually arrived since the last one:
+// the step a rebuild itself takes emits a scroll event, and without the
+// dirty check that event would arm the next rebuild in a loop of its own.
+const REFRESH_AFTER_MS = 400
+let sbWrites = 0
+let sbRefreshedAt = 0
 let refresh = null
+
+// The third guard, and the one no scroll event can express: iOS sends nothing
+// while a finger rests mid-drag, so the quiet spell elapses with the touch
+// still on the glass — and a programmatic scrollTop plus a teardown of every
+// row, inside WebKit's own gesture tracking, is exactly what wedges the
+// scroller. Held by pointer id so a release outside the element still counts.
+const touching = new Set()
+screen.addEventListener('pointerdown', e => touching.add(e.pointerId), { passive: true })
+for (const ev of ['pointerup', 'pointercancel']) {
+  window.addEventListener(ev, e => touching.delete(e.pointerId), { passive: true })
+}
+
+function armRefresh() {
+  clearTimeout(refresh)
+  refresh = setTimeout(() => {
+    if (touching.size) { armRefresh(); return }
+    refresh = null
+    if (atBottom() || sbWrites === sbRefreshedAt) return
+    sbRefreshedAt = sbWrites
+    rebuildScrollback()
+  }, REFRESH_AFTER_MS)
+}
+
+function noteOutput() {
+  sbWrites++
+  if (refresh === null && !atBottom()) armRefresh()
+}
 
 function onScroll() {
   const bottom = atBottom()
   toBottom.hidden = bottom
-  if (bottom) { refreshedThisVisit = false; clearTimeout(refresh); return }
-  if (refreshedThisVisit) return
-  clearTimeout(refresh)
-  refresh = setTimeout(() => { refreshedThisVisit = true; rebuildScrollback() }, REFRESH_AFTER_MS)
+  if (bottom) { clearTimeout(refresh); refresh = null; return }
+  armRefresh()
 }
 
 // ---------------------------------------------------------------- key bar
