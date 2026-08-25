@@ -34,7 +34,6 @@ Usage: mobile-tty [command] [options] [program...]
   attach         attach this terminal to a running server
   tunnel         run the Cloudflare tunnel on its own
   setup <host>   create the tunnel, DNS and Access login for a hostname
-  down           end everything, including the program and its history
 
 Options
 
@@ -52,7 +51,7 @@ terminal on your network.
 The server owns the program. Every viewer sees the same screen, and the
 narrowest one decides the size, because this is meant to be read on a phone.
 `attach` joins a server that is already running; it does not start one. To end
-the session, exit the program or run `down`.
+the session, exit the program, or press Ctrl-C in the terminal serving it.
 
 The menu offers every folder pi has history in. Choosing one ends the program
 and starts it there instead, which is how you reach another project from a
@@ -90,7 +89,7 @@ take_options() {
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
-      serve|attach|tunnel|setup|down)
+      serve|attach|tunnel|setup)
         [[ -z "$cmd" ]] || break        # a second one is the program's business
         cmd=$1; shift ;;
       *) break ;;
@@ -174,44 +173,5 @@ case "$cmd" in
   tunnel)
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
     exec cloudflared tunnel --config "$config" run
-    ;;
-  down)
-    # The server is found by its port, not by matching its argv. pgrep -f on a
-    # command line is both too wide (it matches anything that happens to contain
-    # the same string) and too narrow (it can miss a process whose argv is
-    # presented differently), and it has killed its own caller before. The port
-    # is ground truth: lsof reads the kernel's socket table.
-    ended=""
-    server_pid=$(lsof -nP -tiTCP:$port -sTCP:LISTEN 2>/dev/null | head -1 || true)
-    if [[ -n "$server_pid" ]]; then
-      kill "$server_pid" 2>/dev/null || true
-      # Give the PTY and its program a beat to notice, then only claim it done
-      # if it is actually gone.
-      sleep 1
-      if lsof -nP -tiTCP:$port -sTCP:LISTEN 2>/dev/null | grep -q .; then
-        echo "mobile-tty: server on $port is still running" >&2
-        ended="$ended server(unconfirmed)"
-      else
-        ended="$ended server"
-      fi
-    fi
-    # The tunnel has no port of its own; it is the one started by this config.
-    # Narrow enough that it does not sweep up an unrelated tunnel.
-    kill_matching() {
-      local pids
-      pids=$(pgrep -f "cloudflared tunnel --config $config" 2>/dev/null || true)
-      [[ -n "$pids" ]] || return 0
-      # shellcheck disable=SC2086
-      kill $pids 2>/dev/null || true
-      ended="$ended tunnel"
-    }
-    kill_matching
-    if [[ -n "$ended" ]]; then
-      echo "ended:$ended"
-      [[ "$ended" == *server* ]] && echo "the program is gone, and so is whatever it was holding"
-    else
-      echo "nothing was running"
-    fi
-    exit 0
     ;;
 esac

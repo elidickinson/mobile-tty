@@ -22,7 +22,7 @@ Usage:
 
 `--port`, `--bind` and `--hostname` also read `$MTTY_PORT`, `$MTTY_BIND` and `$MTTY_HOSTNAME`.
 
-One PTY; every viewer sees the same screen. The server holds the screen across disconnects, so reopening the page gets it back instantly and closing the last tab kills nothing. Everything runs in the foreground and owns what it starts, so `Ctrl-C` ends server and tunnel together and `down` ends everything. To serve and watch at once, run `serve` in one terminal and `attach` in another; `Ctrl-]` detaches the watching one and leaves the session up.
+One PTY; every viewer sees the same screen. The server holds the screen across disconnects, so reopening the page gets it back instantly and closing the last tab kills nothing. Everything runs in the foreground and owns what it starts, so `Ctrl-C` ends the server, the tunnel and the program together. To serve and watch at once, run `serve` in one terminal and `attach` in another; `Ctrl-]` detaches the watching one and leaves the session up.
 
 Loopback by default -- all the tunnel needs. `--bind 0.0.0.0` exposes an unauthenticated terminal on your LAN, so prefer the tunnel. On the phone: **Add to Home Screen** (standalone mode gains ~7 rows over Safari).
 

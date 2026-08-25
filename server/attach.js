@@ -115,7 +115,7 @@ export async function attach({ url }) {
       if (isDetach(chunk)) leave(
         'detached; the session is still running\r\n' +
         '  rejoin it   mobile-tty attach\r\n' +
-        '  end it      mobile-tty down', DETACHED)
+        '  end it      Ctrl-C in the terminal serving it', DETACHED)
       // The key that dismisses the banner is spent doing so: the session has
       // not been shown yet, so it was not typed at what is about to appear.
       if (!started) return start()
