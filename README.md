@@ -1,121 +1,76 @@
 # mobile-tty
 
-Drive pi.dev -- or any full-screen terminal app -- from a phone, over a WebSocket-attached PTY. It keeps the real terminal rather than replacing it with a chat UI.
+Access your Pi coding agent (with *all* the features) from a mobile device. Uses a WebSocket-attached PTY to show your whole terminal rather than replacing it with a web chat UI. Should work with many other full-screen TUI apps too.
 
-## Start it
+## Get Started
 
+Install:
 ```
+git clone https://github.com/elidickinson/mobile-tty && cd mobile-tty
 npm install
+```
+
+Usage:
+```
 ./mobile-tty                             # serves `pi` on 127.0.0.1:7681
-./mobile-tty --bind 0.0.0.0 --port 1234  # can specify how to bind our server
-./mobile-tty attach                      # join an existing session from this terminal
+./mobile-tty --bind 0.0.0.0 --port 1234  # choose how to bind
+./mobile-tty attach                      # join a running mobile-tty session from this terminal
 ./mobile-tty serve --tunnel              # also run the cloudflare tunnel
-./mobile-tty serve --attach              # also watch it from this terminal
-./mobile-tty serve bash                  # a different program besides `pi`
+./mobile-tty serve bash                  # a program other than `pi`
 ./mobile-tty pi --model whatever         # flags after the program go to it
 ```
 
-It listens on **loopback by default**, because that is all the tunnel needs. `--bind 0.0.0.0` opens it to the network so a phone on the same wifi can reach `http://<your-ip>:7681/` -- which is an unauthenticated terminal on your network, so prefer the tunnel. **Add to Home Screen** and launch it from there -- standalone mode drops Safari's chrome and is worth about 7 extra rows.
+`--port`, `--bind` and `--hostname` also read `$MTTY_PORT`, `$MTTY_BIND` and `$MTTY_HOSTNAME`.
 
-The **server** holds the program: one PTY, and every viewer looks at the same screen. It keeps that screen, so opening the page gets it back instantly instead of making the program redraw, and closing the last tab kills nothing. `attach` joins a server that is already running rather than starting one. To end the session, exit the program or run `down`.
+One PTY; every viewer sees the same screen. The server holds the screen across disconnects, so reopening the page gets it back instantly and closing the last tab kills nothing. Everything runs in the foreground and owns what it starts, so `Ctrl-C` ends server and tunnel together and `down` ends everything. To serve and watch at once, run `serve` in one terminal and `attach` in another; `Ctrl-]` detaches the watching one and leaves the session up.
 
-Every command runs in the foreground and owns what it starts, so there is nothing to track between them: `Ctrl-C` takes the server and the tunnel down together. The exception is `--attach`, where `Ctrl-]` detaches and deliberately leaves the server up for the phone -- rejoin it with `attach`, end it with `down`. Closing the terminal ends it either way.
+Loopback by default -- all the tunnel needs. `--bind 0.0.0.0` exposes an unauthenticated terminal on your LAN, so prefer the tunnel. On the phone: **Add to Home Screen** (standalone mode gains ~7 rows over Safari).
 
-`down` ends everything -- server, tunnel, and the program. `--tunnel` says on startup whether a login actually stands in front of your hostname, since that is the only thing about the setup you cannot see from this machine.
+Requires node 22+, plus `cloudflared` for the tunnel. macOS gets a prebuilt `node-pty`; on Linux `npm install` compiles it, which wants python and a C++ toolchain. Alt-screen apps (Claude Code, vim) are out of scope. Keystrokes queued while disconnected replay on reconnect.
 
-### Requirements and Limitations
+## The phone UI
 
-Requires node, plus `cloudflared` for the tunnel.
-
-Terminal apps that use alternate screen (like Claude Code) seem to work without any scrollback. Alt screen apps are currently out of scope.
-
-Keystrokes queued while disconnected are replayed in full on reconnect, even after a long sleep.
-
-## Use it
-
-**Key bar**, left to right: `⌃ ⇧` are sticky -- tap one, then the next key you press (including a letter on the software keyboard) carries it, so `⌃` then `c` is Ctrl-C. Then `esc`, `⇥` tab, `⌫` backspace, arrows, `⌨` to summon or dismiss the keyboard, and `≡` for the menu. Backspace and the arrows repeat when held; the software keyboard's own backspace does not, because the field it types into is emptied after every keystroke.
-
-**Status strip**: a row under the key-bar keys showing the active model and thinking level (`provider/model - max`) — the part pi's own footer truncates at phone width. It comes from `ext/mtty-footer.ts`, a pi extension: install it once with `ln -s "$PWD/ext/mtty-footer.ts" ~/.pi/agent/extensions/`. It stays inert for every pi outside mobile-tty. In standalone it sits in the home-indicator band under the keys and costs the terminal nothing; where there is no band it takes one row of the terminal box, never the grid.
-
-There is no alt key: meta is an ESC prefix, so `esc` then `b` is the same bytes as alt+b.
-
-**Scrolling** is a normal drag. When you scroll away from the live screen a **↓ latest** button appears; typing also jumps you back. New output while you are reading history leaves you where you are.
-
-**Rotate to landscape** and the screen should automatically reflow to 93 columns instead of 50. The grid never resizes on its own when the keyboard opens -- only the visible window shrinks.
-
-**Menu** (`≡`): **Folder**, which is [switching folders](#switching-folders); **Top** / **Bottom** jump to either end of the scrollback; **Paste** -- tap the field, paste, then Send, since iOS only offers its callout on a visible field; grid presets and **Fit**; zoom, which is render scale only and leaves the grid alone; **Reconnect**; **Clear view**, local only; **Reload app**, since standalone has no reload button; and **Diagnostics**, folded away by default, which unfolds a live readout of viewport, insets, grid and scroll state. A ⚡ in the corner means the socket is down, and errors paint a red panel at the top.
+- **Key bar**: `⌃ ⇧ ⌥` are sticky (tap, then the next key carries them -- so `⌃ c` = Ctrl-C). Then `esc`, `⇥`, `⌫`, arrows, `⌨` (toggle keyboard), `≡` (menu). Backspace and arrows repeat when held.
+- **Status strip**: model and thinking level (`provider/model - max`), which pi's footer truncates at phone width. From a pi extension: `ln -s "$PWD/ext/mtty-footer.ts" ~/.pi/agent/extensions/`.
+- **Scrolling**: drag. Away from the bottom, output is *held* rather than drawn, so the page under you never moves; the **↓ N new** button counts what is waiting. Tapping it or typing releases it.
+- **Landscape** reflows to full width automatically.
+- **Menu** (`≡`): folder switching, Top/Bottom, Paste, grid presets and Fit, zoom (render only), Reconnect, Clear view (local), Reload app, Diagnostics. ⚡ means the socket is down.
 
 ## Reach it from anywhere
 
-Authentication is a cookie, either way you do it. Basic auth cannot work at all here: Safari puts no `Authorization` header on a WebSocket handshake and the page cannot add one, so it would load and then never connect.
+Auth is always a cookie -- Safari sends no `Authorization` header on WebSocket handshakes, so basic auth cannot work. Use one method or the other, not both.
 
-Cloudflare Access authenticates with a cookie instead, and cookies *are* sent on WebSocket handshakes. Given a domain on Cloudflare:
+**Cloudflare Access** (recommended, internet-facing). Given a domain on Cloudflare:
 
 ```
-cloudflared tunnel login                 # once, opens a browser
+cloudflared tunnel login                 # once
 ./mobile-tty setup pi.example.com        # tunnel, DNS, config, Access login
 ./mobile-tty serve --tunnel --hostname pi.example.com
 ```
 
-The server runs with no password under this: Access is the authentication, and it happens at Cloudflare's edge before anything reaches the machine. `setup` refuses to call itself done until a login is actually in front of the hostname, and says loudly when there is not one.
+The server runs with no password here; Access authenticates at the edge, and `setup` verifies a login is really in place.
 
-For a network you already trust -- a LAN, a tailnet -- `$MTTY_PASSWORD` is the lighter option: set it and the page becomes a login that mints a cookie, with `attach` using the same password. It is a single static secret with no lockout, so make it a generated one, and bound to the network it crosses plain http in the clear. Access is still the better answer for anything facing the internet; use one or the other, not both.
+**`$MTTY_PASSWORD`** (LAN/tailnet): the page becomes a login that mints a cookie; `attach` uses the same password. A single static secret over plain http -- fine on a network you trust.
 
-**`--hostname` is required behind any proxy.** A page on any site you visit can open a WebSocket to your loopback -- nothing in the browser stops it -- so a socket is refused unless its `Origin` is the address it connected to. Addresses work as-is; a name (Cloudflare, MagicDNS, any reverse proxy) has to be declared, by flag or `$MTTY_HOSTNAME`. Miss it and the page loads but never connects, with the reason on stderr.
+**`--hostname` is required behind any proxy.** Any web page you visit can open a WebSocket to your loopback, so a socket is refused unless its `Origin` matches where it connected. IPs work as-is; names must be declared via flag or `$MTTY_HOSTNAME`. Miss it and the page loads but never connects (reason on stderr).
 
-The desktop can watch or type at the same time, either by opening the same URL or with `./mobile-tty attach`. One PTY means one size, though, and **the narrowest viewer wins** -- this is meant to be read on a phone, and a desktop showing a phone-width column is legible where the reverse is not. The server tells every viewer the size it actually picked. `attach` relies on the program handling `SIGWINCH` to redraw after a resize; pi does, but a program that does not may need a reattach.
-
-## Picking up a new build
-
-- **Every load** revalidates: the document is `no-cache` with the bundle's hash as its ETag, so an unchanged client costs a 304 instead of 74 KB.
-- **On startup** the page refetches past the cache and compares build stamps; a newer one on the server redirects to `?b=<hash>`, a URL iOS has no cached copy of. This is what actually works in standalone, where the launch document is held whatever the headers say.
-- **Never mid-session.** A page already open will not notice a new build -- use **Reload app** in the menu.
+Desktop can join too (same URL or `./mobile-tty attach`). One PTY means one size, and **the narrowest viewer wins** -- a phone-width column on desktop is legible; the reverse is not. The server reports the size it picked.
 
 ## Switching folders
 
-The menu lists every folder pi has history in -- read out of pi's own store at
-`~/.pi/agent/sessions`, newest first, and always including the one the server
-started in. Tap one and it offers **Start here**, plus **Continue here** when the
-served program is pi, which passes `--continue` and picks that folder's last
-session back up.
+The menu lists every folder pi has history in (`~/.pi/agent/sessions`, newest first; `$PI_CODING_AGENT_SESSION_DIR` moves the list), plus the one the server itself started in. Tap one for **Start here**, or **Continue here** (pi only -- passes `--continue` to resume that folder's last session).
 
-Choosing one **ends the program that is running** and starts another over there.
-There is one PTY here and it is the session, so this is a switch rather than a
-second window: every viewer follows it, the phone and an attached desktop alike.
-The conversation itself is safe -- pi writes it down, and **Continue here** comes
-back to it -- but a turn in flight when you switch is lost, and a `bash` tool
-call running under it is killed. That is why a row asks before it acts, and why
-this is worth a second tap on a phone.
+**Only folders pi has already run in are on that list.** A brand-new project is not reachable from the phone until pi has recorded a conversation there, so run pi in it once from a terminal and it appears at the top. With no terminal to hand, serve a shell instead -- `./mobile-tty serve bash` -- and cd from the phone.
 
-The menu stays open until the switch is confirmed. There is no acknowledgement
-frame: a switch that worked always restates the title with the new folder, and
-that is what closes the menu. A tap that never left the phone -- asleep, or the
-tunnel down -- and one the server refused because the folder went away both look
-the same from here, so after a few seconds the row says **no answer** rather than
-pretending. A late switch still lands, and is still taken when it does.
+The list is folders, not sessions: **Continue here** always takes the folder's most recent one. To reach any other session in the same folder, use `/resume` inside pi.
 
-This is the one thing an extension inside pi cannot do for you. A process cannot
-change its own working directory, so `/resume` in one folder only ever reaches
-that folder's sessions, and a phone has no shell to `cd` with. Spawning is the
-only way to be somewhere else, and the server is the only part of this that
-spawns anything.
+Switching **ends the running program** -- the one PTY *is* the session, so every viewer follows. A turn in flight dies with it, and so does a running `bash` tool call. The conversation itself is safe, because pi writes it down as it goes and Continue resumes it, but anything the program had not finished is gone -- so rows confirm before acting. Only folders the server itself listed are honored; that frame is what keeps a socket from becoming a way to run programs anywhere.
 
-Only a folder the server itself listed is honoured. That frame is the one which
-would otherwise turn a terminal into a general way to start programs anywhere;
-it is already behind the same login and Origin check as everything else on the
-socket, and this keeps it to the folders you have actually worked in.
-
-`$PI_CODING_AGENT_SESSION_DIR` moves the list along with pi's store, and a
-program named by a relative path is resolved once at startup, so it still means
-the same program after a switch.
-
-## Keeping a conversation
-
-Restarting the server starts a fresh pi. Pass `./mobile-tty pi --session-id whatever` for one that comes back every time, or just `/resume` from inside pi when you actually want it.
+Restarting the server starts a fresh pi. Use `./mobile-tty pi --session-id whatever` for one that comes back every time.
 
 ## Development
 
-There is no build step: the server bundles the client when the page is asked for, so an edit needs a reload and nothing else -- notably not a restart, which would kill the program.
+No build step: the client is bundled per page request, so client edits need a reload, not a restart. Server edits need a restart, which kills the program.
 
 ```
 npm test                # unit, including the snapshot round-trip gate
@@ -124,8 +79,13 @@ npm run test:integrity  # that no viewer is ever sent a gap
 npm run test:smoke      # against real pi; sends no prompts, costs no tokens
 ```
 
-Tried hard to automate testing as much as possible. The device verifies the viewport adapter, and everything downstream of it is testable without a keyboard. 
+## Architecture
 
-## Notes
+One node process owns everything. `server/` spawns the program on a real PTY through `node-pty` and every viewer -- phone, desktop tab, `attach` -- is a WebSocket client of it, speaking a protocol of five byte-tagged frames (`server/protocol.js`) that the client parses in about thirty lines.
 
-Why it is built this way, and the measurements behind it: [`docs/design.md`](docs/design.md) and [`docs/numbers.md`](docs/numbers.md).
+- **`server/mirror.js`** feeds every output byte into an `@xterm/headless` terminal and serializes it on demand. A joining viewer is handed that snapshot instead of making pi redraw, turning an attach from O(transcript) into O(screen) -- and it is what survives a disconnect.
+- **`server/index.js`** is the hub: one grid for all viewers (narrowest wins), fan-out, and folder switching, which respawns the program against a list `server/places.js` built (`server/auth.js` and `origin.js` guard the door; `footer.js` relays the status strip).
+- **`server/client.js`** builds the client with esbuild *inside the request* -- JS, CSS and the VT core's WASM inlined into one HTML document, hashed into its own ETag. One file is one thing for the phone's cache to get right, and a document built from disk on demand cannot be stale.
+- **`src/app.js`** is the client. `@wterm/dom` renders the terminal into the DOM, so native momentum scroll, selection and find come free and the terminal's own scrollback is the history -- no copy-mode, no alternate screen. Around it: `viewport.js` sizes the grid from `visualViewport` (the keyboard never reflows pi), `ttyd.js` and `transport.js` are the wire, `keys.js` encodes the bar keys.
+
+Why it's built this way, and the measurements behind it: [`docs/design.md`](docs/design.md) and [`docs/numbers.md`](docs/numbers.md).

@@ -16,10 +16,7 @@ root=$(cd -P "$(dirname "$self")" && pwd)
 cd "$root" || { echo "mobile-tty: cannot enter $root" >&2; exit 1; }
 [[ -f server/cli.js ]] || { echo "mobile-tty: $root does not look like the mobile-tty checkout" >&2; exit 1; }
 
-port="${PORT:-7681}"
-# Lines of history a reconnecting viewer gets back. pi does not page its own
-# transcript, so this is the only way to read back through a conversation.
-scrollback="${MTTY_SCROLLBACK:-1000}"
+port="${MTTY_PORT:-7681}"
 bind="${MTTY_BIND:-127.0.0.1}"
 # The one hostname a proxy in front of this may present. Only needed when you
 # reach it by name rather than by address; see --hostname in the usage.
@@ -43,9 +40,7 @@ Options
 
   --lan          short for --bind 0.0.0.0
   --bind ADDR    listen on one address (default 127.0.0.1, or $MTTY_BIND)
-  --port N       default 7681, or $PORT
-  --scrollback N lines of history a reconnecting viewer gets back
-                 (default 1000, or $MTTY_SCROLLBACK)
+  --port N       default 7681, or $MTTY_PORT
   --hostname NAME the name a proxy in front of this presents, e.g. the
                  Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
   --tunnel       run the Cloudflare tunnel alongside the server
@@ -90,7 +85,6 @@ take_options() {
       --lan) bind=0.0.0.0; shift ;;
       --bind) [[ $# -ge 2 ]] || usage_error "--bind needs a value"; bind=$2; shift 2 ;;
       --port) [[ $# -ge 2 ]] || usage_error "--port needs a value"; port=$2; shift 2 ;;
-      --scrollback) [[ $# -ge 2 ]] || usage_error "--scrollback needs a value"; scrollback=$2; shift 2 ;;
       --hostname) [[ $# -ge 2 ]] || usage_error "--hostname needs a value"; hostname=$2; shift 2 ;;
       --tunnel) with_tunnel=1; shift ;;
       -h|--help|help) usage; exit 0 ;;
@@ -112,7 +106,7 @@ set -- ${REST[@]+"${REST[@]}"}
 
 # setup takes a hostname, not our options, but it should still hear the port so
 # the tunnel it writes points at the right place.
-[[ "$cmd" == setup ]] && exec env PORT="$port" scripts/cf-access.sh "$@"
+[[ "$cmd" == setup ]] && exec env MTTY_PORT="$port" scripts/cf-access.sh "$@"
 
 # Empty unless a name was given, so the flag is absent rather than blank.
 host_args=()
@@ -127,7 +121,7 @@ case "$cmd" in
     if [[ -z "$with_tunnel" ]]; then
       echo "serving http://$bind:$port"
       exec node server/cli.js --port "$port" --bind "$bind" \
-        ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@"
+        ${host_args[@]+"${host_args[@]}"} -- "$@"
     fi
 
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
@@ -162,7 +156,7 @@ case "$cmd" in
     # bash defers signals until the foreground command returns -- so a TERM
     # would sit unhandled and leave the tunnel behind.
     node server/cli.js --port "$port" --bind "$bind" \
-      ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@" &
+      ${host_args[@]+"${host_args[@]}"} -- "$@" &
     server=$!
 
     status=0

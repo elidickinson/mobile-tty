@@ -32,7 +32,7 @@ const RESIZE_COALESCE_MS = 100
 // Generous for a paste, far short of what it takes to matter. Without it a
 // viewer could hand the PTY a hundred megabytes in one frame.
 const MAX_FRAME = 1024 * 1024
-export const DEFAULT_SCROLLBACK = 1000
+const DEFAULT_SCROLLBACK = 1000
 
 // pi's own flag for picking a folder's last session back up, and the test for
 // whether offering it means anything: `bash --continue` is not a thing.
@@ -53,16 +53,19 @@ const KILL_GRACE_MS = 2_000
 class Refused extends Error {}
 
 /**
- * `scrollback` is how much history a reconnecting viewer gets back. It is worth
- * tuning: pi does not page its own transcript, so this is the only way to read
- * back through a conversation on a phone. Roughly 75 bytes a line — 1000 lines
- * is about 75 KB per connect, against a pi transcript re-render that starts at
- * 12 KB and grows with every turn.
+ * `scrollback` is how much history a reconnecting viewer gets back. pi does not
+ * page its own transcript, so this is the only way to read back through a
+ * conversation on a phone — roughly 75 bytes a line, so 1000 lines is about
+ * 75 KB per connect, against a pi transcript re-render that starts at 12 KB and
+ * grows with every turn.
  *
- * Raising it past 1000 only helps `attach`: the browser client's VT core keeps
- * 1000 lines and silently drops the rest, and the limit lives inside its WASM
- * with no option to raise it. A real terminal has its own scrollback and no
- * such cap, so the bytes are not wasted there.
+ * 1000 is the browser client's own ceiling: its VT core keeps that many and
+ * silently drops the rest, and the limit lives inside its WASM with no option to
+ * raise it. One snapshot serves every viewer, so a larger number would reach
+ * only `attach` while making each phone reconnect pay for lines it will throw
+ * away — which is why this is a parameter for tests rather than a flag. If
+ * desktop history ever matters, the answer is a deeper snapshot for `attach`
+ * alone.
  */
 export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, sessionDir = PI_SESSIONS, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
   const auth = new Auth(password)

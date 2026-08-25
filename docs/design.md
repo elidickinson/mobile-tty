@@ -114,9 +114,9 @@ learns about it: the same rule as the keyboard.
 
 The server holds the screen, so attaching costs nothing and prompts nobody. That matters because
 pi renders relatively and re-draws its **entire transcript** on SIGWINCH, a cost that grows with
-the conversation. The snapshot carries the screen and 1000 lines above it by default, because pi does
-not page itself and scrollback is the only way to read back through a conversation; `--scrollback N`
-moves it, though past 1000 lines only `attach` sees the difference. The terminal object outlives
+the conversation. The snapshot carries the screen and 1000 lines above it, because pi does
+not page itself and scrollback is the only way to read back through a conversation; that is also
+the browser core's own cap, so a deeper one would reach only `attach`. The terminal object outlives
 the socket, so a drop leaves the stale screen up rather than blanking; input queues while down,
 resizes do not, since the handshake carries the size.
 

@@ -14,7 +14,7 @@ cd "$(dirname "$0")/.."
 
 hostname="${1:-}"
 tunnel="${2:-mobile-tty}"
-port="${PORT:-7681}"
+port="${MTTY_PORT:-7681}"
 config="$PWD/cloudflared.yml"
 
 if [[ -z "$hostname" ]]; then
