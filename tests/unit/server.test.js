@@ -71,6 +71,23 @@ test('a nonsense handshake closes that socket and nothing else', async () => {
   } finally { await server.close() }
 })
 
+test('shutting down does not wait on a viewer that has stopped answering', async () => {
+  const { server, url } = await start()
+  const ws = new WebSocket(url, ['tty'])
+  await new Promise(resolve => ws.on('open', resolve))
+  ws.send(JSON.stringify({ AuthToken: '', columns: 50, rows: 20 }))
+  await new Promise(resolve => setTimeout(resolve, 300))
+
+  // A phone asleep behind a dead tunnel: the socket is up and never answers.
+  // A close frame would wait 30s for a reply that is not coming, and an
+  // upgraded socket holds http.close() open until it goes — so Ctrl-C hangs.
+  ws._socket.pause()
+
+  const began = Date.now()
+  await server.close()
+  assert.ok(Date.now() - began < 5_000, `close() took ${Date.now() - began}ms`)
+})
+
 test('a resize arriving after the program exits does not take the server down', async () => {
   const { Session } = await import('../../server/session.js')
   const session = new Session({ command: 'sh', args: ['-c', 'exit 0'], cols: 80, rows: 24 })

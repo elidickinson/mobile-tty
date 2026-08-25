@@ -535,6 +535,12 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
       clearTimeout(fitTimer)
       active?.stopFooter()
       active?.session.kill()
+      // Terminated, not closed: a close frame waits for one back, and a phone
+      // asleep behind a dead tunnel does not answer for 30 seconds — which is
+      // how long Ctrl-C would appear to hang, since an upgraded socket holds
+      // http.close() open until it goes. Nobody is owed a handshake from a
+      // server that is already gone.
+      for (const viewer of viewers) viewer.ws.terminate()
       wss.close()
       await new Promise(res => http.close(res))
     },
