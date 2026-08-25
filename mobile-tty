@@ -25,7 +25,6 @@ bind="${MTTY_BIND:-127.0.0.1}"
 # reach it by name rather than by address; see --hostname in the usage.
 hostname="${MTTY_HOSTNAME:-}"
 with_tunnel=""
-with_attach=""
 config="$PWD/cloudflared.yml"
 
 default_program=(pi)
@@ -50,10 +49,6 @@ Options
   --hostname NAME the name a proxy in front of this presents, e.g. the
                  Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
   --tunnel       run the Cloudflare tunnel alongside the server
-  --attach       also attach this terminal to the server it starts, over
-                 loopback. Ctrl-] detaches and leaves it serving the phone;
-                 `down` ends it. Closing the terminal ends it too, as with
-                 plain serve.
 
 Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
@@ -98,7 +93,6 @@ take_options() {
       --scrollback) [[ $# -ge 2 ]] || usage_error "--scrollback needs a value"; scrollback=$2; shift 2 ;;
       --hostname) [[ $# -ge 2 ]] || usage_error "--hostname needs a value"; hostname=$2; shift 2 ;;
       --tunnel) with_tunnel=1; shift ;;
-      --attach) with_attach=1; shift ;;
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
@@ -124,111 +118,64 @@ set -- ${REST[@]+"${REST[@]}"}
 host_args=()
 [[ -n "$hostname" ]] && host_args=(--hostname "$hostname")
 
-# Where to reach the server we are talking to. It has to follow --bind: node
-# resolves `localhost` to ::1 on a machine that prefers IPv6, so a probe pinned
-# to 127.0.0.1 would never find a server that bound by name. URLs want an IPv6
-# literal in brackets.
-case "$bind" in *:*) attach_host="[$bind]" ;; *) attach_host=$bind ;; esac
-
 case "$cmd" in
   serve)
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
 
-    # Nothing else was started, so there is nothing to clean up and nothing to
-    # wait for: hand the process straight over.
-    if [[ -z "$with_tunnel$with_attach" ]]; then
+    # Without a tunnel this shell has nothing to supervise, so it gets out of
+    # the way rather than sitting between you and the server.
+    if [[ -z "$with_tunnel" ]]; then
       echo "serving http://$bind:$port"
       exec node server/cli.js --port "$port" --bind "$bind" \
         ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@"
     fi
 
-    # Attached, nothing else may write to this terminal: a line from the server
-    # or the tunnel would land in the middle of pi's screen.
-    if [[ -n "$with_attach" ]]; then
-      # The probe and the attach client both connect to --bind, so it has to be
-      # an address this machine can reach itself at. A wildcard is not one, and
-      # watching a local session over the network is not what --attach is for.
-      case "$bind" in 127.0.0.1|localhost|::1) ;; *) die "--attach needs --bind to stay on loopback" ;; esac
-      log="${TMPDIR:-/tmp}/mobile-tty.log"
-      echo "logging to $log"
-    fi
-    run_bg() {
-      if [[ -n "$with_attach" ]]; then "$@" >>"$log" 2>&1 & else "$@" & fi
-    }
-
-    if [[ -n "$with_tunnel" ]]; then
-      [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
-      # A proxy in front means the Origin check needs its name; without one the
-      # page loads and the terminal silently never connects.
-      [[ -n "$hostname" ]] ||
-        echo "mobile-tty: WARNING: --tunnel without --hostname; the terminal will not connect" >&2
-      # The edge answers this whether or not the tunnel is running, so it can be
-      # asked before starting. It is the only thing about this setup you cannot
-      # see from this machine.
-      host=$(sed -n 's/^ *- hostname: *//p' "$config" | head -1)
-      probe=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "https://$host/" 2>/dev/null || echo '000 ')
-      case "${probe%% *}" in
-        30*) [[ "${probe#* }" == *cloudflareaccess.com* ]] &&
-               echo "$host is behind a login" ||
-               echo "$host redirects somewhere that is not Access -- check the application" ;;
-        200) echo "WARNING: $host answers with no login in front of it" ;;
-        *) echo "$host is not answering yet (${probe%% *})" ;;
-      esac
-    fi
+    [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
+    # A proxy in front means the Origin check needs its name; without one the
+    # page loads and the terminal silently never connects.
+    [[ -n "$hostname" ]] ||
+      echo "mobile-tty: WARNING: --tunnel without --hostname; the terminal will not connect" >&2
+    # The edge answers this whether or not the tunnel is running, so it can be
+    # asked before starting. It is the only thing about this setup you cannot
+    # see from this machine.
+    host=$(sed -n 's/^ *- hostname: *//p' "$config" | head -1)
+    probe=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' --max-time 8 "https://$host/" 2>/dev/null || echo '000 ')
+    case "${probe%% *}" in
+      30*) [[ "${probe#* }" == *cloudflareaccess.com* ]] &&
+             echo "$host is behind a login" ||
+             echo "$host redirects somewhere that is not Access -- check the application" ;;
+      200) echo "WARNING: $host answers with no login in front of it" ;;
+      *) echo "$host is not answering yet (${probe%% *})" ;;
+    esac
 
     # Installed before anything starts: an interrupt part-way through would
     # otherwise leave a tunnel or a server with nothing watching it. Both are
     # unset until their own line runs, so the trap has to tolerate that.
     trap 'kill ${tunnel:-} ${server:-} 2>/dev/null || true' EXIT INT TERM
 
-    if [[ -n "$with_tunnel" ]]; then
-      run_bg cloudflared tunnel --config "$config" run
-      tunnel=$!
-    fi
+    cloudflared tunnel --config "$config" run &
+    tunnel=$!
 
     echo "serving http://$bind:$port"
     # In the background, then waited on. Not exec, which would replace this
     # shell and take the trap with it; and not the foreground either, because
     # bash defers signals until the foreground command returns -- so a TERM
     # would sit unhandled and leave the tunnel behind.
-    run_bg node server/cli.js --port "$port" --bind "$bind" \
-      ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@"
+    node server/cli.js --port "$port" --bind "$bind" \
+      ${host_args[@]+"${host_args[@]}"} --scrollback "$scrollback" -- "$@" &
     server=$!
 
-    if [[ -z "$with_attach" ]]; then
-      status=0
-      wait $server || status=$?
-      [[ $status -eq 0 ]] || echo "mobile-tty: the server exited ($status); stopping the tunnel too" >&2
-      exit $status
-    fi
-
-    # Attach only once it can actually be connected to, and give up if the
-    # server died on the way rather than retrying against nothing. Check the
-    # child is alive *before* the curl answers: if the port was already taken,
-    # the curl would succeed against that other listener and we would end up
-    # attached to the wrong session.
-    ready=""
-    for _ in $(seq 100); do
-      kill -0 "$server" 2>/dev/null || die "the server exited before it was ready; see $log"
-      curl -s -o /dev/null --max-time 1 "http://$attach_host:$port/" && { ready=1; break; }
-      sleep 0.1
-    done
-    [[ -n "$ready" ]] || die "the server never started listening on $port; see $log"
-
     status=0
-    node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://$attach_host:$port/ws' }))" || status=$?
-
-    # A deliberate detach hands the session to the phone, which is the whole
-    # point of --attach, so the trap is dropped rather than fired. Anything else
-    # means the session is over and the tunnel goes with it.
-    if [[ $status -eq 3 ]]; then
-      trap - EXIT INT TERM
-      exit 0
-    fi
+    wait $server || status=$?
+    [[ $status -eq 0 ]] || echo "mobile-tty: the server exited ($status); stopping the tunnel too" >&2
     exit $status
     ;;
   attach)
-    exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://$attach_host:$port/ws' }))"
+    # Follows --bind: node resolves `localhost` to ::1 on a machine that prefers
+    # IPv6, so a URL pinned to 127.0.0.1 would never find a server that bound by
+    # name. An IPv6 literal needs brackets to go in one.
+    case "$bind" in *:*) host="[$bind]" ;; *) host=$bind ;; esac
+    exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://$host:$port/ws' }))"
     ;;
   tunnel)
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"

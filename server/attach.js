@@ -17,10 +17,9 @@ import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
 const DETACH = 0x1d
 const DETACH_KITTY = /\x1b\[93(:[0-9]+)?;\d+u/
 
-// Detaching is not the session ending, and `serve --attach` has to tell them
-// apart: one hands the server over to the phone, the other means there is
-// nothing left to hand over.
-export const DETACHED = 3
+// Detaching leaves the server up for the phone, so it must not report itself
+// as the session ending.
+const DETACHED = 3
 
 // Same chord in either encoding.
 export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chunk)
