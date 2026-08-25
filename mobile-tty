@@ -124,6 +124,12 @@ set -- ${REST[@]+"${REST[@]}"}
 host_args=()
 [[ -n "$hostname" ]] && host_args=(--hostname "$hostname")
 
+# Where to reach the server we are talking to. It has to follow --bind: node
+# resolves `localhost` to ::1 on a machine that prefers IPv6, so a probe pinned
+# to 127.0.0.1 would never find a server that bound by name. URLs want an IPv6
+# literal in brackets.
+case "$bind" in *:*) attach_host="[$bind]" ;; *) attach_host=$bind ;; esac
+
 case "$cmd" in
   serve)
     [[ $# -gt 0 ]] || set -- "${default_program[@]}"
@@ -139,10 +145,10 @@ case "$cmd" in
     # Attached, nothing else may write to this terminal: a line from the server
     # or the tunnel would land in the middle of pi's screen.
     if [[ -n "$with_attach" ]]; then
-      # Attaching is a loopback-only act: it connects to 127.0.0.1, so binding
-      # somewhere else would only leave the readiness probe unable to find the
-      # server it just started.
-      case "$bind" in 127.0.0.1|localhost) ;; *) die "--attach needs --bind to stay on loopback" ;; esac
+      # The probe and the attach client both connect to --bind, so it has to be
+      # an address this machine can reach itself at. A wildcard is not one, and
+      # watching a local session over the network is not what --attach is for.
+      case "$bind" in 127.0.0.1|localhost|::1) ;; *) die "--attach needs --bind to stay on loopback" ;; esac
       log="${TMPDIR:-/tmp}/mobile-tty.log"
       echo "logging to $log"
     fi
@@ -204,13 +210,13 @@ case "$cmd" in
     ready=""
     for _ in $(seq 100); do
       kill -0 "$server" 2>/dev/null || die "the server exited before it was ready; see $log"
-      curl -s -o /dev/null --max-time 1 "http://127.0.0.1:$port/" && { ready=1; break; }
+      curl -s -o /dev/null --max-time 1 "http://$attach_host:$port/" && { ready=1; break; }
       sleep 0.1
     done
     [[ -n "$ready" ]] || die "the server never started listening on $port; see $log"
 
     status=0
-    node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://127.0.0.1:$port/ws' }))" || status=$?
+    node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://$attach_host:$port/ws' }))" || status=$?
 
     # A deliberate detach hands the session to the phone, which is the whole
     # point of --attach, so the trap is dropped rather than fired. Anything else
@@ -222,7 +228,7 @@ case "$cmd" in
     exit $status
     ;;
   attach)
-    exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://127.0.0.1:$port/ws' }))"
+    exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://$attach_host:$port/ws' }))"
     ;;
   tunnel)
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"

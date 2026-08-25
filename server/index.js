@@ -341,8 +341,6 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
     await admitting
   }
 
-  start({ place: placeFor(startCwd), resume: false })
-
   let fitTimer = null
   const scheduleFit = () => {
     if (fitTimer) return
@@ -415,6 +413,19 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
         `${undeclared ? ' — a proxy in front of this needs --hostname' : ''}`)
       return false
     },
+  })
+
+  // A failed bind arrives here rather than on the http server: ws forwards its
+  // errors to itself, and an 'error' with no listener is fatal. Nothing has
+  // been spawned at this point — the program starts from the listen callback —
+  // so a port we cannot have costs only this message.
+  wss.on('error', err => {
+    console.error(err.code === 'EADDRINUSE'
+      ? `server: port ${port} is already in use\n` +
+        `  if that is another mobile-tty:  mobile-tty --port ${port} attach\n` +
+        `  if it is something else:        serve on another --port`
+      : `server: cannot listen on ${bind}:${port}: ${err.message}`)
+    onExit?.({ exitCode: 1, signal: 0 })
   })
 
   wss.on('connection', ws => {
@@ -502,9 +513,16 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
   }, PING_MS)
   ping.unref()
 
+  // The program starts here rather than before listening: one that cannot be
+  // served should never have been spawned, and a pi that starts only to be
+  // killed leaves a session file behind for the folder list to offer.
+  //
   // Port 0 means the OS picks, so report what it actually bound rather than
   // what was asked for.
-  http.listen(port, bind, () => onListen?.({ port: http.address().port, bind }))
+  http.listen(port, bind, () => {
+    start({ place: placeFor(startCwd), resume: false })
+    onListen?.({ port: http.address().port, bind })
+  })
 
   return {
     http,
