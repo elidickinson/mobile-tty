@@ -88,7 +88,7 @@ const expectedIds = Array.from({ length: 100 }, (_, i) => i)
 test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_000 }, async t => {
   const agentDir = await mkdtemp(join(tmpdir(), 'mobile-tty-real-pi-'))
   const extension = resolve('tests/real-pi/fixture-extension.ts')
-  const footerExtension = resolve('ext/mtty-footer.ts')
+  const footerExtension = resolve('pi-extensions/mtty-footer.ts')
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR
   const previousOffline = process.env.PI_OFFLINE
   const restoreEnvironment = () => {

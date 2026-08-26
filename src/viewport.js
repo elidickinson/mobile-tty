@@ -1,6 +1,5 @@
 // The adapter seam. `readViewport` is the only part that touches the browser;
-// everything downstream is pure and testable against the fixtures in
-// docs/numbers.md.
+// everything downstream is pure and testable against on-device fixtures.
 
 export const KEY_BAR_H = 44
 

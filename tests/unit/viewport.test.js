@@ -7,7 +7,7 @@ import { deriveLayout, gridFor, KEY_BAR_H } from '../../src/viewport.js'
 // 13px, so the grid math can be checked against the recorded configurations.
 const CELL_13PX = { width: 8.04, height: 15.0 }
 
-// The five configurations measured on device; see docs/numbers.md.
+// The five configurations measured on device (iPhone, 402x874 pt).
 const FIXTURES = {
   'safari portrait, kb down': {
     innerWidth: 402, innerHeight: 714, visualWidth: 402, visualHeight: 714, offsetTop: 0,
