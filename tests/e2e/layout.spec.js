@@ -89,6 +89,12 @@ test('rotating to landscape refits the grid — that is the whole point of lands
 test('the grid is sized from the layout viewport, so it outlives the keyboard', async ({ page }) => {
   await ready(page)
   const rows = await page.evaluate(() => window.mtty.state.rows)
+  // The scroller ends at the last written row, so the grid only outsizes the
+  // window where a transcript has actually filled it.
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('/stream 40')
+  await ta.press('Enter')
+  await expect(page.locator('#screen')).toContainText('stream line 39', { timeout: 10_000 })
   await page.setViewportSize({ width: 402, height: 498 })
   await page.waitForTimeout(600)
 
@@ -100,12 +106,6 @@ test('the grid is sized from the layout viewport, so it outlives the keyboard', 
   expect(m.scrollHeight).toBeGreaterThan(m.clientHeight)
   expect(await page.evaluate(() => window.mtty.state.rows)).toBe(rows)
 })
-
-// Real pi draws its input box after the transcript, so a fresh session leaves
-// the foot of the grid untouched. The fixture pins its box to the last row
-// instead, so that shape is written into the terminal directly.
-const shortScreen = page => page.evaluate(() =>
-  window.mtty.term.write('\x1b[H\x1b[2J\x1b[3J' + 'transcript\r\n'.repeat(8) + '> '))
 
 const gridRows = page => page.evaluate(() => {
   const s = document.getElementById('screen')
@@ -121,9 +121,10 @@ const gridRows = page => page.evaluate(() => {
   }
 })
 
+// A fresh fixture is the short screen: a one-line transcript, the input box
+// inline after it, and an empty foot of the grid below.
 test('a screen shorter than the grid ends at the key bar, not above a blank tail', async ({ page }) => {
   await ready(page)
-  await shortScreen(page)
   await settled(page)
 
   const m = await gridRows(page)
@@ -133,7 +134,6 @@ test('a screen shorter than the grid ends at the key bar, not above a blank tail
 
 test('a shorter viewport cannot strand a short screen above the fold', async ({ page }) => {
   await ready(page)
-  await shortScreen(page)
   await settled(page)
 
   await page.setViewportSize({ width: 402, height: 498 })   // the keyboard, near enough

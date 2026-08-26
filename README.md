@@ -74,7 +74,7 @@ No build step: the client is bundled per page request, so client edits need a re
 
 ```
 npm test                # unit, including the snapshot round-trip gate
-npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.sh
+npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.js
 npm run test:integrity  # that no viewer is ever sent a gap
 npm run test:smoke      # against real pi; sends no prompts, costs no tokens
 ```

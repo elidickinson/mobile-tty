@@ -11,7 +11,7 @@ import { WebSocket } from 'ws'
 import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
 
-const start = async (command = 'tests/fixtures/fake-pi.sh', args = [], options = {}) => {
+const start = async (command = 'tests/fixtures/fake-pi.js', args = [], options = {}) => {
   const server = createTerminalServer({ port: 0, bind: '127.0.0.1', command, args, ...options })
   await new Promise(r => server.http.on('listening', r))
   const { port } = server.http.address()
@@ -383,7 +383,7 @@ test('the folder list names the current folder and only offers continue for pi',
 
     assert.equal(viewer.places.cwd, process.cwd(), 'the folder the server started in is where it says it is')
     assert.deepEqual(viewer.places.places.map(place => place.name).sort(), ['mobile-tty', 'one', 'two'].sort())
-    // fake-pi.sh is not pi, and `--continue` is pi's flag.
+    // fake-pi.js is not pi, and `--continue` is pi's flag.
     assert.equal(viewer.places.resume, false)
   } finally {
     viewer.close()

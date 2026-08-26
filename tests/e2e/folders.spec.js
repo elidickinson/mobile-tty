@@ -72,7 +72,7 @@ test('a row asks before it acts: one tap opens the choice, it does not switch', 
 
   await alpha.locator('.place-head').click()
   await expect(alpha.locator('.place-actions')).toBeVisible()
-  // fake-pi.sh is not pi, so continuing is not offered for it.
+  // fake-pi.js is not pi, so continuing is not offered for it.
   await expect(alpha.locator('.place-actions button')).toHaveText(['Start here'])
 
   // Nothing was ended by looking.

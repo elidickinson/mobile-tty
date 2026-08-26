@@ -12,7 +12,7 @@ fi
 
 # Server (fixture program behind it). Port 8199 stays clear of Playwright.
 if ! lsof -iTCP:8199 -sTCP:LISTEN -P >/dev/null 2>&1; then
-  nohup node server/cli.js --port 8199 -- tests/fixtures/fake-pi.sh > /tmp/mtty-server.log 2>&1 &
+  nohup node server/cli.js --port 8199 -- tests/fixtures/fake-pi.js > /tmp/mtty-server.log 2>&1 &
   echo $! > /tmp/mtty-server.pid
 fi
 for i in $(seq 1 20); do curl -sf http://127.0.0.1:8199/ >/dev/null && break; sleep 0.5; done
