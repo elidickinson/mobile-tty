@@ -101,6 +101,49 @@ test('the grid is sized from the layout viewport, so it outlives the keyboard', 
   expect(await page.evaluate(() => window.mtty.state.rows)).toBe(rows)
 })
 
+// Real pi draws its input box after the transcript, so a fresh session leaves
+// the foot of the grid untouched. The fixture pins its box to the last row
+// instead, so that shape is written into the terminal directly.
+const shortScreen = page => page.evaluate(() =>
+  window.mtty.term.write('\x1b[H\x1b[2J\x1b[3J' + 'transcript\r\n'.repeat(8) + '> '))
+
+const gridRows = page => page.evaluate(() => {
+  const s = document.getElementById('screen')
+  const rows = [...s.querySelectorAll('.term-row:not(.term-scrollback-row)')]
+  const shown = rows.filter(r => !r.hidden)
+  return {
+    total: rows.length,
+    shown: shown.length,
+    lastBottom: shown.at(-1).getBoundingClientRect().bottom,
+    lastTop: shown.at(-1).getBoundingClientRect().top,
+    boxTop: s.getBoundingClientRect().top,
+    boxBottom: s.getBoundingClientRect().bottom,
+  }
+})
+
+test('a screen shorter than the grid ends at the key bar, not above a blank tail', async ({ page }) => {
+  await ready(page)
+  await shortScreen(page)
+  await settled(page)
+
+  const m = await gridRows(page)
+  expect(m.shown).toBeLessThan(m.total)
+  expect(m.lastBottom).toBeCloseTo(m.boxBottom, 0)
+})
+
+test('a shorter viewport cannot strand a short screen above the fold', async ({ page }) => {
+  await ready(page)
+  await shortScreen(page)
+  await settled(page)
+
+  await page.setViewportSize({ width: 402, height: 498 })   // the keyboard, near enough
+  await settled(page)
+
+  const m = await gridRows(page)
+  expect(m.lastTop).toBeGreaterThanOrEqual(m.boxTop - 1)
+  expect(m.lastBottom).toBeCloseTo(m.boxBottom, 0)
+})
+
 test('the key bar covers the home-indicator inset, leaving no gap beneath it', async ({ page }) => {
   await ready(page)
   await page.addStyleTag({ content: '#safe-probe { padding-bottom: 34px !important; }' })

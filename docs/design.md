@@ -89,6 +89,13 @@ keyboard never reflows pi. Involuntary events never touch the grid; **rotation d
 deliberate and worth 93 columns against portrait's 50. Insets are unresolved on the first layout
 pass, so one refit on the next frame keeps rows from stranding below the fold.
 
+**The scroller ends at the last written row.** pi draws its input box after the transcript rather
+than on the last row, so a grid sized for the keyboard-down screen is mostly empty on a fresh
+session. Everything that means "the bottom" measures the scroller — the pin, the at-bottom test,
+and wterm's own follow-output and scroll-on-keystroke — so the empty rows at the foot of the grid
+are hidden and what is left is anchored to the bottom of the box. That corrects every consumer at
+once, where a content-aware scroll target would be undone by the next keystroke.
+
 ## The status strip
 
 pi truncates its footer to the terminal width as it renders, so at phone width the model name on

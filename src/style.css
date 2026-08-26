@@ -68,6 +68,8 @@ html, body {
   transform-origin: 0 0;
   overflow-y: auto;
   overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
   /* Say so explicitly: a vertical drag here scrolls, it is not a gesture for
      the horizontal scroller wrapped around it to claim. */
   touch-action: pan-y;
@@ -81,6 +83,12 @@ html, body {
      it — a parked reader creeps one row per line of output. */
   overflow-anchor: none;
 }
+
+/* app.js hides the grid's blank tail; this puts what is left against the key bar
+   rather than at the top with the gap underneath. `margin-top` on the grid and
+   not `justify-content: flex-end` on the scroller, which would put the top of an
+   overflowing transcript out of reach. */
+.term-grid { margin-top: auto; }
 
 /* wterm ships desktop-window chrome — padding, rounding, a drop shadow. On a
    phone the terminal is the whole screen. */
@@ -184,7 +192,8 @@ html, body {
 }
 
 /* `display` on an id selector beats the `hidden` attribute's UA rule, so an
-   invisible overlay would still swallow every tap. */
+   invisible overlay would still swallow every tap — and so would `.term-row`,
+   which is what the grid's blank-tail trim rides on. */
 [hidden] { display: none !important; }
 
 /* Anchored to the top, because it exists to explain a broken bottom. */

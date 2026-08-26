@@ -345,6 +345,34 @@ function onViewportChange() {
 
 // ---------------------------------------------------------------- scrolling
 
+/**
+ * A row with nothing on it. Blank cells coalesce into one bare `<span>` of
+ * spaces, so anything carrying a class or a style — the cursor, a block glyph
+ * drawn as a background, a coloured run — is content even where its text is
+ * empty.
+ */
+const rowIsBlank = row => !row.textContent.trim() && !row.querySelector('span[class],span[style]')
+
+/**
+ * Hide the empty rows at the foot of the grid, so the scroller ends where the
+ * program stopped writing.
+ *
+ * Everything that means "the bottom" measures the scroller — sizeScreen's pin,
+ * atBottom, and wterm's own follow-output and scroll-on-keystroke, which this
+ * client does not own. Ending its content at the last written row corrects all
+ * of them at once, where a content-aware scroll target here would be undone by
+ * the next keystroke.
+ */
+function trimBlankTail() {
+  const rows = term.renderer.rowEls
+  let cut = rows.length
+  while (cut > 0 && rowIsBlank(rows[cut - 1])) cut--
+  for (let i = 0; i < rows.length; i++) {
+    const blank = i >= cut
+    if (rows[i].hidden !== blank) rows[i].hidden = blank
+  }
+}
+
 // wterm owns sticking to the bottom: it checks the position before each write,
 // re-pins after rendering, and jumps back on a keystroke. This only decides
 // whether to offer the way back, and uses wterm's own tolerance so the two
@@ -920,7 +948,7 @@ function diagnosticText() {
     `strip    ${footerText ?? 'off'}`,
     `term     ${Math.round(l.terminal.width)}x${Math.round(l.terminal.height)}  stable ${Math.round(l.stableHeight)}`,
     `scroll   top ${screen.scrollTop} of ${screen.scrollHeight} in ${screen.clientHeight}`,
-    `sb       ${sb}   domRows ${screen.querySelectorAll('.term-row').length}   held ${heldBytes}B`,
+    `sb       ${sb}   domRows ${screen.querySelectorAll('.term-row:not([hidden])').length}   held ${heldBytes}B`,
     `overflow ${getComputedStyle(screen).overflowY}   class ${screen.className}`,
   ].join('\n')
 }
@@ -1021,11 +1049,18 @@ async function main() {
   // into a silent no-op, which looks exactly like the bug it works around.
   const r = term.renderer
   if (!Array.isArray(r?._scrollbackRowEls) ||
+      !Array.isArray(r?.rowEls) ||
       typeof r._renderedScrollbackCount !== 'number' ||
       typeof r.syncScrollback !== 'function' ||
+      typeof r.render !== 'function' ||
       typeof term._doRender !== 'function') {
     throw new Error('wterm renderer internals moved — the scrollback refresh needs rewriting')
   }
+
+  // Between the paint and the re-pin that follows it inside _doRender, which is
+  // the only order that works: the pin reads the geometry the trim decides.
+  const paintOfRecord = r.render.bind(r)
+  r.render = core => { paintOfRecord(core); trimBlankTail() }
 
   // wterm decides follow-output when a write arrives — latching "was at the
   // bottom" — but acts a frame later, so a write that lands while the reader

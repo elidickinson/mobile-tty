@@ -86,6 +86,11 @@ export const ready = async page => {
   await expect.poll(() => page.evaluate(() =>
     window.mtty.state.cols === window.mtty.state.wanted.cols &&
     window.mtty.state.rows === window.mtty.state.wanted.rows)).toBe(true)
+  // And the fixture polls its own size once a second, so the grid being right
+  // is not yet the screen being drawn at it. Until that redraw its content
+  // stops short of the last row, and the scroller ends where the content does.
+  const [cols, rows] = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])
+  await expect(page.locator('#screen')).toContainText(`${cols}x${rows}`)
 }
 
 export const scrollTop = page => page.evaluate(() => document.getElementById('screen').scrollTop)
