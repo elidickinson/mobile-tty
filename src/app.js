@@ -1,6 +1,6 @@
 // The client: wires the terminal to the socket, and owns the layout, the key
 // bar, the menu and the on-screen diagnostics.
-import { WTerm } from '@wterm/dom'
+import { WTerm } from '../vendor/wterm/packages/@wterm/dom/src/index.ts'
 import { WasmBridge } from '@wterm/core'
 import { TtydConnection } from './transport.js'
 import { readViewport, deriveLayout, gridFor, measureCell, KEY_BAR_H } from './viewport.js'
@@ -877,17 +877,9 @@ async function main() {
   meter = await WasmBridge.load()
   meter.init(state.cols, state.rows)
 
-  // The renderer's state is private to TypeScript only, so reaching into it is
-  // safe but not guaranteed. If an upgrade renames any of it these become
-  // silent no-ops, which look exactly like the bugs they work around.
+  // The vendored wterm source is ours to reach into; these rebinds move with
+  // it (see docs/plan-ios-input.md) and its own tests cover the internals.
   const r = term.renderer
-  if (!Array.isArray(r?.rowEls) ||
-      typeof r.render !== 'function' ||
-      typeof term._doRender !== 'function' ||
-      typeof term._shouldScrollToBottom !== 'boolean' ||
-      typeof term._isScrolledToBottom !== 'function') {
-    throw new Error('wterm renderer internals moved')
-  }
 
   // Between the paint and the re-pin that follows it inside _doRender, which is
   // the only order that works: the pin reads the geometry the trim decides.
