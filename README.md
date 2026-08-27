@@ -9,6 +9,22 @@ Access your Pi coding agent (with *all* the features) from a mobile device. Uses
   <img src="docs/screenshot-scrollback.png" width="300" alt="Scrolled back through a transcript, with a ↓ latest button counting new output">
 </p>
 
+## How it works
+
+One Node process is the whole app. It runs pi on a real terminal (a PTY), and every viewer -- phone, desktop tab, `attach` -- is a WebSocket client watching that one stream. The grid is one size for everyone: the narrowest viewer's, because a real terminal can only be one width.
+
+The server also feeds every byte into a second, headless terminal (`server/mirror.js`). That copy does two jobs: a joining viewer is handed a snapshot of it instead of making pi redraw (joining costs one screen, not the transcript), and it survives disconnects -- close the tab, reopen, the screen is back instantly.
+
+The phone renders to the DOM, so the terminal's own scrollback is real history: scrolling, selection and find are the browser's, not reimplemented.
+
+### Limitations
+
+- **One program at a time.** Switching to a different pi session ends it. The conversation survives, but it won't keep working in the background. If you need two sessions going at once, you should run two instances of mobile-tty.
+- **No alt-screen apps** (Claude Code, vim). The renderer ignores the alternate screen so scrollback stays real history; apps that switch to it can't render.
+- **Reconnecting gets you the last ~1000 lines of scrollback.** The browser core's scrollback is hard-capped at 1000 lines (inside its WASM, not easy to change), so the snapshot matches it. Enough for a few turns back; a long session's history is gone after a reload.
+- **The input box is pi's**, costing 5-6 rows; a client-side composer box would be better in some ways but would break pi's autocomplete.
+- **iPhone/Safari only**; Android untested.
+
 ## Get Started
 
 ```
