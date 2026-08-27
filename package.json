@@ -16,8 +16,8 @@
     "@playwright/test": "^1.62.1"
   },
   "dependencies": {
-    "@wterm/core": "^0.3.3",
-    "@wterm/dom": "^0.3.3",
+    "@wterm/core": "0.3.4",
+    "@wterm/dom": "0.3.4",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "esbuild": "^0.28.2",
