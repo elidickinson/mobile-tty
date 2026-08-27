@@ -73,11 +73,13 @@ to `tests/ios/trace-results.json`.
 ## Held finger (manual step)
 
 The `pointerdown` guard was verified indirectly (scroll events stay at 0 while
-a finger rests mid-drag, which is the state the app's `touching` set tracks).
-Codifying the held-drag-then-release cycle as a scenario costs more runs than
-it's worth; to check by hand: hold in the simulator, watch
+a finger rests mid-drag, the state that used to gate the app's per-visit
+rebuild; the rebuild is gone with virtualized scrollback, but the same held
+finger matters to any programmatic scrollTop during a gesture). Codifying the
+held-drag-then-release cycle as a scenario costs more runs than it's worth; to
+check by hand: hold in the simulator, watch
 `window.__trace` / `document.querySelectorAll('.term-scrollback-row')` stay
-frozen until release, then a quiet window, then one rebuild.
+frozen until release.
 
 ## Simulator caveats (why wedge did not show)
 

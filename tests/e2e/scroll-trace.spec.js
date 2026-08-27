@@ -18,14 +18,13 @@ import { test, expect, ready, settled, fillScrollback, scrollbackCount, startScr
 // with, and a poll would take that for a pass.
 const fossilRows = page => page.evaluate(() => {
   const b = window.mtty.term.bridge
-  const s = document.getElementById('screen')
-  const rows = [...s.querySelectorAll('.term-scrollback-row')]
-  const topSpacer = s.querySelector('.term-scrollback-spacer')
-  const rowH = rows.length ? rows[0].offsetHeight : window.mtty.state.cell.height
-  // The first drawn row's absolute index sits in the top spacer: the px span
-  // of unrendered history above the window. DOM row j is absolute index
-  // start + j; core offsets run newest-first.
-  const start = Math.round(parseFloat(topSpacer?.style.height ?? 0) / rowH)
+  const r = window.mtty.term.renderer
+  const rows = [...document.getElementById('screen').querySelectorAll('.term-scrollback-row')]
+  // First drawn row's absolute index, straight from the renderer's keying:
+  // startKey = discarded + start, and the discarded count it was keyed with
+  // is stored beside it. DOM row j is absolute index start + j; core offsets
+  // run newest-first.
+  const start = r._scrollbackStartKey - r._renderedDiscardedCount
   const count = b.getScrollbackCount()
   const coreLine = off => {
     let t = ''
@@ -55,7 +54,11 @@ const parkAndTrace = async (page, at) => {
   await page.waitForTimeout(1200)               // ring rotates ~12 lines first
   await startScrollTrace(page, { parkAt: at })  // the park's re-window render
   await page.waitForTimeout(TRACE_MS)           // the stream is held throughout
-  return stopScrollTrace(page)
+  const trace = await stopScrollTrace(page)
+  // The re-window lands within a frame or two; a longer all-null run means the
+  // eye never got content and every identity assertion would measure nothing.
+  expect(trace.findIndex(s => s.head != null)).toBeLessThan(3)
+  return trace
 }
 
 // The park lands on spacer geometry for a frame or two, until the renderer
@@ -222,7 +225,9 @@ test('a reconnect snapshot lands rather than queue behind a parked reader', asyn
   // Anchored: "disconnected" contains "connected" as a substring.
   await expect.poll(() => page.locator('#menu-state').textContent(), { timeout: 10_000 }).toMatch(/^connected/)
   await expect.poll(() => fossilRows(page), { timeout: 5_000 }).toMatchObject({ bad: 0, core: 1000 })
-  expect((await fossilRows(page)).rows).toBeLessThan(200)   // a window, not the whole buffer
+  const fr = await fossilRows(page)
+  expect(fr.rows).toBeGreaterThan(20)          // the window actually drew...
+  expect(fr.rows).toBeLessThan(200)            // ...as a window, not the whole buffer
 
   // The hold still works after the snapshot: parked means new output counts.
   await expect.poll(() => page.locator('#to-bottom').textContent(), { timeout: 5_000 }).toMatch(/\d+ new/)
@@ -236,11 +241,12 @@ test('rotation keeps the drawn window honest across visits into history', async 
   await ta.press('Enter')
   await settled(page)
 
-  // First visit: the window under the eye matches the core.
+  // First visit: the window under the eye matches the core, and is a window.
   await stream(page, 60)
   await startScrollTrace(page, { parkAt: 0.4 })
   await page.waitForTimeout(900)
   await expect.poll(() => fossilRows(page)).toMatchObject({ bad: 0, core: 1000 })
+  expect((await fossilRows(page)).rows).toBeLessThan(200)
 
   // Return to the bottom — the visit ends, the hold flushes, and the ring
   // rotates past what the window showed. Park again: the re-window render
@@ -254,6 +260,7 @@ test('rotation keeps the drawn window honest across visits into history', async 
   await startScrollTrace(page, { parkAt: 0.6 })
   await page.waitForTimeout(900)
   await expect.poll(() => fossilRows(page)).toMatchObject({ bad: 0, core: 1000 })
+  expect((await fossilRows(page)).rows).toBeLessThan(200)
   await stopScrollTrace(page)
 })
 
