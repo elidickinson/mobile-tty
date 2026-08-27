@@ -70,14 +70,9 @@ to `tests/ios/trace-results.json`.
    On this simulator, the write lands AND the scroller keeps responding -- the
    wedge class is **not reproducible here** (see below).
 
-## Held finger (manual step)
+## Held finger
 
-The `pointerdown` guard was verified indirectly (scroll events stay at 0 while
-a finger rests mid-drag, which is the state the app's `touching` set tracks).
-Codifying the held-drag-then-release cycle as a scenario costs more runs than
-it's worth; to check by hand: hold in the simulator, watch
-`window.__trace` / `document.querySelectorAll('.term-scrollback-row')` stay
-frozen until release, then a quiet window, then one rebuild.
+Held output does not programmatically move a parked reader, so no held-drag guard is needed. Verify on a device that a drag held in place while output arrives still releases into an ordinary, responsive scroll.
 
 ## Simulator caveats (why wedge did not show)
 

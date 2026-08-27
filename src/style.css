@@ -74,13 +74,8 @@ html, body {
      the horizontal scroller wrapped around it to claim. */
   touch-action: pan-y;
   overscroll-behavior: contain;
-  /* The app owns scroll position wherever content moves — follow-output, the
-     history rebuild's re-landing, keyboard pinning, resize restoration. UA
-     anchoring would be a second actor doing the same job off its own choice of
-     anchor: the rebuild detaches every scrollback row, anchor included, and
-     WebKit then picks a live grid row below the insertion point, after which
-     each appended history row pushes the anchor down and walks the box with
-     it — a parked reader creeps one row per line of output. */
+  /* The app owns scroll position for follow-output, keyboard pinning, and
+     resize restoration. Browser anchoring is a competing scroll owner. */
   overflow-anchor: none;
 }
 

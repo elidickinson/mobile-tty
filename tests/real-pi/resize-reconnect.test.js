@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { WebSocket } from 'ws'
-import { WasmBridge } from '@wterm/core'
+import { createGhosttyCore } from '../ghostty.js'
 import { createTerminalServer } from '../../server/index.js'
 
 const INPUT = 0x30
@@ -32,7 +32,7 @@ const row = (core, y, saved = false) =>
   }).join('').trimEnd()
 
 const connectViewer = async (url, columns, rows) => {
-  const core = await WasmBridge.load()
+  const core = await createGhosttyCore()
   core.init(columns, rows)
   const ws = new WebSocket(url, ['tty'])
   let lastOutput = Date.now()

@@ -1,8 +1,8 @@
-// The snapshot crosses from xterm's serializer into wterm's Zig core, which are
-// two independent VT implementations. This is the gate on that boundary.
+// The snapshot crosses from xterm's serializer into the browser's Ghostty core.
+// This is the gate on that boundary.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { WasmBridge } from '@wterm/core'
+import { createGhosttyCore } from '../ghostty.js'
 import { Mirror } from '../../server/mirror.js'
 
 const COLS = 60
@@ -19,11 +19,11 @@ const roundTrip = async input => {
   mirror.write(Buffer.from(input))
   await mirror.drain()
 
-  const direct = await WasmBridge.load()
+  const direct = await createGhosttyCore()
   direct.init(COLS, ROWS)
   direct.writeString(input)
 
-  const restored = await WasmBridge.load()
+  const restored = await createGhosttyCore()
   restored.init(COLS, ROWS)
   restored.writeString(mirror.snapshot())
 
@@ -52,7 +52,7 @@ test('the snapshot replaces a screen rather than painting over it', async () => 
   mirror.write(Buffer.from('after\r\n'))
   await mirror.drain()
 
-  const core = await WasmBridge.load()
+  const core = await createGhosttyCore()
   core.init(COLS, ROWS)
   core.writeString('stale line one\r\nstale line two\r\n')
   core.writeString(mirror.snapshot())
@@ -103,7 +103,7 @@ test('a character split across the snapshot is not lost', async () => {
   const held = Buffer.from(mirror.pending)
   const live = Buffer.from([0x94, 0x80])     // ...and completes after admission
 
-  const core = await WasmBridge.load()
+  const core = await createGhosttyCore()
   core.init(COLS, ROWS)
   core.writeString(snapshot)
   core.writeRaw(held)
@@ -121,7 +121,7 @@ test('an escape sequence split across the snapshot is not rendered as text', asy
   const snapshot = mirror.snapshot()
   const held = Buffer.from(mirror.pending)
 
-  const core = await WasmBridge.load()
+  const core = await createGhosttyCore()
   core.init(COLS, ROWS)
   core.writeString(snapshot)
   core.writeRaw(held)
@@ -140,7 +140,7 @@ test('the snapshot replaces the history too, rather than stacking under it', asy
   // A page that reconnects still holds everything from before it dropped. RIS
   // does not clear saved lines, so without ED 3 the snapshot's history lands
   // underneath the stale history instead of replacing it.
-  const core = await WasmBridge.load()
+  const core = await createGhosttyCore()
   core.init(COLS, ROWS)
   for (let i = 0; i < 40; i++) core.writeString(`stale ${i}\r\n`)
   const stale = core.getScrollbackCount()

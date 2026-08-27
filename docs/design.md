@@ -16,15 +16,14 @@ Why the thing is shaped this way: what the parts are, what was rejected, and wha
 ## Renderer: wterm, DOM over canvas
 
 - **`@wterm/dom` renders to the DOM**, so momentum scroll, selection handles and find come free. Canvas renderers would bring their own viewport and scrollbar; here the wterm element is the one scroller.
-- **Inlined base64 WASM** -- what survives the single-document constraint. No separate fetch, no MIME to get right.
+- **`@wterm/ghostty` uses libghostty in WASM** behind the same DOM renderer. It reflows correctly on a column change and handles complete grapheme clusters.
+- **Inlined base64 WASM** -- the Ghostty binary adds about 566 KB to the document, but needs no separate fetch or MIME handling.
 - **`write(Uint8Array)` hands raw bytes to the parser.** A sequence split across two messages is reassembled by the core; JS never decodes the socket.
 - **The renderer owns the screen model, scrollback, painting and key encoding; the server owns none of it.**
 - xterm.js was rejected: largest bundle, long-open mobile bugs (#1101, #2403, #1007, #5721).
-- **Browser scrollback cap: 1000 lines** -- writing 26,000 lines into the VT core held 1000. The limit is inside its WASM with no option to raise it, which is why the snapshot is fixed at the same number.
+- **Reconnect history is capped at 1000 lines** by the server snapshot. Ghostty 0.3.4 does not reliably honour its browser scrollback byte budget, so a continuous session can retain more; the snapshot stays bounded so reconnect cost is predictable.
 
-The core is a separate choice, since `@wterm/dom` takes any `TerminalCore`. `@wterm/ghostty` is broken at 0.3.3 (WASM trap on grapheme clusters, inert `scrollbackLimit`, 431 KB of uninlined WASM); `ghostty-vt-core` holds the working swap, to retest on a later release.
-
-**Known bug:** a column shrink loses on-screen text with nothing scrolling off -- 192 of 537 characters from 80 to 50 columns, 5 even from 80 to 79. libghostty reflows the same input correctly, the strongest reason to revisit the core. The current core also answers no queries but CPR, so pi's startup probes go unanswered.
+The core is a separate choice, since `@wterm/dom` takes any `TerminalCore`. `@wterm/ghostty` implements that public interface, including terminal responses and the scrollback-discard signal; `@wterm/dom` virtualizes its DOM history without replacing the terminal element that provides native scrolling and selection.
 
 ## Input, keyboard, viewport
 
@@ -63,7 +62,7 @@ pi truncates its footer to the terminal width as it renders, so at phone width t
 ## Reconnect and attach
 
 - **The server holds the screen, so attaching costs nothing and prompts nobody.** That matters because pi renders relatively and re-draws its **entire transcript** on SIGWINCH -- measured 12 KB after one turn, +3.3 KB per trivial turn, linear.
-- **The snapshot carries the screen plus 1000 lines of scrollback** (~75 KB): pi does not page itself, so scrollback is the only way to read back; 1000 is also the browser core's cap, so a deeper snapshot would reach only `attach` while every phone reconnect paid for lines the browser drops.
+- **The snapshot carries the screen plus 1000 lines of scrollback** (~75 KB): pi does not page itself, so scrollback is the only way to read back. Keeping reconnect history bounded makes a wake or new viewer cost the screen rather than the transcript.
 - **A drop leaves the stale screen up**, not a blank. Input queues while down; resizes do not, since the handshake carries the size.
 
 `attach` is a client of the same protocol, so the desktop cannot resize the PTY behind the server's back. It acts like a terminal on its own account: raw mode restored on every exit path, pi's and the snapshot's modes undone on the way out, SIGWINCH forwarded, `Ctrl-C`/`Ctrl-Z` passed through, `Ctrl-]` to detach. Its initial snapshot takes over the terminal; later grid changes send the size and let pi's real PTY redraw update it. The detach chord cannot be discovered, so `attach` names it on a cleared screen, holds its hello briefly, and the server sends nothing until the hello -- nothing buffered, nothing lost.

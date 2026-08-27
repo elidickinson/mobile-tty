@@ -114,20 +114,17 @@ export const scrollbackCount = page => page.evaluate(() => window.mtty.term.brid
  * Sample the scroller and the line under a fixed eye-point, every frame.
  *
  * A reading position is two facts: where the box is (scrollTop) and which line
- * sits at the top of it. The squirm being chased can move either while no
- * finger is down, and it lasts a frame or two — so nothing that asserts after
- * the fact can see it. The trace makes it countable instead.
+ * sits at the top of it. Holding output must preserve both while no finger is
+ * down, and it can fail for only a frame or two, so the trace makes it
+ * countable.
  *
  * `eye` is the row under a fixed point 60px into the screen: literally the line
  * the reader is looking at, independent of how scrollTop or row indices move.
- * The fixture numbers every line uniquely, so `head` is an identity — content
- * sliding under a still box shows up as an identity change even when the row
- * count, the scrollHeight and the scrollTop are all unchanged (the rebuild's
- * signature). `height` separates the other suspect: growing geometry is the
- * below-cap append path, frozen geometry with moving content is the rebuild.
+ * The fixture numbers every line uniquely, so `head` exposes content sliding
+ * under a still box. `height` separates that from an actual growing scroller.
  *
- * `parkAt` sets scrollTop in the same turn the sampler starts, so the first
- * sample is taken before app.js's scrollback-rebuild timer can fire.
+ * `parkAt` sets scrollTop in the same turn the sampler starts, before the next
+ * terminal render.
  */
 export const startScrollTrace = (page, { parkAt } = {}) => page.evaluate(fraction => {
   cancelAnimationFrame(window.__traceRaf)
@@ -141,10 +138,8 @@ export const startScrollTrace = (page, { parkAt } = {}) => page.evaluate(fractio
   const eyeY = rect.top + 60
   window.__trace = []
   const sample = () => {
-    // A sample whose eye-point hits nothing is recorded as null, never
-    // synthesized from scrollTop: mid-rebuild is exactly when the point can
-    // go missing, and a synthesized identity would launder whatever moved the
-    // box into a matching trace. Consumers skip nulls.
+    // A sample whose eye-point hits nothing is recorded as null rather than
+    // inferred from scrollTop. Consumers skip nulls.
     const el = document.elementFromPoint(eyeX, eyeY)?.closest('.term-row') ?? null
     window.__trace.push({
       t: Math.round(performance.now()),
@@ -168,9 +163,9 @@ export const stopScrollTrace = page => page.evaluate(() => {
 /** The line number in a traced head; NaN when the row is not fixture-numbered. */
 export const lineNo = head => Number(/(?:scrollback|stream) line (\d+)/.exec(head)?.[1] ?? NaN)
 
-/** Widest swing in line identity over the trace, from its first sample. */
+/** Widest swing in line identity over the trace, ignoring an empty paint frame. */
 export const maxHeadShift = trace => {
-  const base = lineNo(trace[0]?.head)
+  const base = lineNo(trace.find(s => s.head !== null)?.head)
   if (Number.isNaN(base)) return NaN
   return trace.reduce((m, s) => s.head == null ? m : Math.max(m, Math.abs(lineNo(s.head) - base)), 0)
 }

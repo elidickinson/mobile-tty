@@ -8,6 +8,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
 import { WebSocket } from 'ws'
+import { createGhosttyCore } from '../ghostty.js'
 import { createTerminalServer } from '../../server/index.js'
 import { Mirror } from '../../server/mirror.js'
 
@@ -217,8 +218,7 @@ test('the narrowest viewer sets the grid, and leaving hands it back', async () =
 
 /** Render everything a viewer is sent, the way the phone's core would. */
 const rendering = async url => {
-  const { WasmBridge } = await import('@wterm/core')
-  const core = await WasmBridge.load()
+  const core = await createGhosttyCore()
   core.init(80, 24)
   const ws = new WebSocket(url, ['tty'])
   ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns: 80, rows: 24 })))

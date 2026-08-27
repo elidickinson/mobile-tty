@@ -1,7 +1,7 @@
-// The client is one document: JS, CSS, and the VT core's WASM (already base64
-// inside @wterm/core) inlined into the HTML. One file means one thing for the
-// cache to be right or wrong about, which is what makes the build-id check at
-// startup enough on its own.
+// The client is one document: JS, CSS, and the Ghostty VT core's WASM (inlined
+// as a base64 data URL by the loader below) inlined into the HTML. One file
+// means one thing for the cache to be right or wrong about, which is what makes
+// the build-id check at startup enough on its own.
 //
 // It is built per request rather than into dist/. A document built from the
 // source on disk at the moment it is asked for cannot be stale, so there is no
@@ -28,6 +28,7 @@ export async function buildClient() {
     format: 'esm',
     target: 'safari17',
     minify: true,
+    loader: { '.wasm': 'base64' },
     write: false,
   })
   const js = bundled.outputFiles[0].text

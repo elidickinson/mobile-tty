@@ -11,6 +11,17 @@ test('renders the TUI with box drawing intact', async ({ page }) => {
   expect(text).not.toContain('â')
 })
 
+test('wterm measures the row height the app renders', async ({ page }) => {
+  await ready(page)
+  const sizes = await page.evaluate(() => ({
+    core: window.mtty.term._rowHeight,
+    dom: document.querySelector('#screen .term-row').offsetHeight,
+    cell: window.mtty.state.cell.height,
+  }))
+  expect(sizes.core).toBe(sizes.dom)
+  expect(sizes.core).toBe(sizes.cell)
+})
+
 test('the screen still has content a moment after attaching', async ({ page }) => {
   await ready(page)
   // Regression: clearing the nudge's own redraws out of the scrollback with

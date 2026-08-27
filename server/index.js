@@ -59,13 +59,9 @@ class Refused extends Error {}
  * 75 KB per connect, against a pi transcript re-render that starts at 12 KB and
  * grows with every turn.
  *
- * 1000 is the browser client's own ceiling: its VT core keeps that many and
- * silently drops the rest, and the limit lives inside its WASM with no option to
- * raise it. One snapshot serves every viewer, so a larger number would reach
- * only `attach` while making each phone reconnect pay for lines it will throw
- * away — which is why this is a parameter for tests rather than a flag. If
- * desktop history ever matters, the answer is a deeper snapshot for `attach`
- * alone.
+ * The default keeps reconnect cost bounded. One snapshot serves every viewer,
+ * so this is a parameter for tests rather than a flag; if desktop history ever
+ * matters, the answer is a deeper snapshot for `attach` alone.
  */
 export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, sessionDir = PI_SESSIONS, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
   const auth = new Auth(password)

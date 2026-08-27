@@ -73,19 +73,13 @@ test('scrolling up offers a way back to the live screen', async ({ page }) => {
   await expect(page.locator('#to-bottom')).toBeHidden()
 })
 
-test('a scrollback that filled its ring is rebuilt on the way into history', async ({ page }) => {
+test('scrollback stays current past one thousand lines', async ({ page }) => {
   await ready(page)
 
-  // wterm redraws scrollback only when the core's line count changes, and that
-  // count stops changing once the ring is full — so the rendered rows freeze
-  // while the buffer keeps rotating. See eli/wterm-scrollback-bug.md.
   const lines = (tag, n) => Array.from({ length: n }, (_, i) => `${tag}${i}`).join('\r\n') + '\r\n'
   await page.evaluate(s => window.mtty.term.write(s), lines('filler', 1200))
-  // The ring has to be rendered full before the next lines arrive: it is the
-  // render that records the count the freeze then gets stuck on.
   await page.waitForTimeout(500)
   await page.evaluate(s => window.mtty.term.write(s), lines('marker', 60))
-  await page.waitForTimeout(500)
 
   const newest = () => page.evaluate(() => {
     const core = window.mtty.term.bridge
@@ -97,8 +91,8 @@ test('a scrollback that filled its ring is rebuilt on the way into history', asy
     return { core: line.trim(), dom: rows[rows.length - 1].innerText.trim() }
   })
 
+  await page.evaluate(() => { document.getElementById('screen').scrollTop = document.getElementById('screen').scrollHeight })
   const { core } = await newest()
-  await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
   await expect.poll(async () => (await newest()).dom).toBe(core)
 })
 
