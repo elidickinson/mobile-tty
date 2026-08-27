@@ -1,6 +1,22 @@
 import type { TerminalCore } from "@wterm/core";
 import { isLinkActivationModifier } from "./hyperlink.js";
 
+// Keys that leave the PTY's input line untouched: the field mirror survives
+// them. Everything else a keydown produces (Enter, Escape, Tab, control
+// chords, printable characters) invalidates it.
+const NAVIGATION_KEYS = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "Home",
+  "End",
+  "PageUp",
+  "PageDown",
+  "Insert",
+  ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`),
+]);
+
 const NORMAL_KEYS: Record<string, string> = {
   ArrowUp: "\x1b[A",
   ArrowDown: "\x1b[B",
@@ -54,12 +70,19 @@ export class InputHandler {
   private composing = false;
   private mouseButtons = 0;
   private focused = false;
+  // The field is a mirror of the PTY's input line: `sent` is what this class
+  // has transmitted of the field's content. Every byte the PTY receives from
+  // anywhere else (bar keys, Enter, paste, PTY resets) must invalidate the
+  // mirror via resetMirror(), or the next diff sends bytes that double-apply.
+  private sent = "";
+  private idleClear: ReturnType<typeof setTimeout> | null = null;
+  private segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
   private _onKeyDown: (e: KeyboardEvent) => void;
   private _onPaste: (e: ClipboardEvent) => void;
   private _onCompositionStart: () => void;
   private _onCompositionEnd: (e: CompositionEvent) => void;
-  private _onInput: () => void;
+  private _onInput: (e: InputEvent) => void;
   private _onFocus: () => void;
   private _onBlur: () => void;
   private _onMouseDown: (e: MouseEvent) => void;
@@ -88,11 +111,19 @@ export class InputHandler {
     this.textarea.setAttribute("tabindex", "0");
     this.textarea.setAttribute("aria-hidden", "true");
     const s = this.textarea.style;
-    s.position = "absolute";
-    s.left = "-9999px";
-    s.top = "0";
+    // Sticky at the scrollport's bottom edge: the caret is always in view, so
+    // WebKit's reveal-the-caret scrolling (swipe, dictation, any real
+    // insertion) has nothing to correct and never drags the scroller to the
+    // top of history, where an absolutely-positioned field at top: 0 put it.
+    // The element is fully transparent and 1px, so being in view shows
+    // nothing; in flow it costs 1px of scrollHeight, well inside the follow
+    // tolerance.
+    s.position = "sticky";
+    s.bottom = "0";
+    s.left = "0";
+    s.top = "auto";
     s.width = "1px";
-    s.height = "1px";
+    s.height = "0";
     s.opacity = "0";
     s.overflow = "hidden";
     s.border = "0";
@@ -157,6 +188,7 @@ export class InputHandler {
   }
 
   destroy(): void {
+    if (this.idleClear !== null) clearTimeout(this.idleClear);
     this.textarea.removeEventListener("keydown", this._onKeyDown);
     this.textarea.removeEventListener("paste", this._onPaste as EventListener);
     this.textarea.removeEventListener(
@@ -180,6 +212,12 @@ export class InputHandler {
   private handleKeyDown(e: KeyboardEvent): void {
     if (this.composing) return;
 
+    // A non-empty field means iOS is driving deletion natively: its repeat
+    // arrives as repeated deleteContentBackward input events, not keydowns,
+    // and preventDefault here would cancel that loop. Stand aside and let the
+    // diff turn the deletion into DEL bytes. An empty field is the only time
+    // the keydown path below is the deletion's owner.
+    if (e.key === "Backspace" && this.textarea.value !== "") return;
     if ((e.metaKey || e.ctrlKey) && e.key === "c") {
       const sel = window.getSelection();
       if (sel && sel.toString().length > 0) return;
@@ -207,7 +245,12 @@ export class InputHandler {
 
     e.preventDefault();
     const seq = this.keyToSequence(e);
-    if (seq) this.onData(seq);
+    if (!seq) return;
+    // Keys that change or consume the PTY's line invalidate the mirror;
+    // navigation leaves the line alone and keeps it (so a word swiped after
+    // an arrow press still gets its separator space).
+    if (!NAVIGATION_KEYS.has(e.key)) this.resetMirror();
+    this.onData(seq);
   }
 
   private handlePaste(e: ClipboardEvent): void {
@@ -224,6 +267,7 @@ export class InputHandler {
     } else {
       this.onData(text);
     }
+    this.resetMirror();
   }
 
   private handleCompositionStart(): void {
@@ -232,17 +276,81 @@ export class InputHandler {
 
   private handleCompositionEnd(e: CompositionEvent): void {
     this.composing = false;
-    if (e.data) this.onData(e.data);
-    this.textarea.value = "";
+    // Do not send e.data: engines disagree about whether the final `input`
+    // fires before or after `compositionend`, and the committed text is in
+    // the field either way -- flush() is idempotent, so whichever event
+    // carries it first transmits it exactly once.
+    this.flush();
   }
 
-  private handleInput(): void {
+  private handleInput(e: InputEvent): void {
     if (this.composing) return;
+    this.flush(e.inputType);
+  }
+
+  /**
+   * Transmit the difference between the field and what has already been
+   * sent. The field is never wiped: iOS's text-insertion system (QuickPath,
+   * dictation, the emoji keyboard) reads it to decide things like the
+   * separator space between swiped words, and an empty field reads as
+   * "nothing to separate".
+   *
+   * Erase counts are graphemes -- that is what a terminal line editor removes
+   * per DEL (verified against pi) -- and the deletion direction is taken from
+   * the input type, since a forward delete needs CSI 3~, not DEL.
+   */
+  private flush(inputType?: string): void {
     const value = this.textarea.value;
-    if (value) {
-      this.onData(value);
-      this.textarea.value = "";
+    if (value === this.sent) return;
+    this.armIdleClear();
+    const before = Array.from(this.segmenter.segment(this.sent), (x) => x.segment);
+    const after = Array.from(this.segmenter.segment(value), (x) => x.segment);
+    let p = 0;
+    while (p < before.length && p < after.length && before[p] === after[p]) p++;
+    let s = 0;
+    while (
+      s < before.length - p &&
+      s < after.length - p &&
+      before[before.length - 1 - s] === after[after.length - 1 - s]
+    )
+      s++;
+    const deleted = before.length - p - s;
+    const inserted = after
+      .slice(p, after.length - s)
+      .join("")
+      .replace(/\n/g, "\r");
+    if (deleted > 0 || inserted.length > 0) {
+      const erase = inputType === "deleteContentForward" ? "\x1b[3~" : "\x7f";
+      this.onData(erase.repeat(deleted) + inserted);
     }
+    this.sent = value;
+  }
+
+  /**
+   * Drop the mirror: the field is cleared and its content forgotten. Call
+   * whenever the PTY's line changes from outside this class, or the next
+   * diff sends bytes that double-apply over the new line state.
+   */
+  resetMirror(): void {
+    this.textarea.value = "";
+    this.sent = "";
+    if (this.idleClear !== null) {
+      clearTimeout(this.idleClear);
+      this.idleClear = null;
+    }
+  }
+
+  /**
+   * A long-lived field is a scratch buffer, not a diary: clear it after a
+   * generous idle so an all-day session does not grow it without bound. The
+   * separator logic only reads the field within one continuous burst, so a
+   * settled field is safe to forget.
+   */
+  private armIdleClear(): void {
+    if (this.idleClear !== null) clearTimeout(this.idleClear);
+    this.idleClear = setTimeout(() => {
+      if (!this.composing) this.resetMirror();
+    }, 30_000);
   }
 
   private handleMouse(

@@ -443,6 +443,9 @@ function dropHeld() {
   heldBytes = 0
   meter.writeRaw(ED3)
   toBottom.textContent = TO_BOTTOM_LABEL
+  // A dropped hold rides a PTY reset or a view wipe: the field mirror's line
+  // no longer exists, so the next diff must start from an empty field.
+  term.input?.resetMirror()
 }
 
 function deliver(bytes) {
@@ -697,6 +700,9 @@ function sendKey(name) {
   // a crash on an early tap.
   const cursorKeysApp = term.bridge?.cursorKeysApp() ?? false
   conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp }))
+  // Bar keys that change the PTY's line (⌫, esc, Tab) invalidate the field
+  // mirror; arrows leave the line alone and keep it.
+  if (!["Left", "Down", "Up", "Right"].includes(name)) term.input?.resetMirror()
   clearMods()
 }
 
@@ -822,6 +828,7 @@ function buildMenu() {
       if (!field.value) return
       conn.send(field.value)
       field.value = ''
+      term.input?.resetMirror()
       menu.hidden = true
     },
     // A view rather than another section. The readout is a dozen lines, and
