@@ -2,6 +2,21 @@
 
 Access your Pi coding agent (with *all* the features) from a mobile device. Uses a WebSocket-attached PTY to show your whole terminal rather than replacing it with a web chat UI. Should work with many other full-screen TUI apps too.
 
+> **Status: parked until a new @wterm/ghostty lands.** This branch swaps the
+> browser VT core from @wterm/core to @wterm/ghostty 0.3.4 (embeds ghostty
+> 1.3.1). It works, but this is suspected not to be the only bug in that WASM
+> build, so rather than fix them one at a time the branch is deferred until a
+> release embedding a newer ghostty exists, then re-tested.
+>
+> - **Crash after a few rotations.** Rotating portrait/landscape with colored
+>   output kills the WASM: `RuntimeError: Out of bounds memory access` from
+>   `update`, or a ghostty "page integrity violation" (`UnmarkedStyleRow` /
+>   `MismatchedStyleRef`). Upstream bug: ghostty does not reset row metadata
+>   when recycling row storage on resize. Fixed in ghostty-org/ghostty
+>   `b31fbc84` (issue #13940, 2026-08-25), which no published @wterm/ghostty
+>   embeds yet. Reliable repro: 5 alternating colored writes and 48<->21 row
+>   resizes.
+
 
 <p>
   <img src="docs/screenshot-keyboard.png" width="300" alt="Terminal view with the iOS keyboard up: pi's transcript and own input box above the key bar and status strip">
