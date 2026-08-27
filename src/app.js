@@ -380,120 +380,6 @@ function trimBlankTail() {
 const AT_BOTTOM_PX = 5
 const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < AT_BOTTOM_PX
 
-/** One scrollback line from the core, trailing blanks trimmed for compare. */
-const coreLine = (b, off) => {
-  let s = ''
-  const len = b.getScrollbackLineLen(off)
-  for (let c = 0; c < len; c++) s += String.fromCodePoint(b.getScrollbackCell(off, c).char)
-  return s.replace(/\s+$/, '')
-}
-
-// Enough rows that a coincidental match elsewhere in the ring is not a thing;
-// few enough that locating the tail stays cheap.
-const TURN_WINDOW = 16
-
-/**
- * How many lines the ring has taken on since the DOM last drew it.
- *
- * Only answerable where the bug lives: a growing count keeps every drawn row
- * where it is (new rows append below the old ones), so nothing needs undoing
- * and the answer is zero by construction. At the cap the count is pinned and
- * the rotation is invisible to arithmetic — but the DOM's newest row names a
- * line, and how deep that line now sits in the ring is exactly the rotation.
- * Compared as a block so a repeated row (a blank, a rule) cannot fake a match;
- * the first block found wins, which can only undercount.
- *
- * Zero also means "gone": past the point where the tail could sit, the lines
- * the reader might have been on have fallen out of the ring entirely.
- */
-const ringTurn = (b, els, oldCount) => {
-  const tail = []
-  for (let m = 0; m < TURN_WINDOW && m < oldCount; m++) {
-    tail.push(els[oldCount - 1 - m].textContent.replace(/\s+$/, ''))
-  }
-  const count = b.getScrollbackCount()
-  for (let turn = 0; turn + tail.length <= count; turn++) {
-    if (tail.every((text, m) => coreLine(b, turn + m) === text)) return turn
-  }
-  return 0
-}
-
-/**
- * wterm decides whether to redraw scrollback by comparing the core's line count
- * against the count it last drew. The core's scrollback is a ring capped at 1000
- * lines, so once it is full that number never changes again and the rendered
- * scrollback freezes: history from the moment the buffer filled, spliced onto
- * current output, until a reload. Worse, the freeze can leave a hole: when the
- * ring saturates between two renders, wterm's append draws the newest lines
- * and splices them onto the stale head, so the drawn rows are not even a
- * contiguous run of history. See eli/wterm-scrollback-bug.md.
- *
- * Lying to the renderer about what it has drawn makes it redraw the lot — and
- * what the redraw means for position has to be answered for the row the reader
- * is actually on, not for the buffer in aggregate. That row is matched by
- * content in the redrawn DOM (the rotation measured at the tail is the search
- * hint, not the answer, because a hole makes arithmetic off by the hole); the
- * box is then set down so the same line sits at the same edge, sub-row offset
- * and all. A line with no match is one the reader was parked over in stale or
- * spliced-in content whose lines are long gone, so the box stays on the pixel
- * it was already on: the next rebuild anchors whatever sits under the eye by
- * then, which converges on live history without ever jumping.
- */
-function rebuildScrollback() {
-  const r = term.renderer
-  const b = term.bridge
-  const count = b.getScrollbackCount()
-  const oldEls = r._scrollbackRowEls
-  const oldCount = r._renderedScrollbackCount
-  const top = screen.scrollTop
-  // The height a row actually renders at, not the app's own cell metric: the
-  // two are measured separately (ceil vs round) and a pixel off per row, times
-  // the rotation, would land the reader between lines. offsetHeight is layout
-  // px, so zoom's transform does not scale it.
-  const rowH = oldEls.length ? oldEls[oldEls.length - 1].offsetHeight : state.cell.height
-  const eyeIdx = Math.floor(top / rowH)
-  const eyeFrac = top - eyeIdx * rowH
-
-  // The tail cannot sit in a hole, so it is where rotation is legible.
-  const turn = count === oldCount && top < oldCount * rowH
-    ? ringTurn(b, oldEls, oldCount)
-    : 0
-
-  const parkTop = () => {
-    if (eyeIdx >= oldCount) return top              // parked in the grid: nothing above moved
-    const eyeText = oldEls[eyeIdx]?.textContent ?? ''
-    // wterm pads every row out to the full width, so blanks — and the rules and
-    // separators a transcript repeats — all share one textContent. One row is
-    // therefore not an identity: a neighbour has to agree too, or a search
-    // displaced by a hole settles on the wrong blank. At the edge of the drawn
-    // rows one neighbour is all there is.
-    const near = [-1, 1]
-      .filter(d => oldEls[eyeIdx + d])
-      .map(d => [d, oldEls[eyeIdx + d].textContent])
-    const probe = i => {
-      const els = r._scrollbackRowEls
-      return els[i]?.textContent === eyeText &&
-        near.some(([d, text]) => els[i + d]?.textContent === text)
-    }
-    // Contiguous case: the hint lands on it at once. A hole means the row sits
-    // elsewhere (or nowhere); search outward through the whole buffer once.
-    const hint = eyeIdx - turn
-    let at = probe(hint) ? hint : -1
-    for (let d = 1; at < 0 && d < r._scrollbackRowEls.length; d++) {
-      if (probe(hint - d)) at = hint - d
-      else if (probe(hint + d)) at = hint + d
-    }
-    return at < 0 ? top : at * rowH + eyeFrac
-  }
-
-  for (const el of oldEls) el.remove()
-  r._scrollbackRowEls = []
-  r._renderedScrollbackCount = 0
-  r.syncScrollback(b)
-
-  screen.scrollTop = parkTop()
-}
-
 // Reading beats liveness. Output that arrives while the reader is up in
 // history is held back rather than rendered under them: at the ring cap the
 // rendered scrollback is a fossil, so a flowing stream reads as history that
@@ -568,12 +454,8 @@ function deliver(bytes) {
     dropHeld()
     term.write(bytes)
     applyPendingGrid()
-    // The snapshot reset the core and refilled it in one write, so at the
-    // ring cap the rendered count never changed and not one row redraws on
-    // its own — the DOM is a fossil until the next rebuild, which this
-    // visit has not spent yet.
-    refreshedVisit = false
-    if (!atBottom()) armRefresh()
+    // The snapshot reset the core, so the rendered window's keys no longer
+    // match the fresh core's counts and the next render redraws it wholesale.
     return
   }
   // The scroll event normally flushes on return to the bottom, but its
@@ -587,75 +469,26 @@ function deliver(bytes) {
   heldBytes += bytes.length
   meter.writeRaw(bytes)
   // Past the cap this is a memory valve, nothing more: the wave lands where
-  // the box stands and the hold resumes with the next chunk. No rebuild is
-  // re-armed for it — a reader this far ahead of the stream is not reading,
-  // and the once-per-visit pass happens on the way back down regardless.
+  // the box stands and the hold resumes with the next chunk. A reader this
+  // far ahead of the stream is not reading.
   if (heldBytes > HELD_MAX) flushHeld()
   else labelHeld()
-}
-
-// The one rebuild each visit still has to happen: the fossil formed while
-// the reader was at the bottom, and unfreezing it means redrawing the
-// scrollback and putting the reader's line back under the eye
-// (rebuildScrollback above). Two guards shape when. It waits for a quiet
-// spell in scroll events — drag, deceleration, rubber-band all stream
-// events, and each one restarts the wait — because writing scrollTop
-// mid-momentum does not just cancel the flick: iOS can wedge the scroller on
-// a programmatic change during deceleration, leaving a dead view with no way
-// back to the bottom. And it fires at most once per visit: output is held
-// while the reader is parked, so what it lands on cannot go stale again.
-const REFRESH_AFTER_MS = 400
-let refresh = null
-let refreshedVisit = false
-
-// The guard no scroll event can express: iOS sends nothing while a finger
-// rests mid-drag, so the quiet spell elapses with the touch still on the
-// glass — and a programmatic scrollTop plus a teardown of every row, inside
-// WebKit's own gesture tracking, is exactly what wedges the scroller. Held by
-// pointer id so a release outside the element still counts.
-const touching = new Set()
-screen.addEventListener('pointerdown', e => touching.add(e.pointerId), { passive: true })
-for (const ev of ['pointerup', 'pointercancel']) {
-  window.addEventListener(ev, e => touching.delete(e.pointerId), { passive: true })
-}
-
-function armRefresh() {
-  if (refreshedVisit) return
-  clearTimeout(refresh)
-  refresh = setTimeout(() => {
-    refresh = null
-    // A hidden page emits no scroll events, so the quiet spell is satisfied
-    // by definition there — and a rebuild against a page WebKit is neither
-    // laying out nor painting is the glitch on the way back. The
-    // visibilitychange listener below arms it on the way in instead, so this
-    // drops the rebuild rather than spinning a throttled timer until then.
-    if (document.hidden) return
-    if (touching.size) return armRefresh()
-    if (atBottom() || refreshedVisit) return
-    refreshedVisit = true
-    rebuildScrollback()
-  }, REFRESH_AFTER_MS)
 }
 
 function onScroll() {
   const bottom = atBottom() && !resettling
   toBottom.hidden = bottom
   if (bottom) {
-    // The visit ends here, so the next one gets its own rebuild: held output
-    // means nothing changes while parked, but the fossil that forms at the
-    // bottom between visits still has to be dealt with on the way in.
-    refreshedVisit = false
+    // Landing on the bottom is the reader asking for live again. wterm's own
+    // scroll handler clears its follow-output latch on every scroll — its
+    // keystroke and pin paths re-set it, but a jump to the bottom lands here
+    // first — and at a saturated ring its rotation compensation then walks
+    // the box off the bottom a row at a time, silently holding live output.
+    // Re-assert the latch so follow-output wins over compensation.
+    term._shouldScrollToBottom = true
     flushHeld()
-    clearTimeout(refresh)
-    refresh = null
-    return
   }
-  armRefresh()
 }
-
-document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && !atBottom()) armRefresh()
-})
 
 // ---------------------------------------------------------------- key bar
 
@@ -1045,22 +878,24 @@ async function main() {
   meter.init(state.cols, state.rows)
 
   // The renderer's state is private to TypeScript only, so reaching into it is
-  // safe but not guaranteed. If an upgrade renames any of it the refresh turns
-  // into a silent no-op, which looks exactly like the bug it works around.
+  // safe but not guaranteed. If an upgrade renames any of it these become
+  // silent no-ops, which look exactly like the bugs they work around.
   const r = term.renderer
-  if (!Array.isArray(r?._scrollbackRowEls) ||
-      !Array.isArray(r?.rowEls) ||
-      typeof r._renderedScrollbackCount !== 'number' ||
-      typeof r.syncScrollback !== 'function' ||
+  if (!Array.isArray(r?.rowEls) ||
       typeof r.render !== 'function' ||
-      typeof term._doRender !== 'function') {
-    throw new Error('wterm renderer internals moved — the scrollback refresh needs rewriting')
+      typeof term._doRender !== 'function' ||
+      typeof term._shouldScrollToBottom !== 'boolean' ||
+      typeof term._isScrolledToBottom !== 'function') {
+    throw new Error('wterm renderer internals moved')
   }
 
   // Between the paint and the re-pin that follows it inside _doRender, which is
   // the only order that works: the pin reads the geometry the trim decides.
+  // The viewport argument carries scrollTop/rowHeight/the ring's discarded
+  // count — dropping it silently disables the renderer's virtualized
+  // scrollback, which then rebuilds every row on every frame.
   const paintOfRecord = r.render.bind(r)
-  r.render = core => { paintOfRecord(core); trimBlankTail() }
+  r.render = (core, viewport) => { paintOfRecord(core, viewport); trimBlankTail() }
 
   // wterm decides follow-output when a write arrives — latching "was at the
   // bottom" — but acts a frame later, so a write that lands while the reader

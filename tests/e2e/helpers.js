@@ -168,9 +168,9 @@ export const stopScrollTrace = page => page.evaluate(() => {
 /** The line number in a traced head; NaN when the row is not fixture-numbered. */
 export const lineNo = head => Number(/(?:scrollback|stream) line (\d+)/.exec(head)?.[1] ?? NaN)
 
-/** Widest swing in line identity over the trace, from its first sample. */
+/** Widest swing in line identity over the trace, from its first content sample. */
 export const maxHeadShift = trace => {
-  const base = lineNo(trace[0]?.head)
+  const base = lineNo(trace.find(s => s.head != null)?.head)
   if (Number.isNaN(base)) return NaN
   return trace.reduce((m, s) => s.head == null ? m : Math.max(m, Math.abs(lineNo(s.head) - base)), 0)
 }

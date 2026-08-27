@@ -1,36 +1,43 @@
 // The squirm: reading history while output streams in. The answer is to
 // hold: output that arrives while the reader is parked is buffered, not
-// rendered, and replays in order when they return to the bottom. One rebuild
-// per visit unfreezes whatever the ring cap had fossilized before they
-// scrolled up; after it, nothing moves — the trace asserts exactly that.
+// rendered, and replays in order when they return to the bottom. The drawn
+// history itself is a window: the renderer keeps only the rows around the
+// viewport, re-windowed on every render — including the scroll-driven one,
+// so history under the eye is drawn wherever the reader stops.
 //
 // What this cannot cover: iOS flick momentum. Playwright WebKit has no touch
-// physics, so the momentum-killing half of the rebuild bug is on-device only;
-// both symptoms share the same rebuildScrollback call, so the fix is driven
-// from here regardless.
+// physics, so the momentum half of the old scrollback-rebuild bug is
+// on-device only.
 import { test, expect, ready, settled, fillScrollback, scrollbackCount, startScrollTrace, stopScrollTrace, maxHeadShift } from './helpers.js'
 
-// How many rendered scrollback rows no longer match the core — the fossil
-// meter. At the ring cap the DOM freezes while the core rotates on, and a
-// reset+refill (a snapshot) leaves the count unchanged so nothing redraws;
-// only comparing rows to the core catches it. `rows` and `core` are asserted
-// alongside `bad` because an empty DOM has nothing to disagree with, and a
-// poll would take that for a pass.
+// How many rendered scrollback rows disagree with the core — the fossil
+// meter. The renderer keys each drawn row on the ring's absolute line (the
+// discarded count included), so the window should match the core at every
+// render; a mismatch means DOM and core have diverged. `rows` and `core` are
+// asserted alongside `bad` because an empty DOM has nothing to disagree
+// with, and a poll would take that for a pass.
 const fossilRows = page => page.evaluate(() => {
   const b = window.mtty.term.bridge
-  const rows = [...document.getElementById('screen').querySelectorAll('.term-scrollback-row')]
+  const s = document.getElementById('screen')
+  const rows = [...s.querySelectorAll('.term-scrollback-row')]
+  const topSpacer = s.querySelector('.term-scrollback-spacer')
+  const rowH = rows.length ? rows[0].offsetHeight : window.mtty.state.cell.height
+  // The first drawn row's absolute index sits in the top spacer: the px span
+  // of unrendered history above the window. DOM row j is absolute index
+  // start + j; core offsets run newest-first.
+  const start = Math.round(parseFloat(topSpacer?.style.height ?? 0) / rowH)
+  const count = b.getScrollbackCount()
   const coreLine = off => {
-    let s = ''
+    let t = ''
     const len = b.getScrollbackLineLen(off)
-    for (let c = 0; c < len; c++) s += String.fromCodePoint(b.getScrollbackCell(off, c).char)
-    return s.replace(/\s+$/, '')
+    for (let c = 0; c < len; c++) t += String.fromCodePoint(b.getScrollbackCell(off, c).char)
+    return t.replace(/\s+$/, '')
   }
   let bad = 0
-  // Core offsets run newest-first; DOM rows run oldest-first.
-  for (let off = 0; off < rows.length; off++) {
-    if (rows[off].textContent.replace(/\s+$/, '') !== coreLine(rows.length - 1 - off)) bad++
+  for (let j = 0; j < rows.length; j++) {
+    if (rows[j].textContent.replace(/\s+$/, '') !== coreLine(count - 1 - (start + j))) bad++
   }
-  return { bad, rows: rows.length, core: b.getScrollbackCount() }
+  return { bad, rows: rows.length, core: count }
 })
 
 const stream = async (page, lines) => {
@@ -40,17 +47,20 @@ const stream = async (page, lines) => {
 }
 
 // Park mid-stream, the way it happens on the phone: output is already arriving
-// when the reader settles on a line. Parking first would saturate-and-freeze
-// before any rotation — the rebuild would have nothing to swap, and the test
-// would pass with the bug live.
+// when the reader settles on a line. Parking first would fill the hold before
+// any rotation — the test would pass with nothing to hold.
 const TRACE_MS = 2500
 
 const parkAndTrace = async (page, at) => {
   await page.waitForTimeout(1200)               // ring rotates ~12 lines first
-  await startScrollTrace(page, { parkAt: at })  // first sample beats the refresh timer
-  await page.waitForTimeout(TRACE_MS)           // rebuild lands; the stream is held
+  await startScrollTrace(page, { parkAt: at })  // the park's re-window render
+  await page.waitForTimeout(TRACE_MS)           // the stream is held throughout
   return stopScrollTrace(page)
 }
+
+// The park lands on spacer geometry for a frame or two, until the renderer
+// re-windows under the eye; samples before that are honestly null.
+const seenSamples = trace => trace.filter(s => s.head)
 
 test('a saturated scrollback holds output rather than swap content under a parked reader', async ({ page }) => {
   await ready(page)
@@ -61,14 +71,14 @@ test('a saturated scrollback holds output rather than swap content under a parke
 
   await stream(page, 60)
   const trace = await parkAndTrace(page, 0.4)
+  const seen = seenSamples(trace)
 
   // Preconditions, so a bad park fails as one rather than as NaN arithmetic.
-  expect(trace[0].head).toMatch(/(?:scrollback|stream) line \d+/)
+  expect(seen.length).toBeGreaterThan(0)
+  expect(seen[0].head).toMatch(/(?:scrollback|stream) line \d+/)
 
-  // Frozen geometry is this regime's signature — it is what made the content
-  // swap invisible to every position-only assertion. Holding output freezes
-  // it for real: after the rebuild's one correction, nothing is being
-  // rendered, so nothing can move.
+  // Holding output freezes the view for real: nothing is being rendered, so
+  // nothing can move — no growth, no steps, no content sliding under the box.
   const heights = trace.map(s => s.height)
   expect(Math.max(...heights)).toBe(Math.min(...heights))
   const rowH = await page.evaluate(() => window.mtty.state.cell.height)
@@ -76,12 +86,7 @@ test('a saturated scrollback holds output rather than swap content under a parke
   for (let i = 1; i < trace.length; i++) {
     if (trace[i].top !== trace[i - 1].top) steps.push(trace[i].top - trace[i - 1].top)
   }
-  // At most one step — the rebuild landing the eye's line, unbounded on
-  // purpose because a frozen render can be a non-contiguous splice — and a
-  // whole number of rows. A second step would mean output leaked past the
-  // hold and moved the box.
-  expect(steps.length).toBeLessThanOrEqual(1)
-  for (const px of steps) expect(Math.abs(px % rowH)).toBe(0)   // abs: -340 % 17 is -0
+  expect(steps.length).toBe(0)
   expect(maxHeadShift(trace)).toBe(0)
 
   // The stream fed the whole window and none of it rendered: it is waiting.
@@ -101,12 +106,12 @@ test('a saturated scrollback holds output rather than swap content under a parke
   await expect.poll(newestIn).toBeGreaterThanOrEqual(30)
 })
 
-test('a zoomed scroller keeps the reader through the same rebuild', async ({ page }) => {
+test('a zoomed scroller keeps the reader parked just the same', async ({ page }) => {
   await ready(page)
   // Zoom is a CSS transform on the scroller. scrollTop, scrollHeight and a
   // row's offsetHeight are all layout pixels that the transform does not
-  // rescale, so the rebuild's arithmetic holds as-is — this test exists to
-  // keep it honest rather than trust the units.
+  // rescale, so the park and the hold arithmetic hold as-is — this test
+  // exists to keep that honest rather than trust the units.
   await page.getByRole('button', { name: 'menu' }).tap()
   await page.locator('[data-act="zoom-out"]').tap()   // 100% -> 80%
   await page.locator('[data-act="close"]').tap()
@@ -119,24 +124,24 @@ test('a zoomed scroller keeps the reader through the same rebuild', async ({ pag
 
   await stream(page, 60)
   const trace = await parkAndTrace(page, 0.4)
+  const seen = seenSamples(trace)
 
-  expect(trace[0].head).toMatch(/(?:scrollback|stream) line \d+/)
+  expect(seen.length).toBeGreaterThan(0)
+  expect(seen[0].head).toMatch(/(?:scrollback|stream) line \d+/)
   expect(maxHeadShift(trace)).toBe(0)
 })
 
-test('a parked reader does not creep with output after the rebuild', async ({ page }) => {
+test('a parked reader does not creep with output after the re-window', async ({ page }) => {
   await ready(page)
   await fillScrollback(page)
 
-  // The rebuild detaches every scrollback row — the engine's scroll anchor
-  // included — and WebKit then anchors on a live grid row below the insertion
-  // point, so every later history append pushes the anchor down and walks the
-  // box with it: one row per line of output, forever. Anchoring is off on the
-  // scroller (style.css), so park, let the rebuild fire, and hold the spot
-  // through more output.
+  // While parked, the hold means nothing renders; the residual risk is the
+  // park's own re-window render moving the box, and WebKit scroll anchoring
+  // on later appends. Anchoring is off on the scroller (style.css), so park,
+  // let the re-window land, and hold the spot through more output.
   await stream(page, 40)
   await startScrollTrace(page, { parkAt: 0.3 })
-  await page.waitForTimeout(900)               // rebuild at +400ms, then held ticks
+  await page.waitForTimeout(900)
   const trace = await stopScrollTrace(page)
 
   const rowH = await page.evaluate(() => window.mtty.state.cell.height)
@@ -198,57 +203,57 @@ test('a keystroke while held returns to live rather than type blind', async ({ p
 test('a reconnect snapshot lands rather than queue behind a parked reader', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')
-  await ta.pressSequentially('/lines 1400')     // saturate: the fossil regime
+  await ta.pressSequentially('/lines 1400')     // saturate: the ring is rotating
   await ta.press('Enter')
   await settled(page)
 
   await stream(page, 40)
   await startScrollTrace(page, { parkAt: 0.4 })
   await expect(page.locator('#to-bottom')).toContainText(/\d+ new/)
-  await page.waitForTimeout(600)               // the visit's rebuild lands first
+  await page.waitForTimeout(600)               // the park's re-window render lands
 
   // Drop the socket from inside, the way a sleep/wake does from outside.
-  // The snapshot bypasses the hold (a size report precedes it), and because
-  // it reset-and-refilled the core in one write, nothing redraws on its own
-  // — the quiet spell rebuild it re-arms is what actually replaces the
-  // fossil rows. Queued instead, none of that happens and the reader keeps
-  // looking at a screen from before the drop.
+  // The snapshot bypasses the hold (a size report precedes it), and the
+  // reset-and-refill it performs moves the renderer's keys — the discarded
+  // count returns to zero — so the next render redraws the window wholesale
+  // against the fresh core. Queued instead, none of that happens and the
+  // reader keeps looking at a screen from before the drop.
   await page.evaluate(() => window.mtty.conn.ws.close())
   // Anchored: "disconnected" contains "connected" as a substring.
   await expect.poll(() => page.locator('#menu-state').textContent(), { timeout: 10_000 }).toMatch(/^connected/)
-  await expect.poll(() => fossilRows(page), { timeout: 5_000 }).toEqual({ bad: 0, rows: 1000, core: 1000 })
+  await expect.poll(() => fossilRows(page), { timeout: 5_000 }).toMatchObject({ bad: 0, core: 1000 })
+  expect((await fossilRows(page)).rows).toBeLessThan(200)   // a window, not the whole buffer
 
   // The hold still works after the snapshot: parked means new output counts.
   await expect.poll(() => page.locator('#to-bottom').textContent(), { timeout: 5_000 }).toMatch(/\d+ new/)
   await stopScrollTrace(page)
 })
 
-test('the rebuild re-arms for the next visit into history', async ({ page }) => {
+test('rotation keeps the drawn window honest across visits into history', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')
   await ta.pressSequentially('/lines 1200')
   await ta.press('Enter')
   await settled(page)
 
-  // First visit: the rebuild runs, DOM and core agree.
+  // First visit: the window under the eye matches the core.
   await stream(page, 60)
   await startScrollTrace(page, { parkAt: 0.4 })
   await page.waitForTimeout(900)
-  await expect.poll(() => fossilRows(page)).toEqual({ bad: 0, rows: 1000, core: 1000 })
+  await expect.poll(() => fossilRows(page)).toMatchObject({ bad: 0, core: 1000 })
 
   // Return to the bottom — the visit ends, the hold flushes, and the ring
-  // rotates past what the frozen DOM shows. Park again: without a fresh
-  // rebuild the DOM is a fossil against the advanced core, and once per page
-  // load would leave it that way forever.
+  // rotates past what the window showed. Park again: the re-window render
+  // must draw the advanced core, not anything stale from the first visit.
   await page.evaluate(() => {
     const screen = document.getElementById('screen')
     screen.scrollTop = screen.scrollHeight
   })
   await expect.poll(() => page.locator('#to-bottom').textContent()).toBe('↓ latest')
-  await page.waitForTimeout(600)               // flush advances the core at the cap
+  await page.waitForTimeout(600)               // the flush advances the core at the cap
   await startScrollTrace(page, { parkAt: 0.6 })
-  await page.waitForTimeout(900)               // the second visit's rebuild
-  await expect.poll(() => fossilRows(page)).toEqual({ bad: 0, rows: 1000, core: 1000 })
+  await page.waitForTimeout(900)
+  await expect.poll(() => fossilRows(page)).toMatchObject({ bad: 0, core: 1000 })
   await stopScrollTrace(page)
 })
 
@@ -321,18 +326,19 @@ test('a resize snapshot supersedes the hold rather than being replayed over', as
 test('a growing scrollback holds output rather than push past a parked reader', async ({ page }) => {
   await ready(page)
   const ta = page.locator('#screen textarea')
-  await ta.pressSequentially('/lines 600')      // below the cap: nothing fossilized
+  await ta.pressSequentially('/lines 600')      // below the cap: nothing exhausted
   await ta.press('Enter')
   await settled(page)
 
   await stream(page, 60)
   const trace = await parkAndTrace(page, 0.6)
+  const seen = seenSamples(trace)
 
-  expect(trace[0].head).toMatch(/(?:scrollback|stream) line \d+/)
+  expect(seen.length).toBeGreaterThan(0)
+  expect(seen[0].head).toMatch(/(?:scrollback|stream) line \d+/)
 
-  // Below the cap the unfixed behavior appends rows beneath the reader —
-  // growth without movement. Held output does not even grow: the reader is
-  // parked over a terminal that has paused.
+  // Below the cap the buffer still grows, but held output does not render:
+  // the reader is parked over a terminal that has paused.
   const heights = trace.map(s => s.height)
   expect(Math.max(...heights)).toBe(Math.min(...heights))
   const tops = trace.map(s => s.top)
