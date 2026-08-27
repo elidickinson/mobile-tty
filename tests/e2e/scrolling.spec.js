@@ -76,6 +76,13 @@ test('scrolling up offers a way back to the live screen', async ({ page }) => {
 test('the drawn scrollback is a window that always matches the core', async ({ page }) => {
   await ready(page)
 
+  // Clear the ring first (the Clear view sequence): the fixture server's
+  // mirror persists history across tests, and this test's assertions are
+  // stated in filler line numbers, which only mean something from a known
+  // start.
+  await page.evaluate(() => window.mtty.term.write('\x1b[H\x1b[2J\x1b[3J'))
+  await page.waitForTimeout(200)
+
   // The renderer keeps a window of rows around the viewport and keys each
   // row on the ring's absolute line (the discarded count included), so history
   // renders wherever the reader stops and ring rotation cannot freeze the DOM
@@ -89,12 +96,13 @@ test('the drawn scrollback is a window that always matches the core', async ({ p
 
   const windowed = () => page.evaluate(() => {
     const b = window.mtty.term.bridge
+    const r = window.mtty.term.renderer
     const s = document.getElementById('screen')
     const rows = [...s.querySelectorAll('.term-scrollback-row')]
-    const topSpacer = s.querySelector('.term-scrollback-spacer')
-    const rowH = rows[0].offsetHeight
-    // First drawn row's absolute index, from the unrendered span above it.
-    const start = Math.round(parseFloat(topSpacer.style.height) / rowH)
+    // First drawn row's absolute index, straight from the renderer's keying:
+    // startKey = discarded + start, and the discarded count it was keyed with
+    // is stored beside it.
+    const start = r._scrollbackStartKey - r._renderedDiscardedCount
     const count = b.getScrollbackCount()
     const coreLine = off => {
       let t = ''
@@ -107,15 +115,19 @@ test('the drawn scrollback is a window that always matches the core', async ({ p
       bad,
       rows: rows.length,
       count,
+      start,
       first: rows[0].innerText.trim(),
       last: rows[rows.length - 1].innerText.trim(),
       coreNewest: coreLine(0),
     }
   })
 
-  // Top of history: the window hugs the oldest surviving line...
+  // Top of history: the window hugs the oldest surviving line. Poll on the
+  // window's own start index, not the row content: a content match passes on
+  // the stale bottom-window sample that exists in the frame before the
+  // re-window render lands.
   await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
-  await expect.poll(async () => (await windowed()).first).toMatch(/^filler\d+/)
+  await expect.poll(async () => (await windowed()).start).toBe(0)
   expect((await windowed()).bad).toBe(0)
   // ...and it is a window, not the whole buffer. This is the pin for the
   // render(core, viewport) argument: drop it and every one of the 1000 rows
@@ -131,15 +143,17 @@ test('the drawn scrollback is a window that always matches the core', async ({ p
 
   // Rotation under a parked reader: lines written while the eye is on old
   // history push the survivors up and rotate the ring, and the re-windowed
-  // render has to track that — drawn rows keep matching the core they name.
+  // render has to track that -- the drawn window slides 60 lines deeper into
+  // the survivors, keeping its rows matched to the core they name.
   await page.evaluate(() => { document.getElementById('screen').scrollTop = 0 })
-  await expect.poll(async () => (await windowed()).first).toMatch(/^filler\d+/)
+  await expect.poll(async () => (await windowed()).start).toBe(0)
+  const lineOf = s => Number(/^filler(\d+)$/.exec(s)?.[1])
+  const firstBefore = (await windowed()).first
   await page.evaluate(s => window.mtty.term.write(s), lines('marker', 60))
-  await page.waitForTimeout(500)
+  await expect.poll(async () => lineOf((await windowed()).first)).toBe(lineOf(firstBefore) + 60)
   const w = await windowed()
   expect(w.bad).toBe(0)
   expect(w.rows).toBeLessThan(200)
-  expect(w.first).not.toBe(/^filler214/)   // the oldest survivor moved under the eye
 })
 
 test('the terminal box is a whole number of rows, so follow-output cannot get stuck', async ({ page }) => {

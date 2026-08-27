@@ -374,19 +374,20 @@ function trimBlankTail() {
 }
 
 // wterm owns sticking to the bottom: it checks the position before each write,
-// re-pins after rendering, and jumps back on a keystroke. This only decides
-// whether to offer the way back, and uses wterm's own tolerance so the two
-// cannot disagree about whether you are on the live screen.
+// re-pins after rendering, and jumps back on a keystroke. onScroll's
+// at-bottom branch decides live-vs-held (and drives the way-back button), and
+// uses wterm's own tolerance so the two cannot disagree about whether you are
+// on the live screen.
 const AT_BOTTOM_PX = 5
 const atBottom = () => screen.scrollHeight - screen.scrollTop - screen.clientHeight < AT_BOTTOM_PX
 
 // Reading beats liveness. Output that arrives while the reader is up in
-// history is held back rather than rendered under them: at the ring cap the
-// rendered scrollback is a fossil, so a flowing stream reads as history that
-// lies next to a grid that moves — the seam this section exists to close.
-// Holding pauses the terminal rather than corrupting it: bytes replay in
-// order the moment the reader returns to the bottom, and the button that
-// offers the way back counts what is waiting.
+// history is held back rather than rendered under them: a new line shifts
+// every visible row up one, including rows under the reader's eye, so a
+// flowing stream moves the page the reader is on. Holding pauses the terminal
+// rather than corrupting it: bytes replay in order the moment the reader
+// returns to the bottom, and the button that offers the way back counts what
+// is waiting.
 const HELD_MAX = 4 * 1024 * 1024
 const TO_BOTTOM_LABEL = toBottom.textContent
 const held = []
@@ -468,9 +469,10 @@ function deliver(bytes) {
   held.push(bytes)
   heldBytes += bytes.length
   meter.writeRaw(bytes)
-  // Past the cap this is a memory valve, nothing more: the wave lands where
-  // the box stands and the hold resumes with the next chunk. A reader this
-  // far ahead of the stream is not reading.
+  // Past the cap this is a memory valve, nothing more: the replay lands under
+  // wterm's own follow/compensation logic, which keeps the reader's line put,
+  // and the hold resumes with the next chunk. A reader this far ahead of the
+  // stream is not reading.
   if (heldBytes > HELD_MAX) flushHeld()
   else labelHeld()
 }
@@ -480,9 +482,10 @@ function onScroll() {
   toBottom.hidden = bottom
   if (bottom) {
     // Landing on the bottom is the reader asking for live again. wterm's own
-    // scroll handler clears its follow-output latch on every scroll — its
-    // keystroke and pin paths re-set it, but a jump to the bottom lands here
-    // first — and at a saturated ring its rotation compensation then walks
+    // scroll handler clears its follow-output latch whenever the scroll reaches
+    // it unclaimed -- a programmatic jump lands there, since the direct
+    // scrollTop write cannot match wterm's programmatic-pin sentinel -- and
+    // once the latch is down, rotation compensation at a saturated ring walks
     // the box off the bottom a row at a time, silently holding live output.
     // Re-assert the latch so follow-output wins over compensation.
     term._shouldScrollToBottom = true
