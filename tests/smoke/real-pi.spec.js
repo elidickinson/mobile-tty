@@ -16,6 +16,24 @@ const setGrid = async (page, label, cols) => {
   await expect.poll(() => ruleWidth(page)).toBe(cols)
 }
 
+// Does any line the core holds — scrollback or live screen — contain the text?
+// Read from the core, not the DOM: the renderer draws only a window of
+// scrollback, so on a transcript longer than the window a line near the top is
+// held by the client but never rendered.
+const coreHasText = (page, needle) => page.evaluate(text => {
+  const t = window.mtty?.term?.bridge
+  if (!t) return false
+  const cols = t.getCols?.() ?? 0
+  const row = (y, isSaved) => {
+    const get = isSaved ? t.getScrollbackCell.bind(t) : t.getCell.bind(t)
+    return Array.from({ length: cols }, (_, x) => String.fromCodePoint(get(y, x).char || 32)).join('')
+  }
+  const saved = t.getScrollbackCount?.() ?? 0
+  for (let y = saved - 1; y >= 0; y--) if (row(y, true).includes(text)) return true
+  for (let y = 0; y < (t.getRows?.() ?? 0); y++) if (row(y, false).includes(text)) return true
+  return false
+}, needle)
+
 // The extension's READY marker is emitted once, at pi startup. The page is
 // ready when the client has connected and the server confirmed the grid — the
 // same readiness the e2e helpers use.
@@ -25,8 +43,7 @@ const pageReady = async page => {
   await expect.poll(() => page.evaluate(() => Boolean(window.mtty?.term?.bridge))).toBe(true)
   // The extension emits this once at pi startup, so it is the honest
   // "extension loaded and the TUI is emitting" signal for a fresh pi.
-  await expect.poll(() => page.evaluate(() =>
-    document.getElementById('screen')?.innerText.includes('MTTY_EXTENSION_READY') ?? false)).toBe(true)
+  await expect.poll(() => coreHasText(page, 'MTTY_EXTENSION_READY')).toBe(true)
   await expect.poll(() => page.evaluate(() =>
     window.mtty.state.cols === window.mtty.state.wanted.cols &&
     window.mtty.state.rows === window.mtty.state.wanted.rows)).toBe(true)
