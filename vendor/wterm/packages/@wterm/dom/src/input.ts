@@ -202,9 +202,20 @@ export class InputHandler {
     // A non-empty field means iOS is driving deletion natively: its repeat
     // arrives as repeated deleteContentBackward input events, not keydowns,
     // and preventDefault here would cancel that loop. Stand aside and let the
-    // diff turn the deletion into DEL bytes. An empty field is the only time
-    // the keydown path below is the deletion's owner.
-    if (e.key === "Backspace" && this.textarea.value !== "") return;
+    // diff turn the deletion into DEL bytes. Only for an unmodified Backspace:
+    // a modified one carries terminal meaning of its own -- alt+Backspace is
+    // esc+DEL (word delete), meta+Backspace kill-line -- and must keep the
+    // keydown path below, which resets the mirror for the line change it
+    // makes directly. An empty field leaves the keydown path as the
+    // deletion's owner even unmodified.
+    if (
+      e.key === "Backspace" &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      this.textarea.value !== ""
+    )
+      return;
     if ((e.metaKey || e.ctrlKey) && e.key === "c") {
       const sel = window.getSelection();
       if (sel && sel.toString().length > 0) return;
@@ -216,6 +227,10 @@ export class InputHandler {
     if (e.metaKey && !e.ctrlKey) {
       if (e.key === "Backspace") {
         e.preventDefault();
+        // Kill-line empties the PTY's line directly, so the mirror must go
+        // with it -- reachable now with a non-empty field, since modified
+        // Backspace no longer stands aside.
+        this.resetMirror();
         this.onData("\x15");
       } else if (e.key === "a") {
         e.preventDefault();
@@ -277,49 +292,52 @@ export class InputHandler {
   }
 
   /**
-   * The single-letter separator rule, applied at composition end: QuickPath
-   * may deliver through the marked-text pathway, where per-event interception
-   * is off-limits because the engine owns the field mid-composition. Once the
-   * composition commits, the text is ours again and the withheld space can be
-   * spliced in before the diff transmits.
+   * The QuickPath separator rule, shared by both delivery paths: iOS emits
+   * its separator space only after an insertion it scored as a word, so a
+   * swiped single letter -- and whatever is swiped or dictated right after
+   * it -- arrives glued to the previous word. Tapped keys cannot confuse the
+   * rule: they are preventDefaulted in the keydown path and never reach the
+   * field as input events. An insertion of one or more letters landing
+   * directly against a word or number character therefore gets one separator
+   * space spliced in front of it, before the diff transmits. `insertAt` is
+   * where the inserted run begins, `caret` where the engine left the caret
+   * (after the run). Replacement events (autocorrect) and anything already
+   * spaced are exempt by the callers' gates. Unicode letters and numbers:
+   * dictation and swipe do not stop at ASCII.
    */
+  private separateInsertedLetters(added: string, insertAt: number, caret: number): void {
+    if (insertAt <= 0 || !/^[\p{L}]+$/u.test(added)) return;
+    const before = this.textarea.value.slice(0, insertAt);
+    if (!/[\p{L}\p{N}]$/u.test(before)) return;
+    this.textarea.value = `${before} ${added}${this.textarea.value.slice(insertAt + added.length)}`;
+    this.textarea.setSelectionRange(caret + 1, caret + 1);
+  }
+
+  /** Applied at composition end: QuickPath may deliver through the
+   *  marked-text pathway, where per-event interception is off-limits because
+   *  the engine owns the field mid-composition. Once the composition
+   *  commits, the text is ours again and the withheld space can be spliced
+   *  in before the diff transmits. */
   private separateCommittedText(): void {
     const value = this.textarea.value;
     let p = 0;
     while (p < this.sent.length && p < value.length && this.sent[p] === value[p]) p++;
-    const added = value.slice(p);
-    if (!/^[a-zA-Z]+$/.test(added) || p === 0 || !/[a-zA-Z0-9]$/.test(this.sent.slice(0, p)))
-      return;
-    this.textarea.value = `${value.slice(0, p)} ${added}`;
-    this.textarea.setSelectionRange(p + added.length + 1, p + added.length + 1);
+    if (p < value.length) this.separateInsertedLetters(value.slice(p), p, value.length);
+  }
+
+  private separateSwipeInsertion(e: InputEvent): void {
+    if (e.inputType !== "insertText" || !e.data) return;
+    const ta = this.textarea;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === null || start !== end) return;
+    this.separateInsertedLetters(e.data, end - e.data.length, end);
   }
 
   private handleInput(e: InputEvent): void {
     if (this.composing) return;
     this.separateSwipeInsertion(e);
     this.flush();
-  }
-
-  /**
-   * iOS QuickPath emits its separator space only after an insertion it scored
-   * as a word; a swiped single letter -- and whatever is swiped right after
-   * it -- arrives glued to the previous word. Tapped keys cannot confuse this
-   * rule: they are preventDefaulted in the keydown path and never reach the
-   * field as input events, so any bare-letter insertText landing against a
-   * word character is a swipe/dictation/suggestion insertion, and it gets one
-   * separator space here, before the diff transmits. Replacement events
-   * (autocorrect) and anything already spaced are exempt.
-   */
-  private separateSwipeInsertion(e: InputEvent): void {
-    if (e.inputType !== "insertText" || !e.data || !/^[a-zA-Z]+$/.test(e.data)) return;
-    const ta = this.textarea;
-    const start = ta.selectionStart;
-    const end = ta.selectionEnd;
-    if (start === null || start !== end) return;
-    const pre = ta.value.slice(0, end - e.data.length);
-    if (!/[a-zA-Z0-9]$/.test(pre)) return;
-    ta.value = `${pre} ${e.data}${ta.value.slice(end)}`;
-    ta.setSelectionRange(end + 1, end + 1);
   }
 
   /**

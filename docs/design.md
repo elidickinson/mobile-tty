@@ -26,6 +26,16 @@ The core is a separate choice, since `@wterm/dom` takes any `TerminalCore`. `@wt
 
 **Known bug:** a column shrink loses on-screen text with nothing scrolling off -- 192 of 537 characters from 80 to 50 columns, 5 even from 80 to 79. libghostty reflows the same input correctly, the strongest reason to revisit the core. The current core also answers no queries but CPR, so pi's startup probes go unanswered.
 
+## The vendored wterm fork
+
+`vendor/wterm` carries `@wterm/dom` 0.3.4 with local changes confined to the client input path (`input.ts`) and two promoted integration points, imported straight into the bundle and covered by `npm run typecheck`. The design record for the input work is [`docs/plan-ios-input.md`](plan-ios-input.md).
+
+- **The hidden field is a mirror of the PTY's input line, and a diff is the transport.** `flush()` segments field and mirror into graphemes, takes the shared prefix and suffix, and sends the middle as DELs plus inserted text -- so held-backspace repeats, dictation and the emoji keyboard all arrive as exact line edits, and the input and composition events firing in either order cost nothing, the flush being idempotent. A 4096-char cap and a 30s idle keep the mirror bounded; every line change made outside the diff (bar keys, paste, PTY resets) resets it via `resetMirror()`.
+- **Unmodified Backspace stands aside when the field is non-empty**, so iOS's native repeat loop drives the deletion and the diff turns it into DEL bytes. Modified Backspace keeps the keydown path: alt+Backspace is esc+DEL (word delete), meta+Backspace kill-line.
+- **QuickPath's separator is emulated**: iOS spaces only swipe-scored words, so a swiped single letter -- and whatever is swiped or dictated after it -- arrives glued to the previous word. A letters-only insertion landing against a word character gets its separator spliced in before the diff, on both the input-event and marked-text delivery paths.
+- **The field sits sticky at the scrollport's bottom** instead of parked off-screen at the top, so WebKit's reveal-the-caret scroll has nothing to chase and cannot drag a reader to the top of history.
+- **Follow-output is decided where the scroller is, not where it was.** wterm latches "was at the bottom" when bytes arrive but renders a frame later, and a latch that outlives the scroll that voided it snaps the box back down mid-flick; the render now re-decides from the box's actual position. `followOutput(on)` re-asserts the latch wterm's scroll handler lowers, and `onAfterPaint` lets the client adjust painted geometry between the paint and wterm's own scroll pinning.
+
 ## Input, keyboard, viewport
 
 pi's autocomplete fires *as you type*, directly above its input box, so a client-side composer would break it. Keystrokes stream straight to pi and **pi's own input box stays visible**, costing 5-6 rows. Autocorrect stays off: a *corrected* identifier points the agent at the wrong file, where a typo in prose is inferred straight through (and in fact iOS sent 0 `insertReplacementText` events over 7 typed chars).

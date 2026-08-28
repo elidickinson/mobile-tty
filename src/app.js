@@ -89,6 +89,9 @@ const term = new WTerm(screen, {
   autoResize: false,
   cursorBlink: true,
   onData: data => conn.send(withMods(recordSend(data))),
+  // After the paint, before wterm's own scroll pinning: the pin reads the
+  // geometry the trim decides.
+  onAfterPaint: () => trimBlankTail(),
 })
 
 const conn = new TtydConnection({
@@ -548,13 +551,13 @@ function onScroll() {
   toBottom.hidden = bottom
   if (bottom) {
     // Landing on the bottom is the reader asking for live again. wterm's own
-    // scroll handler clears its follow-output latch whenever the scroll reaches
-    // it unclaimed -- a programmatic jump lands there, since the direct
-    // scrollTop write cannot match wterm's programmatic-pin sentinel -- and
-    // once the latch is down, rotation compensation at a saturated ring walks
-    // the box off the bottom a row at a time, silently holding live output.
-    // Re-assert the latch so follow-output wins over compensation.
-    term._shouldScrollToBottom = true
+    // scroll handler clears its follow-output latch on every scroll it does
+    // not recognize as its own -- a programmatic jump lands there, since the
+    // direct scrollTop write cannot match wterm's programmatic-pin sentinel --
+    // and once the latch is down, rotation compensation at a saturated ring
+    // walks the box off the bottom a row at a time, silently holding live
+    // output. Re-assert the latch so follow-output wins over compensation.
+    term.followOutput(true)
     flushHeld()
   }
 }
@@ -956,31 +959,6 @@ async function main() {
   await term.init()
   meter = await WasmBridge.load()
   meter.init(state.cols, state.rows)
-
-  // The vendored wterm source is ours to reach into; these rebinds move with
-  // it (see docs/plan-ios-input.md) and its own tests cover the internals.
-  const r = term.renderer
-
-  // Between the paint and the re-pin that follows it inside _doRender, which is
-  // the only order that works: the pin reads the geometry the trim decides.
-  // The viewport argument carries scrollTop/rowHeight/the ring's discarded
-  // count — dropping it silently disables the renderer's virtualized
-  // scrollback, which then rebuilds every row on every frame.
-  const paintOfRecord = r.render.bind(r)
-  r.render = (core, viewport) => { paintOfRecord(core, viewport); trimBlankTail() }
-
-  // wterm decides follow-output when a write arrives — latching "was at the
-  // bottom" — but acts a frame later, so a write that lands while the reader
-  // is still at the bottom holds that decision through the moment they scroll
-  // up, and the render then snaps the box back down; mid-flick on a phone. A
-  // scroll event cannot void the latch in time (the queued render can beat the
-  // event's dispatch), so the render itself re-decides from where the box
-  // actually is. The keystroke jump is a different call site and stays as-is.
-  const renderOfRecord = term._doRender.bind(term)
-  term._doRender = () => {
-    if (term._shouldScrollToBottom && !term._isScrolledToBottom()) term._shouldScrollToBottom = false
-    renderOfRecord()
-  }
 
   screen.addEventListener('scroll', onScroll)
   toBottom.addEventListener('click', () => { stopReading(); screen.scrollTop = screen.scrollHeight })

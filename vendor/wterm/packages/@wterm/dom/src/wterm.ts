@@ -21,6 +21,13 @@ export interface WTermOptions {
   onData?: (data: string) => void;
   onTitle?: (title: string) => void;
   onResize?: (cols: number, rows: number) => void;
+  /**
+   * Called after the renderer has painted a frame and before wterm applies
+   * its own scroll pinning, so a consumer can adjust the painted geometry --
+   * ending the scroller at the last written row, for one -- and have the pin
+   * read the corrected heights.
+   */
+  onAfterPaint?: () => void;
 }
 
 export class WTerm {
@@ -57,6 +64,7 @@ export class WTerm {
   onData: ((data: string) => void) | null;
   onTitle: ((title: string) => void) | null;
   onResize: ((cols: number, rows: number) => void) | null;
+  onAfterPaint: (() => void) | null;
 
   private _container: HTMLDivElement;
 
@@ -72,6 +80,7 @@ export class WTerm {
     this.onData = options.onData || null;
     this.onTitle = options.onTitle || null;
     this.onResize = options.onResize || null;
+    this.onAfterPaint = options.onAfterPaint || null;
 
     this._container = document.createElement("div");
     this._container.className = "term-grid";
@@ -197,6 +206,16 @@ export class WTerm {
   private _isScrolledToBottom(): boolean {
     const el = this.element;
     return el.scrollHeight - el.scrollTop - el.clientHeight < 5;
+  }
+
+  /** Re-engage (or drop) follow-output. wterm's scroll handler lowers the
+   *  follow latch on every scroll it does not recognize as its own,
+   *  including the one that lands the reader at the live edge -- and with
+   *  the latch down, rotation compensation at a saturated ring walks the box
+   *  off the bottom a row at a time. A consumer that requires follow-output
+   *  once its reader is back at the bottom calls this with true. */
+  followOutput(on: boolean): void {
+    this._shouldScrollToBottom = on;
   }
 
   private _scrollToBottom(): void {
@@ -361,6 +380,15 @@ export class WTerm {
   private _doRender(): void {
     if (!this.bridge || !this.renderer) return;
 
+    // The follow latch was decided when the bytes arrived, but the render
+    // runs a frame later: a reader who scrolled up in between must not be
+    // snapped back down by a decision their scroll can no longer reach (the
+    // queued render can beat the scroll event's dispatch). Re-decide from
+    // where the box actually is.
+    if (this._shouldScrollToBottom && !this._isScrolledToBottom()) {
+      this._shouldScrollToBottom = false;
+    }
+
     let dirtyCount = 0;
     const t0 = this.debug ? performance.now() : 0;
     if (this.debug) {
@@ -405,6 +433,10 @@ export class WTerm {
       rowHeight,
       scrollbackDiscardedCount: discardedCount,
     });
+
+    // Between the paint and the pin below: the hook may change the painted
+    // geometry, and the pin must read what it decided.
+    if (this.onAfterPaint) this.onAfterPaint();
 
     if (this.debug) {
       this.debug.recordRender(performance.now() - t0, dirtyCount);
