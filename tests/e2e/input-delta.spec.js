@@ -101,6 +101,27 @@ test('composition commits exactly once, in either engine order', async ({ page }
   await expect(page.locator('#screen')).not.toContainText('hello world world')
 })
 
+test('a swiped single letter gets the separator iOS withholds', async ({ page }) => {
+  await ready(page)
+
+  // "I a am" swiped one token at a time: iOS spaces multi-letter words but
+  // not single letters, which glues each neighbor to the letter. The engine
+  // inserts the missing space in the field before transmitting.
+  await appendField(page, 'I')
+  await expect(page.locator('#screen')).toContainText('I')
+  await appendField(page, 'a')
+  await expect(page.locator('#screen')).toContainText('I a')
+  await expect(page.locator('#screen')).not.toContainText('Ia')
+  await appendField(page, 'am')
+  await expect(page.locator('#screen')).toContainText('I a am')
+  await expect(page.locator('#screen')).not.toContainText('aam')
+
+  // iOS already spaces multi-letter words; no doubling on top. (The positive
+  // assertion discriminates: it cannot match a double-spaced variant.)
+  await appendField(page, ' here')
+  await expect(page.locator('#screen')).toContainText('I a am here')
+})
+
 test('an emoji reaches the PTY as one insertion', async ({ page }) => {
   await ready(page)
   await appendField(page, 'a😀')

@@ -277,7 +277,30 @@ export class InputHandler {
 
   private handleInput(e: InputEvent): void {
     if (this.composing) return;
+    this.separateSwipeInsertion(e);
     this.flush();
+  }
+
+  /**
+   * iOS QuickPath emits its separator space only after an insertion it scored
+   * as a word; a swiped single letter -- and whatever is swiped right after
+   * it -- arrives glued to the previous word. Tapped keys cannot confuse this
+   * rule: they are preventDefaulted in the keydown path and never reach the
+   * field as input events, so any bare-letter insertText landing against a
+   * word character is a swipe/dictation/suggestion insertion, and it gets one
+   * separator space here, before the diff transmits. Replacement events
+   * (autocorrect) and anything already spaced are exempt.
+   */
+  private separateSwipeInsertion(e: InputEvent): void {
+    if (e.inputType !== "insertText" || !e.data || !/^[a-zA-Z]+$/.test(e.data)) return;
+    const ta = this.textarea;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === null || start !== end) return;
+    const pre = ta.value.slice(0, end - e.data.length);
+    if (!/[a-zA-Z0-9]$/.test(pre)) return;
+    ta.value = `${pre} ${e.data}${ta.value.slice(end)}`;
+    ta.setSelectionRange(end + 1, end + 1);
   }
 
   /**
