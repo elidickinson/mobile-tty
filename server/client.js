@@ -24,6 +24,7 @@ export async function buildClient() {
   const bundled = await build({
     entryPoints: [at('src/app.js')],
     absWorkingDir: at('.'),
+    tsconfig: at('tsconfig.json'),
     bundle: true,
     format: 'esm',
     target: 'safari17',
@@ -33,7 +34,7 @@ export async function buildClient() {
   const js = bundled.outputFiles[0].text
   const [html, wtermCss, css] = await Promise.all([
     readFile(at('src/index.html'), 'utf8'),
-    readFile(at('node_modules/@wterm/dom/src/terminal.css'), 'utf8'),
+    readFile(at('vendor/wterm/packages/@wterm/dom/src/terminal.css'), 'utf8'),
     readFile(at('src/style.css'), 'utf8'),
   ])
 

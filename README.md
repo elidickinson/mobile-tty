@@ -109,6 +109,7 @@ No build step: the client is bundled per page request, so client edits need a re
 
 ```
 npm test                # unit, including the snapshot round-trip gate
+npm run typecheck       # strict tsc over the vendored wterm renderer
 npm run test:e2e        # WebKit at 402x812 against tests/fixtures/fake-pi.js
 npm run test:integrity  # that no viewer is ever sent a gap
 npm run test:smoke      # against real pi; sends no prompts, costs no tokens
@@ -122,6 +123,6 @@ One node process owns everything. `server/` spawns the program on a real PTY thr
 - **`server/mirror.js`** feeds every output byte into an `@xterm/headless` terminal and serializes it on demand. A joining viewer is handed that snapshot instead of making pi redraw -- a join costs the screen, not the transcript -- and it is what survives a disconnect.
 - **`server/index.js`** is the hub: one grid for all viewers (narrowest wins), fan-out, and folder switching, which respawns the program against a list `server/places.js` built (`server/auth.js` and `origin.js` guard the door; `footer.js` relays the status strip).
 - **`server/client.js`** builds the client with esbuild *inside the request* -- JS, CSS and the VT core's WASM inlined into one HTML document, hashed into its own ETag. One file is one thing for the phone's cache to get right, and a document built from disk on demand cannot be stale.
-- **`src/app.js`** is the client. `@wterm/dom` renders the terminal into the DOM, so native momentum scroll, selection and find come free and the terminal's own scrollback is the history -- no copy-mode, no alternate screen. Around it: `viewport.js` sizes the grid from `visualViewport` (the keyboard never reflows pi), `ttyd.js` and `transport.js` are the wire, `keys.js` encodes the bar keys.
+- **`src/app.js`** is the client. `@wterm/dom` -- vendored under `vendor/wterm`, see `docs/plan-ios-input.md` -- renders the terminal into the DOM, so native momentum scroll, selection and find come free and the terminal's own scrollback is the history -- no copy-mode, no alternate screen. The vendored copy is TypeScript imported straight into the bundle, which is why the esbuild build passes `tsconfig.json` and `npm run typecheck` covers it; `@wterm/core`, the WASM VT engine it renders with, stays a pinned npm dependency. Around it: `viewport.js` sizes the grid from `visualViewport` (the keyboard never reflows pi), `ttyd.js` and `transport.js` are the wire, `keys.js` encodes the bar keys.
 
 Why it's built this way: [`docs/design.md`](docs/design.md).

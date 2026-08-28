@@ -1,6 +1,6 @@
 // The client: wires the terminal to the socket, and owns the layout, the key
 // bar, the menu and the on-screen diagnostics.
-import { WTerm } from '@wterm/dom'
+import { WTerm } from '../vendor/wterm/packages/@wterm/dom/src/index.ts'
 import { WasmBridge } from '@wterm/core'
 import { TtydConnection } from './transport.js'
 import { readViewport, deriveLayout, gridFor, measureCell, KEY_BAR_H } from './viewport.js'
@@ -55,12 +55,40 @@ const state = {
 
 // ---------------------------------------------------------------- terminal
 
+// On-device input recorder: appends to a ring always, renders it only with
+// ?debug=1. Records the raw DOM event stream around the hidden field and the
+// bytes actually transmitted, so swipe/dictation behavior can be diagnosed
+// from a screenshot without a desktop attached.
+const inputLog = []
+const printable = s => s.replace(/[^\x20-\x7e]/g, c => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`)
+function recordInput(text) {
+  inputLog.push(`${String(Math.floor(performance.now()) % 100000).padStart(5, '0')} ${text}`)
+  if (inputLog.length > 40) inputLog.shift()
+  const el = document.getElementById('input-log')
+  if (el) el.textContent = inputLog.join('\n')
+}
+function recordSend(data) {
+  recordInput(`SEND ${JSON.stringify(printable(data))}`)
+  return data
+}
+if (new URLSearchParams(location.search).has('debug')) {
+  const el = document.createElement('div')
+  el.id = 'input-log'
+  el.style.cssText = 'position:fixed;top:0;left:0;max-width:100vw;max-height:40vh;overflow:hidden;z-index:9999;background:rgba(0,0,0,.8);color:#0f0;font:9px/1.25 monospace;white-space:pre;padding:4px;pointer-events:none'
+  document.body.appendChild(el)
+  screen.addEventListener('keydown', e => recordInput(`key key=${JSON.stringify(e.key)} code=${e.code} pd=${e.defaultPrevented}`))
+  screen.addEventListener('input', e => recordInput(`input type=${e.inputType} data=${JSON.stringify(e.data)} v=${JSON.stringify(e.target.value.slice(-24))}`))
+  screen.addEventListener('compositionstart', () => recordInput('comp-start'))
+  screen.addEventListener('compositionend', e => recordInput(`comp-end data=${JSON.stringify(e.data)}`))
+  screen.addEventListener('beforeinput', e => recordInput(`before type=${e.inputType} data=${JSON.stringify(e.data)}`))
+}
+
 const term = new WTerm(screen, {
   cols: state.cols,
   rows: state.rows,
   autoResize: false,
   cursorBlink: true,
-  onData: data => conn.send(withMods(data)),
+  onData: data => conn.send(withMods(recordSend(data))),
 })
 
 const conn = new TtydConnection({
@@ -246,16 +274,19 @@ let stopReading = () => {}
 // The share the re-pin in flight is holding the reader at, null when none is.
 let readingShare = null
 
+// How far up the history the eye is, as a share of the whole -- the only
+// measure that survives a reflow, since pixels and rows both change. A re-pin
+// already in flight is the honest answer while one does: a resize landing
+// inside another one's reflow reads the emptied DOM as at-bottom and would
+// abandon the reader on the strength of it. Null means the reader is at the
+// live edge, with nowhere to hold.
+const readingShareNow = () => readingShare ?? (atBottom() || screen.scrollHeight === 0
+  ? null
+  : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight)
+
 function applyServerSize(cols, rows) {
   if (cols === state.cols && rows === state.rows) return
-  // How far up the history the eye is, as a share of the whole — the only
-  // measure that survives a reflow, since pixels and rows both change. A
-  // resize landing inside another one's reflow reads the emptied DOM as
-  // at-bottom and would abandon the reader on the strength of it, so a re-pin
-  // already in flight is the honest answer there.
-  const share = readingShare ?? (atBottom() || screen.scrollHeight === 0
-    ? null
-    : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight)
+  const share = readingShareNow()
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
@@ -419,6 +450,24 @@ const labelHeld = () => {
 // history on return.
 let snapshotPending = false
 
+// The snapshot is not the whole re-send. On a resize, pi's own redraw of the
+// transcript trails it: the server serializes the mirror the moment the PTY
+// changes, and the repaint arrives afterwards as ordinary output,
+// indistinguishable frame-for-frame from new lines. For a reader at the
+// bottom that lands live and heals; for one parked in history the hold would
+// keep it off for good, leaving them on a layout the grid has already left.
+// So for a short window after a snapshot, output writes through and the
+// reader is held by the share pin instead of by the hold: the redraw is the
+// same history re-wrapped, and the pin keeps their line under the eye while
+// it lands.
+const SNAPSHOT_TAIL_MS = 2000
+let snapshotTail = 0
+
+const pinReader = () => {
+  const share = readingShareNow()
+  if (share !== null) keepReading(share)
+}
+
 function flushHeld() {
   if (!held.length) return
   // Shift-per-write, not splice-then-write: a write that throws mid-replay
@@ -443,6 +492,9 @@ function dropHeld() {
   heldBytes = 0
   meter.writeRaw(ED3)
   toBottom.textContent = TO_BOTTOM_LABEL
+  // A dropped hold rides a PTY reset or a view wipe: the field mirror's line
+  // no longer exists, so the next diff must start from an empty field.
+  term.input?.resetMirror()
 }
 
 function deliver(bytes) {
@@ -450,13 +502,27 @@ function deliver(bytes) {
     snapshotPending = false
     // Everything being held is already inside the snapshot: the server writes
     // its mirror the same bytes it sends us, and serializes it at a boundary
-    // behind them. Replaying the hold on top would apply it twice — history
-    // gaining lines that were only ever produced once.
+    // behind them. Replaying the hold on top would apply it twice -- history
+    // gaining lines that were only ever produced once. What is not inside it
+    // -- pi's redraw on a resize -- follows as ordinary output, and the tail
+    // window below writes it through.
     dropHeld()
+    snapshotTail = performance.now() + SNAPSHOT_TAIL_MS
     term.write(bytes)
     applyPendingGrid()
+    pinReader()
     // The snapshot reset the core, so the rendered window's keys no longer
     // match the fresh core's counts and the next render redraws it wholesale.
+    return
+  }
+  if (performance.now() < snapshotTail) {
+    // Inside the tail window the reader is pinned, not protected. The share
+    // is read fresh on each write, so one who scrolled mid-window is held
+    // where they moved to, and keepReading's cancel-on-touch still applies.
+    // A reader at the live edge has no share, and this is just the live path.
+    term.write(bytes)
+    applyPendingGrid()
+    pinReader()
     return
   }
   // The scroll event normally flushes on return to the bottom, but its
@@ -507,8 +573,10 @@ const BAR = [
   { label: '⌥', mod: 'alt' },
   { label: 'esc', key: 'Escape' },
   { label: '⇥', key: 'Tab' },
-  // The software keyboard will not repeat its own backspace: wterm empties the
-  // hidden field after every keystroke, so iOS sees nothing left to delete.
+  // The bar's ⌫ carries its own repeat timer: iOS repeats deletions natively
+  // only through input events on the field, which the field-mirror diff
+  // already services -- the bar is for when the field is empty or the
+  // keyboard's repeat has run out of line.
   { label: '⌫', key: 'Backspace', repeat: true },
   { label: '←', key: 'Left', repeat: true },
   { label: '↓', key: 'Down', repeat: true },
@@ -518,7 +586,7 @@ const BAR = [
   { label: '≡', name: 'menu', act: openMenu },
 ]
 
-const terminalInput = () => screen.querySelector('textarea')
+const terminalInput = () => term.input.textarea
 
 // A bar key must not dismiss the keyboard. iOS ends editing when DOM focus
 // leaves the textarea, and a tap's default activation would move focus to the
@@ -680,6 +748,11 @@ function placeAction(label, act) {
  * or a dictated phrase is not a chord.
  */
 function withMods(data) {
+  // Diff-transmitted bytes are the field's own content, not a user chord:
+  // consuming an armed modifier here would rewrite them (⌥+DEL becomes a
+  // kill-word) and desynchronize the mirror. Keydown-sent keystrokes --
+  // where a sticky modifier is the whole point -- still pass through.
+  if (term.input?.inFlush) return data
   const { ctrl, alt, shift } = state.mods
   if (data.length !== 1) return data
   // Any single key consumes the modifiers, including a lone shift the OS
@@ -697,6 +770,9 @@ function sendKey(name) {
   // a crash on an early tap.
   const cursorKeysApp = term.bridge?.cursorKeysApp() ?? false
   conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp }))
+  // Everything a bar key sends either changes or consumes the PTY's line, so
+  // the field mirror goes.
+  term.input?.resetMirror()
   clearMods()
 }
 
@@ -822,6 +898,7 @@ function buildMenu() {
       if (!field.value) return
       conn.send(field.value)
       field.value = ''
+      term.input?.resetMirror()
       menu.hidden = true
     },
     // A view rather than another section. The readout is a dozen lines, and
@@ -880,17 +957,9 @@ async function main() {
   meter = await WasmBridge.load()
   meter.init(state.cols, state.rows)
 
-  // The renderer's state is private to TypeScript only, so reaching into it is
-  // safe but not guaranteed. If an upgrade renames any of it these become
-  // silent no-ops, which look exactly like the bugs they work around.
+  // The vendored wterm source is ours to reach into; these rebinds move with
+  // it (see docs/plan-ios-input.md) and its own tests cover the internals.
   const r = term.renderer
-  if (!Array.isArray(r?.rowEls) ||
-      typeof r.render !== 'function' ||
-      typeof term._doRender !== 'function' ||
-      typeof term._shouldScrollToBottom !== 'boolean' ||
-      typeof term._isScrolledToBottom !== 'function') {
-    throw new Error('wterm renderer internals moved')
-  }
 
   // Between the paint and the re-pin that follows it inside _doRender, which is
   // the only order that works: the pin reads the geometry the trim decides.
