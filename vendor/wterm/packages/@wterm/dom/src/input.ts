@@ -1,22 +1,6 @@
 import type { TerminalCore } from "@wterm/core";
 import { isLinkActivationModifier } from "./hyperlink.js";
 
-// Keys that leave the PTY's input line untouched: the field mirror survives
-// them. Everything else a keydown produces (Enter, Escape, Tab, control
-// chords, printable characters) invalidates it.
-const NAVIGATION_KEYS = new Set([
-  "ArrowUp",
-  "ArrowDown",
-  "ArrowLeft",
-  "ArrowRight",
-  "Home",
-  "End",
-  "PageUp",
-  "PageDown",
-  "Insert",
-  ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`),
-]);
-
 const NORMAL_KEYS: Record<string, string> = {
   ArrowUp: "\x1b[A",
   ArrowDown: "\x1b[B",
@@ -77,6 +61,9 @@ export class InputHandler {
   private sent = "";
   private idleClear: ReturnType<typeof setTimeout> | null = null;
   private segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  /** True while the diff is transmitting, so consumers can exempt it from
+   *  modifier chords and other send-side rewriting. */
+  inFlush = false;
 
   private _onKeyDown: (e: KeyboardEvent) => void;
   private _onPaste: (e: ClipboardEvent) => void;
@@ -115,9 +102,9 @@ export class InputHandler {
     // WebKit's reveal-the-caret scrolling (swipe, dictation, any real
     // insertion) has nothing to correct and never drags the scroller to the
     // top of history, where an absolutely-positioned field at top: 0 put it.
-    // The element is fully transparent and 1px, so being in view shows
-    // nothing; in flow it costs 1px of scrollHeight, well inside the follow
-    // tolerance.
+    // The element is fully transparent, 1px wide and 0 tall, so being in view
+    // shows nothing and adds nothing to the scroll geometry; in flow it sits
+    // after the grid, which keeps it out of every row-height invariant.
     s.position = "sticky";
     s.bottom = "0";
     s.left = "0";
@@ -243,13 +230,18 @@ export class InputHandler {
       return;
     }
 
-    e.preventDefault();
+    // Only preventDefault once a sequence is actually produced: keys with no
+    // terminal meaning (an emoji keydown carries the character as a 2-unit
+    // string, for one) must keep their default action, which is a real
+    // insertion into the field -- the input event then carries it through the
+    // diff. Suppressing it here is what made emoji presses do nothing.
     const seq = this.keyToSequence(e);
     if (!seq) return;
-    // Keys that change or consume the PTY's line invalidate the mirror;
-    // navigation leaves the line alone and keeps it (so a word swiped after
-    // an arrow press still gets its separator space).
-    if (!NAVIGATION_KEYS.has(e.key)) this.resetMirror();
+    e.preventDefault();
+    // Everything a keydown sends either changes or consumes the PTY's line,
+    // so the mirror goes: arrows move the cursor (the diff transport assumes
+    // end-of-line), Enter consumes the line, a printable appends to it.
+    this.resetMirror();
     this.onData(seq);
   }
 
@@ -285,7 +277,7 @@ export class InputHandler {
 
   private handleInput(e: InputEvent): void {
     if (this.composing) return;
-    this.flush(e.inputType);
+    this.flush();
   }
 
   /**
@@ -296,10 +288,16 @@ export class InputHandler {
    * "nothing to separate".
    *
    * Erase counts are graphemes -- that is what a terminal line editor removes
-   * per DEL (verified against pi) -- and the deletion direction is taken from
-   * the input type, since a forward delete needs CSI 3~, not DEL.
+   * per DEL (verified against pi) -- and the transport assumes the PTY's
+   * cursor is at end-of-line, which every mirror invalidation exists to
+   * protect.
+   *
+   * A newline inside the inserted text is translated to CR (dictation emits
+   * insertParagraph). Everything before a CR is consumed by the program, and
+   * the field's tail after the last CR is exactly the PTY's new line, so the
+   * mirror stays aligned without touching the field mid-dictation.
    */
-  private flush(inputType?: string): void {
+  private flush(): void {
     const value = this.textarea.value;
     if (value === this.sent) return;
     this.armIdleClear();
@@ -320,10 +318,16 @@ export class InputHandler {
       .join("")
       .replace(/\n/g, "\r");
     if (deleted > 0 || inserted.length > 0) {
-      const erase = inputType === "deleteContentForward" ? "\x1b[3~" : "\x7f";
-      this.onData(erase.repeat(deleted) + inserted);
+      this.inFlush = true;
+      try {
+        this.onData("\x7f".repeat(deleted) + inserted);
+      } finally {
+        this.inFlush = false;
+      }
     }
     this.sent = value;
+    // Bounded buffer: past the cap, forget immediately after transmitting.
+    if (value.length > 4096) this.resetMirror();
   }
 
   /**
@@ -341,10 +345,10 @@ export class InputHandler {
   }
 
   /**
-   * A long-lived field is a scratch buffer, not a diary: clear it after a
-   * generous idle so an all-day session does not grow it without bound. The
-   * separator logic only reads the field within one continuous burst, so a
-   * settled field is safe to forget.
+   * A long-lived field is a scratch buffer, not a diary: forget it after a
+   * generous idle, and keep it bounded during a continuous burst. Forgetting
+   * only drops separator context and re-send history; the next transmission
+   * is computed from an empty mirror and appends correctly.
    */
   private armIdleClear(): void {
     if (this.idleClear !== null) clearTimeout(this.idleClear);
@@ -513,7 +517,7 @@ export class InputHandler {
     const nav = navMap[e.key];
     if (nav) return e.altKey ? "\x1b" + nav : nav;
 
-    if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+    if ([...e.key].length === 1 && !e.ctrlKey && !e.metaKey) {
       return e.altKey ? "\x1b" + e.key : e.key;
     }
 

@@ -510,8 +510,10 @@ const BAR = [
   { label: '⌥', mod: 'alt' },
   { label: 'esc', key: 'Escape' },
   { label: '⇥', key: 'Tab' },
-  // The software keyboard will not repeat its own backspace: wterm empties the
-  // hidden field after every keystroke, so iOS sees nothing left to delete.
+  // The bar's ⌫ carries its own repeat timer: iOS repeats deletions natively
+  // only through input events on the field, which the field-mirror diff
+  // already services -- the bar is for when the field is empty or the
+  // keyboard's repeat has run out of line.
   { label: '⌫', key: 'Backspace', repeat: true },
   { label: '←', key: 'Left', repeat: true },
   { label: '↓', key: 'Down', repeat: true },
@@ -521,7 +523,7 @@ const BAR = [
   { label: '≡', name: 'menu', act: openMenu },
 ]
 
-const terminalInput = () => screen.querySelector('textarea')
+const terminalInput = () => term.input.textarea
 
 // A bar key must not dismiss the keyboard. iOS ends editing when DOM focus
 // leaves the textarea, and a tap's default activation would move focus to the
@@ -683,6 +685,11 @@ function placeAction(label, act) {
  * or a dictated phrase is not a chord.
  */
 function withMods(data) {
+  // Diff-transmitted bytes are the field's own content, not a user chord:
+  // consuming an armed modifier here would rewrite them (⌥+DEL becomes a
+  // kill-word) and desynchronize the mirror. Keydown-sent keystrokes --
+  // where a sticky modifier is the whole point -- still pass through.
+  if (term.input?.inFlush) return data
   const { ctrl, alt, shift } = state.mods
   if (data.length !== 1) return data
   // Any single key consumes the modifiers, including a lone shift the OS
@@ -700,9 +707,9 @@ function sendKey(name) {
   // a crash on an early tap.
   const cursorKeysApp = term.bridge?.cursorKeysApp() ?? false
   conn.send(keySequence(name, { ctrl, alt, shift, cursorKeysApp }))
-  // Bar keys that change the PTY's line (⌫, esc, Tab) invalidate the field
-  // mirror; arrows leave the line alone and keep it.
-  if (!["Left", "Down", "Up", "Right"].includes(name)) term.input?.resetMirror()
+  // Everything a bar key sends either changes or consumes the PTY's line, so
+  // the field mirror goes.
+  term.input?.resetMirror()
   clearMods()
 }
 
