@@ -24,6 +24,7 @@ export async function buildClient() {
   const bundled = await build({
     entryPoints: [at('src/app.js')],
     absWorkingDir: at('.'),
+    tsconfig: at('tsconfig.json'),
     bundle: true,
     format: 'esm',
     target: 'safari17',
