@@ -72,6 +72,25 @@ const fixtureIds = page => page.evaluate(() => {
 })
 const allIds = Array.from({ length: 100 }, (_, i) => i)
 
+// Has the resize's repaint landed in the core? At 120 cols each fixture line
+// fits one row, END and all — so the marker line being stored unwrapped means
+// grid and content moved together. Read from the core, not the DOM: a reader
+// parked mid-history has neither the turn rules nor the tail in the rendered
+// window, and the pre-repaint layout is exactly what a broken re-send leaves
+// in its place.
+const repaintLanded = page => page.evaluate(() => {
+  const b = window.mtty.term.bridge
+  const cols = b.getCols?.() ?? 0
+  const saved = b.getScrollbackCount?.() ?? 0
+  const get = b.getScrollbackCell.bind(b)
+  for (let y = saved - 1; y >= 0; y--) {
+    let s = ''
+    for (let x = 0; x < cols; x++) s += String.fromCodePoint(get(y, x).char || 32)
+    if (s.includes('MTTY-LINE-000 ')) return s.includes('END-000')
+  }
+  return false
+})
+
 const typeFixture = async page => {
   // Real keydown dispatch, not value injection: wterm's hidden textarea turns
   // Enter on keydown into \r. Slow the typing: pi's slash palette opens on `/`
@@ -181,7 +200,10 @@ test('a resize does not dump a reader at the live edge', async ({ page }) => {
   const before = await readingShare(page)
   expect(before).toBeGreaterThan(0.3)
 
-  await setGrid(page, '120×40', 120)
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.getByRole('button', { name: '120×40' }).tap()
+  await page.getByRole('button', { name: 'Done' }).tap()
+  await expect.poll(() => repaintLanded(page)).toBe(true)
 
   // The reader's relative position survives the reflow, within the rounding a
   // coarser row grid introduces. A one-sided "not less than" bound would still

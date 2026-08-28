@@ -274,16 +274,19 @@ let stopReading = () => {}
 // The share the re-pin in flight is holding the reader at, null when none is.
 let readingShare = null
 
+// How far up the history the eye is, as a share of the whole -- the only
+// measure that survives a reflow, since pixels and rows both change. A re-pin
+// already in flight is the honest answer while one does: a resize landing
+// inside another one's reflow reads the emptied DOM as at-bottom and would
+// abandon the reader on the strength of it. Null means the reader is at the
+// live edge, with nowhere to hold.
+const readingShareNow = () => readingShare ?? (atBottom() || screen.scrollHeight === 0
+  ? null
+  : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight)
+
 function applyServerSize(cols, rows) {
   if (cols === state.cols && rows === state.rows) return
-  // How far up the history the eye is, as a share of the whole — the only
-  // measure that survives a reflow, since pixels and rows both change. A
-  // resize landing inside another one's reflow reads the emptied DOM as
-  // at-bottom and would abandon the reader on the strength of it, so a re-pin
-  // already in flight is the honest answer there.
-  const share = readingShare ?? (atBottom() || screen.scrollHeight === 0
-    ? null
-    : (screen.scrollHeight - screen.scrollTop - screen.clientHeight) / screen.scrollHeight)
+  const share = readingShareNow()
   state.cols = cols
   state.rows = rows
   term.resize(cols, rows)
@@ -447,6 +450,24 @@ const labelHeld = () => {
 // history on return.
 let snapshotPending = false
 
+// The snapshot is not the whole re-send. On a resize, pi's own redraw of the
+// transcript trails it: the server serializes the mirror the moment the PTY
+// changes, and the repaint arrives afterwards as ordinary output,
+// indistinguishable frame-for-frame from new lines. For a reader at the
+// bottom that lands live and heals; for one parked in history the hold would
+// keep it off for good, leaving them on a layout the grid has already left.
+// So for a short window after a snapshot, output writes through and the
+// reader is held by the share pin instead of by the hold: the redraw is the
+// same history re-wrapped, and the pin keeps their line under the eye while
+// it lands.
+const SNAPSHOT_TAIL_MS = 2000
+let snapshotTail = 0
+
+const pinReader = () => {
+  const share = readingShareNow()
+  if (share !== null) keepReading(share)
+}
+
 function flushHeld() {
   if (!held.length) return
   // Shift-per-write, not splice-then-write: a write that throws mid-replay
@@ -481,13 +502,27 @@ function deliver(bytes) {
     snapshotPending = false
     // Everything being held is already inside the snapshot: the server writes
     // its mirror the same bytes it sends us, and serializes it at a boundary
-    // behind them. Replaying the hold on top would apply it twice — history
-    // gaining lines that were only ever produced once.
+    // behind them. Replaying the hold on top would apply it twice -- history
+    // gaining lines that were only ever produced once. What is not inside it
+    // -- pi's redraw on a resize -- follows as ordinary output, and the tail
+    // window below writes it through.
     dropHeld()
+    snapshotTail = performance.now() + SNAPSHOT_TAIL_MS
     term.write(bytes)
     applyPendingGrid()
+    pinReader()
     // The snapshot reset the core, so the rendered window's keys no longer
     // match the fresh core's counts and the next render redraws it wholesale.
+    return
+  }
+  if (performance.now() < snapshotTail) {
+    // Inside the tail window the reader is pinned, not protected. The share
+    // is read fresh on each write, so one who scrolled mid-window is held
+    // where they moved to, and keepReading's cancel-on-touch still applies.
+    // A reader at the live edge has no share, and this is just the live path.
+    term.write(bytes)
+    applyPendingGrid()
+    pinReader()
     return
   }
   // The scroll event normally flushes on return to the bottom, but its
