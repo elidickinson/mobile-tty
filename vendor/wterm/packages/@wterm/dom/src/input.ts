@@ -268,11 +268,30 @@ export class InputHandler {
 
   private handleCompositionEnd(e: CompositionEvent): void {
     this.composing = false;
+    this.separateCommittedText();
     // Do not send e.data: engines disagree about whether the final `input`
     // fires before or after `compositionend`, and the committed text is in
     // the field either way -- flush() is idempotent, so whichever event
     // carries it first transmits it exactly once.
     this.flush();
+  }
+
+  /**
+   * The single-letter separator rule, applied at composition end: QuickPath
+   * may deliver through the marked-text pathway, where per-event interception
+   * is off-limits because the engine owns the field mid-composition. Once the
+   * composition commits, the text is ours again and the withheld space can be
+   * spliced in before the diff transmits.
+   */
+  private separateCommittedText(): void {
+    const value = this.textarea.value;
+    let p = 0;
+    while (p < this.sent.length && p < value.length && this.sent[p] === value[p]) p++;
+    const added = value.slice(p);
+    if (!/^[a-zA-Z]+$/.test(added) || p === 0 || !/[a-zA-Z0-9]$/.test(this.sent.slice(0, p)))
+      return;
+    this.textarea.value = `${value.slice(0, p)} ${added}`;
+    this.textarea.setSelectionRange(p + added.length + 1, p + added.length + 1);
   }
 
   private handleInput(e: InputEvent): void {

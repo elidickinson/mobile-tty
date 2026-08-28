@@ -55,12 +55,40 @@ const state = {
 
 // ---------------------------------------------------------------- terminal
 
+// On-device input recorder: appends to a ring always, renders it only with
+// ?debug=1. Records the raw DOM event stream around the hidden field and the
+// bytes actually transmitted, so swipe/dictation behavior can be diagnosed
+// from a screenshot without a desktop attached.
+const inputLog = []
+const printable = s => s.replace(/[^\x20-\x7e]/g, c => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`)
+function recordInput(text) {
+  inputLog.push(`${String(Math.floor(performance.now()) % 100000).padStart(5, '0')} ${text}`)
+  if (inputLog.length > 40) inputLog.shift()
+  const el = document.getElementById('input-log')
+  if (el) el.textContent = inputLog.join('\n')
+}
+function recordSend(data) {
+  recordInput(`SEND ${JSON.stringify(printable(data))}`)
+  return data
+}
+if (new URLSearchParams(location.search).has('debug')) {
+  const el = document.createElement('div')
+  el.id = 'input-log'
+  el.style.cssText = 'position:fixed;top:0;left:0;max-width:100vw;max-height:40vh;overflow:hidden;z-index:9999;background:rgba(0,0,0,.8);color:#0f0;font:9px/1.25 monospace;white-space:pre;padding:4px;pointer-events:none'
+  document.body.appendChild(el)
+  screen.addEventListener('keydown', e => recordInput(`key key=${JSON.stringify(e.key)} code=${e.code} pd=${e.defaultPrevented}`))
+  screen.addEventListener('input', e => recordInput(`input type=${e.inputType} data=${JSON.stringify(e.data)} v=${JSON.stringify(e.target.value.slice(-24))}`))
+  screen.addEventListener('compositionstart', () => recordInput('comp-start'))
+  screen.addEventListener('compositionend', e => recordInput(`comp-end data=${JSON.stringify(e.data)}`))
+  screen.addEventListener('beforeinput', e => recordInput(`before type=${e.inputType} data=${JSON.stringify(e.data)}`))
+}
+
 const term = new WTerm(screen, {
   cols: state.cols,
   rows: state.rows,
   autoResize: false,
   cursorBlink: true,
-  onData: data => conn.send(withMods(data)),
+  onData: data => conn.send(withMods(recordSend(data))),
 })
 
 const conn = new TtydConnection({

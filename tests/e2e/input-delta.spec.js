@@ -122,6 +122,25 @@ test('a swiped single letter gets the separator iOS withholds', async ({ page })
   await expect(page.locator('#screen')).toContainText('I a am here')
 })
 
+test('a single letter delivered as marked text gets the separator', async ({ page }) => {
+  await ready(page)
+
+  // QuickPath may ride the marked-text pathway: the letter arrives as an
+  // interim insertion while composing, then commits. The separator is
+  // spliced in at composition end, before the diff runs.
+  await appendField(page, 'I')
+  await expect(page.locator('#screen')).toContainText('I')
+  await page.evaluate(() => {
+    const ta = document.querySelector('#screen textarea')
+    ta.dispatchEvent(new CompositionEvent('compositionstart'))
+    ta.value += 'a'
+    ta.dispatchEvent(new InputEvent('input', { inputType: 'insertCompositionText', data: 'a' }))
+    ta.dispatchEvent(new CompositionEvent('compositionend', { data: 'a' }))
+  })
+  await expect(page.locator('#screen')).toContainText('I a')
+  await expect(page.locator('#screen')).not.toContainText('Ia')
+})
+
 test('an emoji reaches the PTY as one insertion', async ({ page }) => {
   await ready(page)
   await appendField(page, 'a😀')
