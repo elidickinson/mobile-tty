@@ -97,7 +97,8 @@ Desktop can join too (same URL or `./mobile-tty attach`). One PTY means one size
 
 ## Advanced
 
-- The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME` (and `$MTTY_PASSWORD`, above).
+- The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME`, `$MTTY_THEME` (and `$MTTY_PASSWORD`, above).
+- The menu (≡ → Grid) switches `Dark`/`Light` per device, remembered in the browser. The server's `--theme` (or `$MTTY_THEME`) sets the default instead -- which is what a page the next visitor loads starts on.
 - The folder menu is built from pi's history under `~/.pi/agent/sessions`; `$PI_CODING_AGENT_SESSION_DIR` points it elsewhere.
 - **Continue here** always takes the folder's *most recent* session. To reach a different one in the same folder, continue, then `/resume` inside pi.
 - Restarting the server starts a fresh pi. `./mobile-tty pi --session-id whatever` pins one to come back to.

@@ -67,7 +67,7 @@ class Refused extends Error {}
  * desktop history ever matters, the answer is a deeper snapshot for `attach`
  * alone.
  */
-export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, sessionDir = PI_SESSIONS, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
+export function createTerminalServer({ port, bind, hostname, password, command, args = [], scrollback = DEFAULT_SCROLLBACK, sessionDir = PI_SESSIONS, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), theme = 'dark', onListen, onExit }) {
   const auth = new Auth(password)
 
   const startCwd = process.cwd()
@@ -378,7 +378,7 @@ export function createTerminalServer({ port, bind, hostname, password, command, 
 
     let client
     try {
-      client = await buildClient()
+      client = await buildClient({ theme })
     } catch (err) {
       // A phone has no console, so a build that fails has to be legible in the
       // page. The server stays up: fix the source and reload.

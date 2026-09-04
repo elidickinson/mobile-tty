@@ -495,6 +495,30 @@ test('the document validates against its build id, so an unchanged client costs 
   }
 })
 
+test('--theme light serves a light page with its own ETag, so no theme leaks across the cache', async () => {
+  const { server, page } = await start('tests/fixtures/fake-pi.js', [], { theme: 'light' })
+  const dark = await start()
+  try {
+    const light = await fetch(page)
+    const lightBody = await light.text()
+    assert.match(lightBody, /<html lang="en" class="theme-light">/)
+    assert.match(lightBody, /name="theme-color" content="#fafafa"/)
+
+    const darkBody = await (await fetch(dark.page)).text()
+    assert.match(darkBody, /<html lang="en" class="theme-dark">/)
+    // The two themes share the same source, so without them in the hash their
+    // docs would get one ETag between them — and the cache would serve a
+    // light page for a dark request. The hash has to know the theme.
+    const lightEtag = light.headers.get('etag')
+    const darkEtag = (await fetch(dark.page)).headers.get('etag')
+    assert.ok(lightEtag && darkEtag, 'both themes carry a validator')
+    assert.notEqual(lightEtag, darkEtag)
+  } finally {
+    await server.close()
+    await dark.server.close()
+  }
+})
+
 test('a socket from another origin never reaches the session', async () => {
   const { server, url } = await start()
   try {

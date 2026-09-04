@@ -1,12 +1,63 @@
 /* The whole UI: a terminal that fills the visual viewport, a key bar under it,
    and a sheet menu over both. */
 :root {
+  --font: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Color themes. `dark` is the default. The menu offers a switch that works
+   live (client-only), and the server can also bake one in with --theme. The
+   terminal's ANSI palette lives here rather than in wterm's defaults so one
+   set of variables drives both the terminal and the chrome around it. */
+:root.theme-dark {
   --bg: #0b0b0d;
   --fg: #d8d8dc;
   --chrome: #17171b;
   --edge: #2c2c33;
   --accent: #4c9aff;
-  --font: ui-monospace, "SF Mono", Menlo, monospace;
+  --on-accent: #001;
+  --muted: #8a8a95;
+  --faint: #6f6f7a;
+  --inset: #0d0d11;
+  --raised: #22222a;
+  --pressed: #33333c;
+  --soft: #17171d;
+  --ok: #50a14f;
+  --warn: #c18401;
+  --bad: #e45649;
+
+  --term-bg: var(--bg);
+  --term-fg: var(--fg);
+  --term-0: #1e1e1e;   --term-1: #f44747; --term-2: #6a9955; --term-3: #d7ba7d;
+  --term-4: #569cd6;   --term-5: #c586c0; --term-6: #4ec9b0; --term-7: #d4d4d4;
+  --term-8: #808080;   --term-9: #f44747; --term-10: #6a9955; --term-11: #d7ba7d;
+  --term-12: #569cd6;  --term-13: #c586c0; --term-14: #4ec9b0; --term-15: #ffffff;
+  --cursor: #5293ff;
+}
+
+:root.theme-light {
+  --bg: #fafafa;
+  --fg: #24262b;
+  --chrome: #f4f4f5;
+  --edge: #d4d4dc;
+  --accent: #3b6fe0;
+  --on-accent: #fff;
+  --muted: #76767e;
+  --faint: #9a9aa2;
+  --inset: #e9e9ec;
+  --raised: #e6e6ea;
+  --pressed: #d9d9df;
+  --soft: #ececf0;
+  --ok: #4a9d4f;
+  --warn: #b07a16;
+  --bad: #d1534a;
+
+  --term-bg: #ffffff;
+  --term-fg: #24262b;
+  --term-0: #24262b;   --term-1: #d13932; --term-2: #3a813d; --term-3: #a86a10;
+  --term-4: #3b6fe0;   --term-5: #9b3f97; --term-6: #2f7b8f; --term-7: #c2c2cc;
+  --term-8: #9a9aa2;   --term-9: #d13932; --term-10: #3a813d; --term-11: #a86a10;
+  --term-12: #3b6fe0;  --term-13: #9b3f97; --term-14: #2f7b8f; --term-15: #5a5a63;
+  --cursor: #3b6fe0;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -97,6 +148,15 @@ html, body {
   --term-font-family: var(--font);
   --term-bg: var(--bg);
   --term-fg: var(--fg);
+  --term-cursor: var(--cursor);
+  --term-color-0: var(--term-0);   --term-color-1: var(--term-1);
+  --term-color-2: var(--term-2);   --term-color-3: var(--term-3);
+  --term-color-4: var(--term-4);   --term-color-5: var(--term-5);
+  --term-color-6: var(--term-6);   --term-color-7: var(--term-7);
+  --term-color-8: var(--term-8);   --term-color-9: var(--term-9);
+  --term-color-10: var(--term-10); --term-color-11: var(--term-11);
+  --term-color-12: var(--term-12); --term-color-13: var(--term-13);
+  --term-color-14: var(--term-14); --term-color-15: var(--term-15);
   padding: 0;
   border-radius: 0;
   box-shadow: none;
@@ -134,10 +194,10 @@ html, body {
   touch-action: none;
 }
 
-#bar button:active { background: #33333c; }
+#bar button:active { background: var(--pressed); }
 #bar button.word { font-size: 14px; }
 #bar button.wide { font-size: 22px; }
-#bar button.sticky { background: var(--accent); color: #001; }
+#bar button.sticky { background: var(--accent); color: var(--on-accent); }
 
 /* The status strip: one grid row tall, under the keys. In standalone the
    home-indicator band absorbs it, so the terminal keeps every row; where there
@@ -151,7 +211,7 @@ html, body {
   justify-content: center;
   background: var(--chrome);
   border-top: 1px solid var(--edge);
-  color: #8a8a95;
+  color: var(--muted);
   font: 11px/1.35 var(--font);
   white-space: nowrap;
   overflow: hidden;
@@ -234,7 +294,7 @@ html, body {
   overflow-y: auto;
 }
 
-.menu-head { margin: 10px 0 5px; color: #8a8a95; font-size: 11px; text-transform: uppercase; }
+.menu-head { margin: 10px 0 5px; color: var(--muted); font-size: 11px; text-transform: uppercase; }
 .menu-toggle { padding: 5px 0; }
 .menu-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 /* Rows are usually separated by their heading. Where two run together the gap
@@ -256,7 +316,7 @@ html, body {
   padding: 10px 8px;
   border: 1px solid var(--edge);
   border-radius: 8px;
-  background: #0d0d11;
+  background: var(--inset);
   color: var(--fg);
   font: 13px var(--font);
 }
@@ -266,12 +326,22 @@ html, body {
   padding: 10px 8px;
   border: 1px solid var(--edge);
   border-radius: 8px;
-  background: #22222a;
+  background: var(--raised);
   color: var(--fg);
   font: 13px var(--font);
 }
 
-#menu-state { flex: 1; color: #8a8a95; }
+/* The theme switch shares the grid row; it never needs the full row width, so
+   it sizes to its label and reads as a secondary control next to the presets.
+   `sticky` is the same accent as the key bar's sticky modifiers. */
+.menu-row button[data-theme] {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.menu-row button[data-theme].sticky { background: var(--accent); color: var(--on-accent); }
+
+#menu-state { flex: 1; color: var(--muted); }
 
 /* Its own scroller: there is a folder here for every directory pi has ever run
    in, which on a working machine is a hundred of them. The card must not grow
@@ -281,11 +351,11 @@ html, body {
   overflow-y: auto;
   border: 1px solid var(--edge);
   border-radius: 8px;
-  background: #0d0d11;
+  background: var(--inset);
 }
 
 .place + .place { border-top: 1px solid var(--edge); }
-.place.open { background: #17171d; }
+.place.open { background: var(--soft); }
 
 .place-head {
   display: flex;
@@ -301,15 +371,15 @@ html, body {
 }
 
 /* The folder is the name; the path is what tells two `extensions` apart. */
-.place-path { color: #8a8a95; font-size: 11px; }
+.place-path { color: var(--muted); font-size: 11px; }
 
 /* Where you already are, so a list of a hundred rows still says which is this. */
 .place.here .place-name::after { content: ' ·'; color: var(--accent); }
 
 /* After `here`, so a row that is both says the more urgent thing. Waiting is
    not failure: `failed` means no answer came, and a late one is still taken. */
-.place.switching .place-name::after { content: ' — switching…'; color: #8a8a95; }
-.place.failed .place-name::after { content: ' — no answer'; color: #d08a70; }
+.place.switching .place-name::after { content: ' — switching…'; color: var(--muted); }
+.place.failed .place-name::after { content: ' — no answer'; color: var(--bad); }
 .place.switching .place-actions button { opacity: .5; pointer-events: none; }
 
 .place-actions { display: flex; gap: 8px; padding: 0 10px 10px; }
@@ -319,20 +389,20 @@ html, body {
   padding: 9px 8px;
   border: 1px solid var(--edge);
   border-radius: 8px;
-  background: #22222a;
+  background: var(--raised);
   color: var(--fg);
   font: 13px var(--font);
 }
 
-#place-now { text-transform: none; color: #6f6f7a; }
+#place-now { text-transform: none; color: var(--faint); }
 
 #diag {
   margin: 0;
   padding: 8px;
-  background: #0d0d11;
+  background: var(--inset);
   border: 1px solid var(--edge);
   border-radius: 6px;
-  color: #8a8a95;
+  color: var(--muted);
   font: 11px/1.45 var(--font);
   white-space: pre-wrap;
   overflow-x: auto;

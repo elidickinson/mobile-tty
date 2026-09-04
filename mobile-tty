@@ -21,6 +21,7 @@ bind="${MTTY_BIND:-127.0.0.1}"
 # The one hostname a proxy in front of this may present. Only needed when you
 # reach it by name rather than by address; see --hostname in the usage.
 hostname="${MTTY_HOSTNAME:-}"
+theme="${MTTY_THEME:-dark}"
 with_tunnel=""
 config="$PWD/cloudflared.yml"
 
@@ -42,6 +43,7 @@ Options
   --port N       default 7681, or $MTTY_PORT
   --hostname NAME the name a proxy in front of this presents, e.g. the
                  Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
+  --theme NAME   dark (default) or light; the menu can also switch per-device
   --tunnel       run the Cloudflare tunnel alongside the server
 
 Loopback is the default because the tunnel reaches it from this machine. Use
@@ -85,6 +87,7 @@ take_options() {
       --bind) [[ $# -ge 2 ]] || usage_error "--bind needs a value"; bind=$2; shift 2 ;;
       --port) [[ $# -ge 2 ]] || usage_error "--port needs a value"; port=$2; shift 2 ;;
       --hostname) [[ $# -ge 2 ]] || usage_error "--hostname needs a value"; hostname=$2; shift 2 ;;
+      --theme) [[ $# -ge 2 ]] || usage_error "--theme needs a value"; theme=$2; shift 2 ;;
       --tunnel) with_tunnel=1; shift ;;
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
@@ -119,7 +122,7 @@ case "$cmd" in
     # the way rather than sitting between you and the server.
     if [[ -z "$with_tunnel" ]]; then
       echo "serving http://$bind:$port"
-      exec node server/cli.js --port "$port" --bind "$bind" \
+      exec node server/cli.js --port "$port" --bind "$bind" --theme "$theme" \
         ${host_args[@]+"${host_args[@]}"} -- "$@"
     fi
 
@@ -154,7 +157,7 @@ case "$cmd" in
     # shell and take the trap with it; and not the foreground either, because
     # bash defers signals until the foreground command returns -- so a TERM
     # would sit unhandled and leave the tunnel behind.
-    node server/cli.js --port "$port" --bind "$bind" \
+    node server/cli.js --port "$port" --bind "$bind" --theme "$theme" \
       ${host_args[@]+"${host_args[@]}"} -- "$@" &
     server=$!
 
