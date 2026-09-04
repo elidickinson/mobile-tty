@@ -503,6 +503,7 @@ function dropHeld() {
 function deliver(bytes) {
   if (snapshotPending) {
     snapshotPending = false
+    const share = readingShareNow()
     // Everything being held is already inside the snapshot: the server writes
     // its mirror the same bytes it sends us, and serializes it at a boundary
     // behind them. Replaying the hold on top would apply it twice -- history
@@ -510,10 +511,10 @@ function deliver(bytes) {
     // -- pi's redraw on a resize -- follows as ordinary output, and the tail
     // window below writes it through.
     dropHeld()
-    snapshotTail = performance.now() + SNAPSHOT_TAIL_MS
+    snapshotTail = share === null ? 0 : performance.now() + SNAPSHOT_TAIL_MS
     term.write(bytes)
     applyPendingGrid()
-    pinReader()
+    if (share !== null) pinReader()
     // The snapshot reset the core, so the rendered window's keys no longer
     // match the fresh core's counts and the next render redraws it wholesale.
     return
