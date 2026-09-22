@@ -1,6 +1,6 @@
 // The connection: framing and reconnect. The server owns the PTY size and says
 // what it is, so there are no size games left here.
-import { encodeInput, encodeResize, encodeSwitch, encodeAskPlaces, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE, SET_SIZE, FOOTER, PLACES } from './ttyd.js'
+import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE, SET_SIZE, FOOTER } from './ttyd.js'
 
 const BACKOFF_MIN = 500
 const BACKOFF_MAX = 10_000
@@ -13,7 +13,7 @@ const BACKOFF_MAX = 10_000
  * server kept.
  */
 export class TtydConnection {
-  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout, onOutput, onTitle, onSize, onFooter, onPlaces, onState }) {
+  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout, onOutput, onTitle, onSize, onFooter, onState }) {
     this.url = url
     this.token = token
     this.socketFactory = socketFactory
@@ -23,7 +23,6 @@ export class TtydConnection {
     this.onTitle = onTitle
     this.onSize = onSize
     this.onFooter = onFooter
-    this.onPlaces = onPlaces
     this.onState = onState
 
     this.cols = 0
@@ -73,6 +72,19 @@ export class TtydConnection {
     this._open()
   }
 
+  /**
+   * Point this connection at a different session and reconnect immediately.
+   *
+   * Joining a different (or the same, freshly resumed) session is not a frame
+   * on the wire any more — the session a socket shows is chosen by the URL it
+   * connects with, so switching is just this plus the ordinary reconnect path:
+   * a fresh screen arrives the same way it would after any other reconnect.
+   */
+  join(url) {
+    this.url = url
+    this.reconnectNow()
+  }
+
   _open() {
     this.onState?.('connecting')
     const ws = this.socketFactory(this.url, ['tty'])
@@ -97,7 +109,6 @@ export class TtydConnection {
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
       else if (f.cmd === SET_SIZE) this.onSize?.({ cols: f.json.columns, rows: f.json.rows })
       else if (f.cmd === FOOTER) this.onFooter?.(f.text)
-      else if (f.cmd === PLACES) this.onPlaces?.(f.json)
     }
 
     ws.onclose = () => {
@@ -122,17 +133,4 @@ export class TtydConnection {
     if (this.connected) this.ws.send(encodeResize(cols, rows))
   }
 
-  // Neither of these is queued while disconnected, unlike input. A folder list
-  // is only wanted for the menu that is open now, and a switch that arrived
-  // minutes late would end a program its sender had stopped looking at.
-  askPlaces() {
-    if (this.connected) this.ws.send(encodeAskPlaces())
-  }
-
-  /** False when the frame never left: the caller has to say so, not assume. */
-  switchTo(cwd, resume) {
-    if (!this.connected) return false
-    this.ws.send(encodeSwitch(cwd, resume))
-    return true
-  }
 }

@@ -2,6 +2,7 @@
 // spying, and the scroll measurements that need a settled baseline.
 import { test as base, expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -31,12 +32,21 @@ export const test = base.extend({
     const root = await mkdtemp(join(tmpdir(), 'mtty-e2e-store-'))
     const sessionDir = join(root, 'sessions')
     await mkdir(sessionDir)
+    const seed = async cwd => {
+      const slug = join(sessionDir, `-${cwd.replaceAll('/', '-')}-`)
+      await mkdir(slug, { recursive: true })
+      await writeFile(join(slug, 'a.jsonl'), `${JSON.stringify({ type: 'session', version: 3, id: randomUUID(), cwd })}\n`)
+    }
+    // There is no "start fresh in whatever folder has no history yet" any
+    // more — a viewer only ever joins a session /places already lists — so
+    // every test needs somewhere to land by default, seeded first (oldest)
+    // so a spec that also asks for `folders` still lands on the newest of
+    // those unless it says otherwise.
+    await seed(process.cwd())
     for (const name of folders) {
       const cwd = join(root, name)
-      const slug = join(sessionDir, `-${cwd.replaceAll('/', '-')}-`)
       await mkdir(cwd)
-      await mkdir(slug)
-      await writeFile(join(slug, 'a.jsonl'), `${JSON.stringify({ type: 'session', version: 3, cwd })}\n`)
+      await seed(cwd)
     }
     await use({ root, sessionDir, at: name => join(root, name) })
     await rm(root, { recursive: true, force: true })

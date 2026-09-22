@@ -5,6 +5,7 @@
 // that a browser gets for free is act like a terminal: raw mode restored
 // whatever happens, SIGWINCH forwarded, and Ctrl-C and Ctrl-Z passed through to
 // the far side rather than acted on here.
+import { createInterface } from 'node:readline/promises'
 import { WebSocket } from 'ws'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
 
@@ -51,7 +52,46 @@ async function login(url, password) {
   return cookie.split(';')[0]
 }
 
-export async function attach({ url }) {
+const ask = async question => {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try { return await rl.question(question) } finally { rl.close() }
+}
+
+/**
+ * Which session to join: the one named outright, the one a substring of
+ * `match` picks out uniquely, or, failing either, a plain numbered prompt.
+ *
+ * Reads `GET /places` rather than a fixed id, since sessions come and go — the
+ * list this shows is exactly the one the phone's menu would.
+ */
+async function resolveSession(url, { session, match, headers }) {
+  if (session) return session
+
+  const listUrl = new URL(url)
+  listUrl.protocol = listUrl.protocol === 'wss:' ? 'https:' : 'http:'
+  listUrl.pathname = '/places'
+  const { sessions } = await fetch(listUrl, { headers }).then(r => r.json())
+  if (sessions.length === 0) {
+    console.error('attach: no sessions to join yet')
+    return null
+  }
+
+  const candidates = match
+    ? sessions.filter(s => `${s.name} ${s.path} ${s.id}`.toLowerCase().includes(match.toLowerCase()))
+    : sessions
+  if (candidates.length === 1) return candidates[0].id
+  if (candidates.length === 0) {
+    console.error(`attach: nothing matches ${JSON.stringify(match)}`)
+    return null
+  }
+
+  console.error('attach: which session?')
+  candidates.forEach((s, i) => console.error(`  ${i + 1}) ${s.running ? '●' : ' '} ${s.name}  ${s.path}`))
+  const choice = candidates[Number(await ask('> ')) - 1]
+  return choice?.id ?? null
+}
+
+export async function attach({ url, session, match }) {
   const { stdin, stdout } = process
   if (!stdin.isTTY) {
     console.error('attach: not a terminal')
@@ -62,7 +102,12 @@ export async function attach({ url }) {
   const password = process.env.MTTY_PASSWORD
   const headers = password ? { cookie: await login(url, password) } : undefined
 
-  const ws = new WebSocket(url, ['tty'], { headers })
+  const id = await resolveSession(url, { session, match, headers })
+  if (!id) process.exit(1)
+  const target = new URL(url)
+  target.searchParams.set('session', id)
+
+  const ws = new WebSocket(target, ['tty'], { headers })
   let restored = false
 
   // The snapshot's preamble leaves the terminal in the kitty keyboard protocol
