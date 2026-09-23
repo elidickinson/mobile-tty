@@ -292,9 +292,12 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         ws.send(data)
       })
       inner.on('close', () => {
-        const reason = registry.child(id)?.endReason ?? 'pi exited'
         registered?.()
-        ws.close(1001, reason)
+        // end() records the reason before it signals, so this lookup sees it
+        // whenever the inner socket beats the registry's own exit callback
+        // here; the other order, the callback above already closed this ws
+        // with the same reason and this close is the ignored one.
+        ws.close(1001, registry.child(id)?.endReason ?? 'pi exited')
       })
       inner.on('error', () => { registered?.(); ws.close(1011, 'lost the session') })
     }).catch(err => {
