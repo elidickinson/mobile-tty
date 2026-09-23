@@ -2,8 +2,7 @@
 // act on it, over the same login the phone and attach use. A server that is
 // not answering is an answer, not an error: say how to start one and leave.
 
-import { createInterface } from 'node:readline/promises'
-import { indexArgument, matching, pickFrom, placeRow } from './picker.js'
+import { ask, indexArgument, matching, pickFrom, placeRow } from './picker.js'
 
 const baseUrl = url => {
   const target = new URL(url)
@@ -38,12 +37,6 @@ const reach = async url => {
   if (!res) return null
   if (!res.ok) return { status: res.status }
   return { data: await res.json(), headers }
-}
-
-/** One question on the terminal, like attach's. */
-const ask = async question => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
-  try { return await rl.question(question) } finally { rl.close() }
 }
 
 /** `mobile-tty sessions` — every session the server lists, with ● and a count. */

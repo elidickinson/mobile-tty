@@ -8,10 +8,9 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { createInterface } from 'node:readline/promises'
 import { WebSocket } from 'ws'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
-import { indexArgument, matching, pickFrom } from './picker.js'
+import { ask, indexArgument, matching, pickFrom } from './picker.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
 // and not Ctrl-C or Ctrl-Z, which are the whole point of passing through.
@@ -64,11 +63,6 @@ async function login(url, password) {
     process.exit(1)
   }
   return cookie.split(';')[0]
-}
-
-const ask = async question => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
-  try { return await rl.question(question) } finally { rl.close() }
 }
 
 /**

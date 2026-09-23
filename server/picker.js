@@ -2,10 +2,21 @@
 // written, how a name-or-path fragment matches one, and the paged numbered
 // prompt. The list this shows is exactly what the phone's menu shows, since
 // both read `GET /places`.
+import { createInterface } from 'node:readline/promises'
 
 // How many rows one page shows. Everything past it is one `more` away rather
 // than one long wall of text.
 export const PICK_ROWS = 10
+
+/** One question on the terminal. Ctrl-C answers with a blank rather than
+ *  the unhandled AbortError readline raises: a prompt you get out of is a
+ *  prompt that heard "no", which a blank already means to every caller. */
+export const ask = async question => {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  try { return await rl.question(question) }
+  catch (err) { if (err.code === 'ABORT_ERR') return ''; throw err }
+  finally { rl.close() }
+}
 
 /** `3m`, `2h`, `5d` — the same reading of last-active the menu shows. */
 export const ago = at => {
