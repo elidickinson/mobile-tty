@@ -88,7 +88,9 @@ attach: which session?
 
 The `≡` menu lists every session pi has a transcript for, newest first, a running one marked ●. Tap one to join it -- if it isn't already running, it's started in the background first; if it is, you're looking at it instantly, exactly as it was left. Joining never ends anything else: leave a session and it keeps running, so the phone, a browser tab and any number of `attach`ed terminals can each be looking at a different one, the same as running pi a few times in different terminals -- except the menu is how you get back to any of them from the phone.
 
-There is currently no way to start a brand-new session from the menu itself -- run pi in a folder once from any terminal (`./mobile-tty serve bash`, then cd and run pi, works with no terminal handy) and it shows up in the list from then on. Attach can only name a session pi has already written a transcript for: it joins, it does not create. Neither the menu nor `attach` picks a session by name purely -- two conversations in one folder differ only by recency (the menu shows it; the picker numbers them), or by their ids.
+The list is labeled: each row's title is pi's own name for that session (written once it has read your first exchange), falling back to what you first asked there, and each shows how long ago it was last active. A session with no conversation in it yet is labeled by its folder. `attach`'s numbered picker shows the same labels and times, and a fragment matches labels too -- two conversations in one folder are told apart by those, or by their ids.
+
+**New session** at the top of the menu starts a brand-new conversation without any transcript to resume: it offers this server's own folder first (point `--new-dir` elsewhere if you would rather), then every folder a listed session runs in. The session begins immediately in the background and joins like any other; pi writes its transcript on first use and it is a normal row from then on. A session exists in the list either way, transcript or not, until the server holding it stops.
 
 ## Reach it from anywhere
 
@@ -112,7 +114,7 @@ Desktop can join too (same URL, or `./mobile-tty attach [name-or-path]` for a se
 
 ## Advanced
 
-- The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME`, `$MTTY_THEME` (and `$MTTY_PASSWORD`, above).
+- The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME`, `$MTTY_THEME`, `$MTTY_NEW_DIR` (and `$MTTY_PASSWORD`, above).
 - The session menu is built from pi's history under `~/.pi/agent/sessions`; `$PI_CODING_AGENT_SESSION_DIR` points it elsewhere.
 - A folder used for several separate pi conversations offers all of them in the list, not just the newest -- there's no more need to `/resume` inside pi to reach an older one in the same folder.
 - **The list itself is capped at the 50 most recent sessions**, not everything pi has ever kept a transcript for -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." The menu says how many older ones are being left out when there are any. This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
