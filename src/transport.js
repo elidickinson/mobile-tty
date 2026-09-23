@@ -13,7 +13,7 @@ const BACKOFF_MAX = 10_000
  * server kept.
  */
 export class TtydConnection {
-  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout, onOutput, onTitle, onSize, onFooter, onState }) {
+  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout.bind(globalThis), onOutput, onTitle, onSize, onFooter, onState }) {
     this.url = url
     this.token = token
     this.socketFactory = socketFactory

@@ -389,7 +389,13 @@ html, body {
   font: 12px var(--font);
   text-align: center;
 }
-}
+
+/* The one row that starts something rather than joining it, and the folder
+   rows it offers: quieter than the session rows, since choosing a folder is
+   one step of two, not a destination. */
+.place.start .place-name { color: var(--accent); }
+.place.dir .place-name { color: var(--fg); }
+.place.dir .place-path { min-height: 0; }
 
 #place-now { text-transform: none; color: var(--faint); }
 

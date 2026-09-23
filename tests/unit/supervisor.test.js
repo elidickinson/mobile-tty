@@ -40,8 +40,8 @@ const start = async ({ sessionDir, cap = 4, socketDir, command = fakePi, args = 
 }
 
 /** Join a session, collecting its screen output as text. */
-const join = (base, id, { columns = 50, rows = 20 } = {}) => {
-  const ws = new WebSocket(`${base}?session=${id}`, ['tty'])
+const join = (base, id, { columns = 50, rows = 20, cwd } = {}) => {
+  const ws = new WebSocket(`${base}?session=${id}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ''}`, ['tty'])
   let output = ''
   const opened = new Promise(resolve => ws.on('open', () => {
     ws.send(JSON.stringify({ AuthToken: '', columns, rows }))
@@ -150,9 +150,58 @@ test('GET /places lists every session and which ones are running', async () => {
     const { sessions } = await fetch(`${page}/places`).then(r => r.json())
     const byId = Object.fromEntries(sessions.map(s => [s.id, s]))
     assert.equal(byId.a.running, true, 'the session that was joined is running')
+    assert.equal(byId.a.viewers, 1, 'the open join is counted')
     assert.equal(byId.b.running, false, 'the one nobody joined is not')
+    assert.equal(byId.b.viewers, 0, 'an unjoined session has no viewers')
   } finally {
     a.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('/places scopes viewers to the exact folder when an id is listed twice', async () => {
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a', { cwd: store.at('two') })
+  try {
+    await viewer.opened
+    await until(() => viewer.output.includes('two'), 'the selected folder to be served')
+
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    const byCwd = Object.fromEntries(sessions.map(s => [s.cwd, s]))
+    assert.equal(byCwd[store.at('one')].viewers, 0)
+    assert.equal(byCwd[store.at('two')].viewers, 1)
+    assert.equal(byCwd[store.at('two')].running, true)
+  } finally {
+    viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('DELETE ends one running session and closes its viewer', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  try {
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the joined session to be up')
+    await until(async () => {
+      const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+      return sessions.find(s => s.id === 'a')?.viewers === 1
+    }, 'the viewer to appear in the list')
+
+    const ended = await fetch(`${page}/session?id=a`, { method: 'DELETE' })
+    assert.equal(ended.status, 200)
+    assert.deepEqual(await ended.json(), { ended: 'a' })
+    await until(() => registryRunning(supervisor) === 0, 'the child to exit')
+    assert.equal(await viewer.closed, 1001, 'the connected viewer sees the session end')
+
+    assert.equal((await fetch(`${page}/session?id=a`, { method: 'DELETE' })).status, 404)
+    assert.equal((await fetch(`${page}/session`, { method: 'DELETE' })).status, 404)
+  } finally {
+    viewer.close()
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
   }
@@ -207,9 +256,12 @@ test('evicting a session pulls the relay out from under its viewer at once', asy
     const closing = a.closed
     const b = join(base, 'b')
     await b.opened
+    // The losing arm's timeout must be cleared, or node --test sits on it for
+    // the full 8s after the test itself has passed.
+    let cutoff
     const why = await Promise.race([
-      closing.then(code => code),
-      new Promise((_, bad) => setTimeout(() => bad(new Error('viewer never told')), 8_000)),
+      closing.then(code => (clearTimeout(cutoff), code)),
+      new Promise((_, bad) => { cutoff = setTimeout(() => bad(new Error('viewer never told')), 8_000) }),
     ])
     assert.equal(why === null || why === 1001, true, `expected a clean end, got ${why}`)
     b.close()
@@ -218,6 +270,57 @@ test('evicting a session pulls the relay out from under its viewer at once', asy
     await rm(store.root, { recursive: true, force: true })
   }
 })
+test('joining a running session in the wrong folder is refused, not redirected', async () => {
+  // Two rows share the id in the store (resumed under two folders); one child
+  // is up in the first. A join naming the second folder must get a clear
+  // refusal — ensure() would happily keep the running child and attach the
+  // viewer to the wrong folder with no word.
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'a' }])
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir })
+  try {
+    const running = join(base, 'a', { cwd: store.at('one') })
+    await running.opened
+
+    const stranger = join(base, 'a', { cwd: store.at('two') })
+    const code = await stranger.closed
+    assert.equal(code, 4009, 'a mismatched join is refused')
+    assert.equal(registryRunning(supervisor), 1, 'the refusal spawned nothing')
+    // The original viewer is untouched by it.
+    await until(() => running.output.length > 0, 'the running session still streams')
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('/start begins a session in an offered folder, and nowhere else', async () => {
+  const store = await storeFor([{ name: 'listed', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const post = (body) => fetch(`${page}/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  try {
+    // An unlisted folder is refused with a clear status, spawning nothing.
+    const refused = await post({ cwd: pathJoin(store.root, 'elsewhere') })
+    assert.equal(refused.status, 422)
+    assert.equal(registryRunning(supervisor), 0)
+
+    // A folder the listing offers spawns a session that then joins.
+    const ok = await post({ cwd: store.at('listed') })
+    assert.equal(ok.status, 200)
+    const { id, cwd } = await ok.json()
+    assert.match(id, /^[0-9a-f-]{36}$/)
+    assert.equal(cwd, store.at('listed'))
+    const viewer = join(base, id, { cwd })
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the started session serves its screen')
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+/** How many children the supervisor's registry is holding. */
+const registryRunning = supervisor => supervisor.registry.running().length
+
 test('a program that is not pi gets no pi-only flags on its command line', async () => {
   // bash exits on an unknown `--session-id` option, so if the flag reached it,
   // the child would be gone before its socket answered and this join would

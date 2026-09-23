@@ -1,7 +1,7 @@
 // The session picker. A row acts the moment it is tapped — joining never ends
 // anything else — so what matters is that a tap lands somewhere real, that the
-// list says where you are and what is still running, and that the first screen
-// survives a session id remembered from last time.
+// list says where you are and what is still running, and that a session with
+// no transcript yet can be begun from the same list.
 import { test, expect, ready } from './helpers.js'
 
 test.use({ folders: ['alpha', 'beta'] })
@@ -13,23 +13,40 @@ const openMenu = async page => {
 
 const rows = page => page.locator('#places .place')
 
-test('the menu lists the sessions pi has history in, and says which is current', async ({ page }) => {
+// The cwd the test server starts in: this checkout's root, seeded oldest so a
+// spec that also asks for folders lands on the newest of those instead.
+const HERE = 'mobile-tty'
+
+test('the menu lists every session plus the row that starts one', async ({ page }) => {
   await ready(page)
   await openMenu(page)
 
-  // The store seeds one session per folder: here, alpha, beta. The cwd's own
-  // session is written last, so it is the newest and the one a fresh viewer
-  // lands on.
+  // One seeded session per folder plus the cwd's own, with labels drawn from
+  // each transcript (the fixtures have no conversation, so the folder name
+  // is the label), and pinned at the top, the way to start a session that
+  // has none yet.
   await expect.poll(async () => (await page.locator('#places .place-name').allInnerTexts()).sort())
-    .toEqual(['alpha', 'beta', 'pr1-work'])
-  await expect(page.locator('#places .place.here .place-name')).toHaveText('pr1-work')
-  await expect(page.locator('#place-now')).toContainText('pr1-work')
+    .toEqual(['+ New session…', 'alpha', 'beta', HERE])
+  // beta is the newest seed, so a fresh viewer lands on that session.
+  await expect(page.locator('#places .place.here .place-name')).toHaveText('beta')
+  await expect(page.locator('#place-now')).toContainText('beta')
+})
+
+test('a row shows when the session was last active', async ({ page, store }) => {
+  await ready(page)
+  await openMenu(page)
+
+  const beta = rows(page).filter({ hasText: 'beta' })
+  // The store stamps sessions now, so the honest reading of an mtime is the
+  // time-ago at the END of the row -- anchored, since the path itself can
+  // contain digits that would otherwise match (a tmpdir hash, say).
+  await expect(beta.locator('.place-path')).toContainText(/· (now|[0-9]+[mhd])$/)
 })
 
 test('the menu fits the screen, with the readout folded away', async ({ page }) => {
   await ready(page)
   await openMenu(page)
-  await expect.poll(() => rows(page).count()).toBe(3)
+  await expect.poll(() => rows(page).count()).toBe(4)
 
   // The session list is as long as the history you have, so the sheet has to
   // stay inside the screen — `Done` scrolling off the top is how a menu
@@ -44,7 +61,8 @@ test('the menu fits the screen, with the readout folded away', async ({ page }) 
   expect(card.bottom).toBeLessThanOrEqual(card.viewport + 1)
   // Against a short list, which is the case that has no excuse: the sheet is
   // over a terminal somebody is trying to read.
-  expect(card.visible).toBeLessThan(card.viewport * 0.75)
+  // One start row and four sessions: still well short of the whole screen.
+  expect(card.visible).toBeLessThan(card.viewport * 0.9)
 
   // Still reachable for the times it is the only thing that can explain a
   // fault — and it stands in for the menu rather than stacking under it, or
@@ -67,7 +85,7 @@ test('the menu fits the screen, with the readout folded away', async ({ page }) 
 test('tapping a row joins that session: the screen follows the folder', async ({ page }) => {
   await ready(page)
   await openMenu(page)
-  await expect.poll(() => rows(page).count()).toBe(3)
+  await expect.poll(() => rows(page).count()).toBe(4)
 
   // One tap: no disclose-then-act, nothing to confirm — joining ends nothing.
   await rows(page).filter({ hasText: 'beta' }).click()
@@ -115,8 +133,44 @@ test('a session who went away keeps running elsewhere: the list survives it', as
   await expect.poll(() => page.title()).toContain('/beta')
 
   await openMenu(page)
-  await expect.poll(() => rows(page).count()).toBe(3)
+  await expect.poll(() => rows(page).count()).toBe(4)
   await rows(page).filter({ hasText: 'alpha' }).click()
   await expect.poll(() => page.title()).toContain('/alpha')
   await expect(page.locator('#place-now')).toContainText('alpha')
 })
+
+test('new session offers the folders pi is already in, and starting one joins it', async ({ page, store }) => {
+  await ready(page)
+  await openMenu(page)
+
+  await rows(page).filter({ hasText: '+ New session…' }).click()
+  // The chooser lists this folder first — it is what the row itself offered —
+  // and every folder a listed session runs in.
+  const dirNames = await page.locator('#places .place .place-name').allInnerTexts()
+  expect(dirNames[0]).toBe(HERE)
+  expect(dirNames.slice(1).sort()).toEqual(['alpha', 'beta'])
+
+  // Starting one in beta spawns a fresh session there and lands on it: the
+  // title names a session the list never had, and the fixture's own cwd line
+  // proves the child really came up in that folder. The id must be one the
+  // seeded store never held — the seeded beta row would satisfy the title
+  // alone, which would make this pass even if /start never ran.
+  const seeded = await page.evaluate(() => fetch('/places').then(r => r.json()))
+  const seededIds = new Set(seeded.sessions.map(s => s.id))
+  await rows(page).filter({ hasText: 'beta' }).click()
+  await expect.poll(() => page.title()).toContain('/beta')
+  await expect.poll(async () =>
+    (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/beta')
+  const joined = await page.evaluate(() => fetch('/places').then(r => r.json()))
+  const started = joined.sessions.find(s => !seededIds.has(s.id))
+  expect(started, 'a new id appeared in the list').toBeTruthy()
+  expect(started.running).toBe(true)
+
+  // And it is a place now: back to the menu, it is listed, running, labeled.
+  await openMenu(page)
+  const beta = rows(page).filter({ hasText: betaLabel() })
+  await expect(beta.first()).toHaveClass(/running/, { timeout: 8_000 })
+})
+
+/** beta's row label: the folder name — the fresh session there has no history. */
+const betaLabel = () => 'beta'

@@ -6,15 +6,18 @@
 // joins keeps running after that viewer leaves, and a different viewer (phone,
 // a second `attach`, a third) can be looking at a different one at the same
 // time. `GET /places` answers what sessions exist and which are running;
-// `/ws?session=<id>` is a raw pipe into that session's child, spawning it via
-// `server/registry.js` if it is not already up.
+// `POST /start` begins one that has no transcript yet; `/ws?session=<id>` is a
+// raw pipe into that session's child, spawning it via `server/registry.js` if
+// it is not already up.
 import { createServer } from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
+import { basename, join } from 'node:path'
 import { WebSocket, WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
-import { PI_SESSIONS, readPlaces } from './places.js'
+import { PI_SESSIONS, readPlaces, canonical, shorten } from './places.js'
 import { BACKLOG_LIMIT, TOO_FAR_BEHIND } from './viewer.js'
 import { Registry } from './registry.js'
 
@@ -40,11 +43,27 @@ const connectChild = socketPath => new Promise((resolveConn, rejectConn) => {
   attempt()
 })
 
-export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', onListen, onExit }) {
+export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', newDir, onListen, onExit }) {
   const auth = new Auth(password)
   const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme })
+  // Where a brand-new session starts: given, or the folder this run was
+  // launched from (see cli.js, which pins it before anything can chdir away).
+  const defaultDir = newDir ?? process.cwd()
 
   const loginHeaders = { 'content-type': 'text/html', 'cache-control': 'no-store' }
+
+  /** A JSON body, capped hard: /start's whole payload is one directory string. */
+  const readBody = (req, cap) => new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    req.on('data', chunk => {
+      size += chunk.length
+      if (size > cap) return void req.destroy()
+      chunks.push(chunk)
+    })
+    req.on('end', () => resolve(JSON.parse(Buffer.concat(chunks).toString())))
+    req.on('error', reject)
+  })
 
   const http = createServer(async (req, res) => {
     const path = req.url?.split('?')[0]
@@ -58,10 +77,80 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     if (path === '/places' && req.method === 'GET') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
+      // How many viewers are on each live child, for the listings: "2 watching"
+      // on a row says the session is shared right now, not just alive.
+      const viewers = (id, cwd) => [...wss.clients].filter(
+        c => c.readyState === c.OPEN && c.sessionId === id && c.sessionCwd === cwd).length
       const { sessions: found, total } = await readPlaces({ sessionDir })
-      const sessions = found.map(place => ({ ...place, running: registry.has(place.id) }))
-      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, total })
+      // A live child pins its row: same id resumed under two folders lists
+      // twice, but only the folder the child actually runs in is running.
+      // And a child with no transcript yet (just started) is listed anyway —
+      // otherwise the thing it just began on the phone would vanish from the
+      // very menu that started it.
+      const listed = new Set(found.map(p => `${p.id}\u0000${p.cwd}`))
+      const fresh = registry.running().flatMap(id => {
+        const child = registry.child(id)
+        return listed.has(`${id}\u0000${child.cwd}`)
+          ? []
+          : [{ id, cwd: child.cwd, name: basename(child.cwd), path: shorten(child.cwd), at: child.joinedAt, label: basename(child.cwd) }]
+      })
+      const rows = [...found, ...fresh].sort((a, b) => b.at - a.at)
+      const live = id => registry.child(id)?.cwd
+      const sessions = rows.map(place => ({ ...place, running: live(place.id) === place.cwd, viewers: viewers(place.id, place.cwd) }))
+      // `total` counts store transcripts; the list also carries transcript-
+      // less live sessions, so "older, not shown" must count from what is
+      // actually shown, not from the store total alone.
+      const hidden = Math.max(0, total - found.length)
+      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, hidden, here: defaultDir })
       return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
+    }
+
+    // End a running session for good: the child gets SIGTERM, then SIGKILL
+    // after a grace (`registry.end`), and its viewers see the session end
+    // exactly as if pi had exited on its own. Deleted-for-real is pi's own
+    // business; this stops the process, which is what mobile-tty owns.
+    if (path === '/session' && req.method === 'DELETE') {
+      if (!auth.admits(req)) return void res.writeHead(401).end()
+      const id = new URL(req.url, 'http://internal').searchParams.get('id')
+      const child = id && registry.child(id)
+      if (!child) return void res.writeHead(404, { 'content-type': 'text/plain' }).end(id ? 'that session is not running' : 'which session')
+      console.error(`server: ending session ${id} on request`)
+      await registry.end(id)
+      return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ended: id }))
+    }
+
+    // Start a session that has no transcript yet: mint an id, spawn pi in the
+    // named directory, and let the client join it like any other. The
+    // directory is one this server itself offers (its own cwd, or one some
+    // /places row already refers to), checked fresh here against the store as
+    // it stands now — so a posted path is only ever honored if the operator
+    // has been running pi there, and one deleted since the last listing
+    // fails cleanly instead of spawning anywhere.
+    if (path === '/start' && req.method === 'POST') {
+      if (!auth.admits(req)) return void res.writeHead(401).end()
+      if (!originAllowed({ origin: req.headers.origin, host: req.headers.host, hostname })) {
+        return void res.writeHead(403).end()
+      }
+      const body = await readBody(req, 512).catch(() => null)
+      const wanted = body ? await canonical(body.cwd?.trim()) : null
+      const here = await canonical(defaultDir)
+      // The offered folders are: this server's own, every store row's, and
+      // every live child's — a just-started session's folder is offered in
+      // the chooser but may have no row yet, so the same set that authorizes
+      // must include it.
+      let spawnable = false
+      if (wanted) {
+        if (wanted === here) spawnable = true
+        else {
+          const { sessions } = await readPlaces({ sessionDir })
+          spawnable = sessions.some(place => place.cwd === wanted) ||
+            registry.running().some(id => registry.child(id).cwd === wanted)
+        }
+      }
+      if (!spawnable) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such place to start a session in')
+      const id = randomUUID()
+      registry.ensure(id, wanted)
+      return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted }))
     }
 
     if (path !== '/') return void res.writeHead(404).end()
@@ -106,9 +195,15 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     onExit?.({ exitCode: 1, signal: 0 })
   })
 
-  // `?session=<id>` names which of pi's own sessions to join. There is no
-  // "start a new one" here — a viewer only ever names an id it learned from
-  // `GET /places`, which only ever lists sessions pi's own store already has.
+  // `?session=<id>&cwd=<path>` names which session to join. There is no
+  // "start a random one" here — a viewer only ever names an id and folder it
+  // learned from `GET /places` or made by `POST /start`.
+  //
+  // The cwd is part of the contract because an id alone no longer is one:
+  // pi files a session per (id, cwd) pair, so the same conversation resumed
+  // elsewhere lists twice, and a running child pins its own folder. Joining
+  // names the folder you meant; if the child already up lives in a different
+  // one, that is refused rather than silently served from somewhere else.
   wss.on('connection', (ws, req) => {
     // Cleared before each ping and set by the pong that answers it.
     alive.add(ws)
@@ -118,6 +213,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     const url = new URL(req.url, 'http://internal')
     const id = url.searchParams.get('session')
+    const cwd = url.searchParams.get('cwd')
+    ws.sessionId = id
 
     let inner = null
     let buffered = []
@@ -139,7 +236,28 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     ws.on('error', () => { closed = true; registered?.(); inner?.close() })
 
     readPlaces({ sessionDir }).then(async ({ sessions }) => {
-      const place = sessions.find(p => p.id === id)
+      // A live child pins its own folder — registry.child(id) is authoritative
+      // over whatever any listing said. Without a cwd in the join, the child's
+      // folder (or the newest row's) is what you get; with one, a mismatch is
+      // refused rather than served from the wrong place.
+      // Which folder this session lives in is decided before any place is
+      // picked: a running child is the authority for its own id, and if the
+      // join names a different folder than the one the child runs in, that is
+      // a refusal (4009) — never a silent attach to the child's folder, which
+      // is what ensure() would otherwise do by keeping the existing child.
+      const live = registry.child(id)
+      if (live && cwd && live.cwd !== cwd) {
+        ws.close(4009, 'that session is running somewhere else')
+        return
+      }
+      // A started-with-no-transcript session exists only as its live child;
+      // the store will list it once pi writes the file.
+      const place = (cwd
+        ? sessions.find(p => p.id === id && p.cwd === cwd)
+          ?? (live?.cwd === cwd ? { id, cwd } : null)
+        : sessions.find(p => p.id === id && p.cwd === live?.cwd)
+          ?? sessions.find(p => p.id === id)
+          ?? (live ? { id, cwd: live.cwd } : null))
       if (closed) return
       if (!id || !place) {
         ws.close(4004, 'no such session')
@@ -147,6 +265,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       }
 
       const child = registry.ensure(id, place.cwd)
+      ws.sessionCwd = child.cwd
       const sock = await connectChild(child.socketPath)
       if (closed) { sock.close(); return }
       inner = sock

@@ -50,6 +50,9 @@ export class Registry {
 
   has(id) { return this.#children.has(id) }
 
+  /** The running child itself, or undefined — its cwd pins where a session lives. */
+  child(id) { return this.#children.get(id) }
+
   /**
    * Call back when `id`'s child is gone, however it went — eviction, wedge,
    * plain exit. The returned function unregisters. A connected viewer registers
