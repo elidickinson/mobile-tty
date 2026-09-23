@@ -90,6 +90,13 @@ if (new URLSearchParams(location.search).has('debug')) {
 // at once. A place is a (session, folder) pair — the same session resumed in
 // two folders is two rows — so the pair is what is remembered and matched.
 let currentId = null
+let armedEndId = null
+let endArmTimer = null
+const endingIds = new Set()
+let placesRequest = 0
+// The close code the supervisor sends when the session itself is over — pi
+// exited, or someone ended it — as opposed to an ordinary dropped socket.
+const SESSION_ENDED = 1001
 const placeKey = (id, cwd) => `${id} ${cwd}`
 const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
 const sessionUrl = (id, cwd) =>
@@ -97,6 +104,12 @@ const sessionUrl = (id, cwd) =>
   (cwd ? `&cwd=${encodeURIComponent(cwd)}` : '')
 
 const fetchPlaces = () => fetch('/places').then(r => r.json())
+function refreshPlaces() {
+  const request = ++placesRequest
+  return fetchPlaces().then(data => {
+    if (request === placesRequest) showPlaces(data)
+  })
+}
 
 /** The last path segment, for chooser rows and titles. */
 const basename = path => path.slice(path.lastIndexOf('/') + 1)
@@ -140,10 +153,22 @@ const conn = new TtydConnection({
   onTitle: title => { document.title = title; clearFooter() },
   onSize: ({ cols, rows }) => { snapshotPending = true; applyServerSize(cols, rows) },
   onFooter: showFooter,
-  onState: status => {
+  onState: (status, code) => {
     // 'connecting' covers reconnectNow (which closes the old socket so its
     // onclose never fires) as well as every ordinary open.
     if (status !== 'connected') dropHeld()
+    // 1001 is the server saying the session itself ended (pi exited, or
+    // someone ended it) — not a dropped phone. Retrying would spawn a fresh
+    // process from the transcript, which is the "just quit and it restarted"
+    // puzzle, so the loop stops and the menu lists what is left instead.
+    if (status !== 'connected' && code === SESSION_ENDED) {
+      conn.stop()
+      showConnection('disconnected')
+      currentId = null
+      document.title = 'mobile-tty'
+      openMenu()
+      return
+    }
     showConnection(status)
   },
 })
@@ -659,7 +684,7 @@ function openMenu() {
   foldDiag(false)
   // Asked for on the way in rather than held from last time: pi is used from
   // other terminals too, so the list goes stale between openings.
-  fetchPlaces().then(showPlaces).catch(() => {})
+  refreshPlaces().catch(() => {})
   menu.hidden = false
 }
 
@@ -693,6 +718,11 @@ function showPlaces({ sessions, hidden, here }) {
   places.append(start)
 
   for (const sess of sessions) {
+    const wrap = document.createElement('div')
+    wrap.className = 'place-row'
+    wrap.dataset.sessionId = sess.id
+    if (sess.running) wrap.classList.add('has-end')
+
     const row = document.createElement('button')
     row.className = sess.id === currentId ? 'place here' : 'place'
     if (sess.running) row.classList.add('running')
@@ -708,7 +738,27 @@ function showPlaces({ sessions, hidden, here }) {
 
     row.append(name, path)
     row.addEventListener('click', () => joinSession(sess))
-    places.append(row)
+    wrap.append(row)
+
+    // Keep the destructive action separate from the join button so it remains
+    // keyboard-accessible without nesting interactive controls.
+    if (sess.running) {
+      const end = document.createElement('button')
+      end.className = 'place-end'
+      end.dataset.sessionId = sess.id
+      end.dataset.label = sess.label
+      end.addEventListener('click', () => {
+        if (armedEndId !== sess.id) {
+          armEnd(sess.id)
+          return
+        }
+        clearEndArm()
+        void endSession(sess)
+      })
+      updateEndControl(sess.id, end)
+      wrap.append(end)
+    }
+    places.append(wrap)
   }
   // The server caps the list rather than reading and sending every session
   // pi has ever kept a transcript for, which on a working machine can be a
@@ -718,6 +768,55 @@ function showPlaces({ sessions, hidden, here }) {
     more.className = 'place-more'
     more.textContent = `+${hidden} older, not shown`
     places.append(more)
+  }
+}
+
+function updateEndControl(id, existing) {
+  const control = existing ?? [...places.querySelectorAll('.place-end')]
+    .find(button => button.dataset.sessionId === id)
+  if (!control) return
+  const ending = endingIds.has(id)
+  const armed = armedEndId === id
+  control.disabled = ending
+  control.textContent = ending ? 'Ending…' : armed ? 'End it?' : 'End'
+  control.classList.toggle('confirm', armed && !ending)
+  control.setAttribute('aria-label', `${ending ? 'ending' : armed ? 'confirm ending' : 'end'} ${control.dataset.label}`)
+}
+
+function clearEndArm() {
+  if (endArmTimer !== null) clearTimeout(endArmTimer)
+  endArmTimer = null
+  armedEndId = null
+}
+
+function armEnd(id) {
+  const previous = armedEndId
+  clearEndArm()
+  if (previous !== null && previous !== id) updateEndControl(previous)
+  armedEndId = id
+  updateEndControl(id)
+  endArmTimer = setTimeout(() => {
+    if (armedEndId !== id) return
+    armedEndId = null
+    endArmTimer = null
+    updateEndControl(id)
+  }, 4_000)
+}
+
+/** End a running session, then refresh the shared place list. The close handler
+ *  owns clearing currentId and returning an active viewer to the picker. */
+async function endSession(sess) {
+  endingIds.add(sess.id)
+  updateEndControl(sess.id)
+  try {
+    const res = await fetch(`/session?id=${encodeURIComponent(sess.id)}`, { method: 'DELETE' })
+    if (!res.ok && res.status !== 404) $('menu-state').textContent = `End failed (${res.status})`
+  } catch {
+    $('menu-state').textContent = 'End failed'
+  } finally {
+    endingIds.delete(sess.id)
+    updateEndControl(sess.id)
+    refreshPlaces().catch(() => {})
   }
 }
 
@@ -742,7 +841,7 @@ function showDirs({ sessions, here }) {
   const back = document.createElement('button')
   back.className = 'place dir'
   back.textContent = '‹ Back'
-  back.addEventListener('click', () => fetchPlaces().then(showPlaces).catch(() => {}))
+  back.addEventListener('click', () => refreshPlaces().catch(() => {}))
   places.append(back)
 
   const dirs = [...new Set([here, ...sessions.map(s => s.cwd)])]
@@ -773,11 +872,12 @@ async function startSession(dir) {
   await joinSession({ id, cwd, name: basename(dir), path: dir })
   // The list is stale the moment this worked: a row now exists for a session
   // with no transcript.
-  fetchPlaces().then(showPlaces).catch(() => {})
+  refreshPlaces().catch(() => {})
 }
 
 /** Point the connection at another session's socket and reconnect to it. */
 function joinSession(sess) {
+  clearEndArm()
   currentId = sess.id
   localStorage.setItem('mtty-place', placeKey(sess.id, sess.cwd))
   placeNow.textContent = sess.path

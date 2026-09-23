@@ -15,7 +15,7 @@ class FakeSocket {
   close() { this.readyState = 3 }
   open() { this.readyState = 1; this.onopen?.() }
   message(bytes) { this.onmessage?.({ data: new Uint8Array(bytes).buffer }) }
-  drop() { this.readyState = 3; this.onclose?.() }
+  drop(code = 1006) { this.readyState = 3; this.onclose?.({ code }) }
 }
 
 const text = u => new TextDecoder().decode(u)
@@ -89,6 +89,35 @@ test('backoff grows on repeated failure and resets once connected', () => {
   sock().open()
   sock().drop()
   assert.equal(timers[0].ms, delays[0], 'a successful connection resets the backoff')
+})
+
+test('a session-ended close does not schedule another connection after stop', () => {
+  let connection
+  const { c, sock, timers } = setup({
+    onState: (status, code) => {
+      if (status === 'disconnected' && code === 1001) connection.stop()
+    },
+  })
+  connection = c
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  sock().drop(1001)
+
+  assert.equal(c.started, false)
+  assert.equal(timers.length, 0)
+})
+
+test('join re-arms a stopped connection for its new destination', () => {
+  const { c, sock } = setup()
+  c.connect({ cols: 50, rows: 30 })
+  sock().open()
+  c.stop()
+  const old = sock()
+
+  c.join('ws://new-session/ws')
+  assert.equal(c.started, true)
+  assert.notEqual(sock(), old)
+  assert.equal(sock().url, 'ws://new-session/ws')
 })
 
 test('reconnectNow replaces an open socket immediately', () => {

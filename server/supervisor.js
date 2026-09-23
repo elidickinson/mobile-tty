@@ -51,6 +51,11 @@ export function createSupervisor({ port, bind, hostname, password, command, args
   const defaultDir = newDir ?? process.cwd()
 
   const loginHeaders = { 'content-type': 'text/html', 'cache-control': 'no-store' }
+  const originAllowedReq = req => originAllowed({
+    origin: req.headers.origin,
+    host: req.headers.host,
+    hostname,
+  })
 
   /** A JSON body, capped hard: /start's whole payload is one directory string. */
   const readBody = (req, cap) => new Promise((resolve, reject) => {
@@ -111,6 +116,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     // business; this stops the process, which is what mobile-tty owns.
     if (path === '/session' && req.method === 'DELETE') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
+      if (!originAllowedReq(req)) return void res.writeHead(403).end()
       const id = new URL(req.url, 'http://internal').searchParams.get('id')
       const child = id && registry.child(id)
       if (!child) return void res.writeHead(404, { 'content-type': 'text/plain' }).end(id ? 'that session is not running' : 'which session')
@@ -128,9 +134,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     // fails cleanly instead of spawning anywhere.
     if (path === '/start' && req.method === 'POST') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
-      if (!originAllowed({ origin: req.headers.origin, host: req.headers.host, hostname })) {
-        return void res.writeHead(403).end()
-      }
+      if (!originAllowedReq(req)) return void res.writeHead(403).end()
       const body = await readBody(req, 512).catch(() => null)
       const wanted = body ? await canonical(body.cwd?.trim()) : null
       const here = await canonical(defaultDir)

@@ -192,6 +192,12 @@ test('DELETE ends one running session and closes its viewer', async () => {
       return sessions.find(s => s.id === 'a')?.viewers === 1
     }, 'the viewer to appear in the list')
 
+    const refused = await fetch(`${page}/session?id=a`, {
+      method: 'DELETE', headers: { origin: 'https://attacker.example' },
+    })
+    assert.equal(refused.status, 403)
+    assert.equal(registryRunning(supervisor), 1)
+
     const ended = await fetch(`${page}/session?id=a`, { method: 'DELETE' })
     assert.equal(ended.status, 200)
     assert.deepEqual(await ended.json(), { ended: 'a' })

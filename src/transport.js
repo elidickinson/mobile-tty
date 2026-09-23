@@ -51,6 +51,7 @@ export class TtydConnection {
   }
 
   _scheduleRetry() {
+    if (!this.started) return
     this._cancelRetry()
     const retry = {}
     this.retry = retry
@@ -82,7 +83,15 @@ export class TtydConnection {
    */
   join(url) {
     this.url = url
+    this.started = true
     this.reconnectNow()
+  }
+
+  /** Cease dialing for good: the session we had is over. Until join() or
+   *  connect() points somewhere new, a closed socket stays closed. */
+  stop() {
+    this.started = false
+    this._cancelRetry()
   }
 
   _open() {
@@ -111,9 +120,9 @@ export class TtydConnection {
       else if (f.cmd === FOOTER) this.onFooter?.(f.text)
     }
 
-    ws.onclose = () => {
+    ws.onclose = ev => {
       if (this.ws !== ws) return
-      this.onState?.('disconnected')
+      this.onState?.('disconnected', ev.code)
       this._scheduleRetry()
     }
   }

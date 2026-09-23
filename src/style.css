@@ -24,6 +24,7 @@
   --ok: #50a14f;
   --warn: #c18401;
   --bad: #e45649;
+  --danger: #d46a5f;
 
   --term-bg: var(--bg);
   --term-fg: var(--fg);
@@ -50,6 +51,7 @@
   --ok: #4a9d4f;
   --warn: #b07a16;
   --bad: #d1534a;
+  --danger: #b42318;
 
   --term-bg: #ffffff;
   --term-fg: #24262b;
@@ -354,13 +356,14 @@ html, body {
   background: var(--inset);
 }
 
-.place + .place { border-top: 1px solid var(--edge); }
+.place + .place, .place.start + .place-row, .place-row + .place-row { border-top: 1px solid var(--edge); }
 
 /* A row is a session, not a folder: tapping it joins straight away, so it is
    a plain button rather than a two-step disclose-then-act control. Joining
    never ends anything else, so there is no confirming second tap to design
    for the way switching used to need. */
 .place {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -382,6 +385,25 @@ html, body {
 /* Still running in the background, whether or not it is the one open now. */
 .place.running .place-name::after { content: ' ● '; color: var(--ok, #5fbf7c); }
 .place.here.running .place-name::after { content: ' ● ·'; color: var(--ok, #5fbf7c); }
+
+/* The end action is a sibling button over the row's right edge, not a nested
+   control. Its width and the row's reserved space stay fixed while confirming. */
+.place-row { position: relative; }
+.place-row.has-end > .place { padding-right: 92px; }
+.place-end {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 72px;
+  padding: 8px 10px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: 12px var(--font);
+  text-align: right;
+}
+.place-end.confirm { color: var(--danger); font-weight: 600; }
 
 .place-more {
   padding: 9px 10px;

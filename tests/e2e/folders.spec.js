@@ -174,3 +174,46 @@ test('new session offers the folders pi is already in, and starting one joins it
 
 /** beta's row label: the folder name — the fresh session there has no history. */
 const betaLabel = () => 'beta'
+
+test('ending a running session from its row stops it and leaves the menu', async ({ page }) => {
+  await ready(page)
+  await openMenu(page)
+
+  // The landing join has already spawned the seeded beta, so a running row is
+  // on the list without starting anything.
+  const endedId = await page.evaluate(async () => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    return sessions.find(session => session.label === 'beta' && session.running)?.id
+  })
+  expect(endedId).toBeTruthy()
+  const row = rows(page).filter({ hasText: betaLabel() }).first()
+  const end = row.locator('xpath=..').locator('.place-end')
+  await expect(row).toHaveClass(/running/, { timeout: 8_000 })
+
+  // One tap arms the confirm on the row; a second acts.
+  await end.click()
+  await expect(end).toHaveText('End it?')
+  await end.click()
+
+  // The close lands back at the menu. Poll the server, not just the rendered
+  // row: an automatic reconnect would respawn this same session shortly after.
+  await expect.poll(() => page.title()).toBe('mobile-tty')
+  const isRunning = () => page.evaluate(async id => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    return sessions.find(session => session.id === id)?.running ?? false
+  }, endedId)
+  await expect.poll(isRunning, { timeout: 8_000 }).toBe(false)
+  await expect.poll(() => page.evaluate(() => window.mtty.conn.started)).toBe(false)
+  await expect(page.locator('#menu-state')).toContainText('disconnected')
+  await expect(row).not.toHaveClass(/running/)
+  await expect(end).toHaveCount(0)
+
+  // Keep checking for three seconds so a delayed retry cannot pass as a clean
+  // end merely because the first post-close snapshot was too early.
+  for (let i = 0; i < 3; i++) {
+    await page.waitForTimeout(1_000)
+    expect(await isRunning()).toBe(false)
+    expect(await page.evaluate(() => window.mtty.conn.started)).toBe(false)
+  }
+  await expect.poll(() => page.title()).toBe('mobile-tty')
+})
