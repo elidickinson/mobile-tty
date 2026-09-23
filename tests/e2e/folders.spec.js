@@ -27,8 +27,9 @@ test('the menu lists every session plus the row that starts one', async ({ page 
   // has none yet.
   await expect.poll(async () => (await page.locator('#places .place-name').allInnerTexts()).sort())
     .toEqual(['+ New session…', 'alpha', 'beta', HERE])
-  await expect(page.locator('#places .place.here .place-name')).toHaveText(HERE)
-  await expect(page.locator('#place-now')).toContainText(HERE)
+  // beta is the newest seed, so a fresh viewer lands on that session.
+  await expect(page.locator('#places .place.here .place-name')).toHaveText('beta')
+  await expect(page.locator('#place-now')).toContainText('beta')
 })
 
 test('a row shows when the session was last active', async ({ page, store }) => {
@@ -36,10 +37,10 @@ test('a row shows when the session was last active', async ({ page, store }) => 
   await openMenu(page)
 
   const beta = rows(page).filter({ hasText: 'beta' })
-  // The store stamps sessions now, so the newest possible reading of an mtime
-  // is what a fresh row shows; an hour-old or day-old value would mean the
-  // time had been misplaced, not merely rounded.
-  await expect(beta.locator('.place-path')).toContainText(/now|[0-9]+[mhd]/)
+  // The store stamps sessions now, so the honest reading of an mtime is the
+  // time-ago at the END of the row -- anchored, since the path itself can
+  // contain digits that would otherwise match (a tmpdir hash, say).
+  await expect(beta.locator('.place-path')).toContainText(/· (now|[0-9]+[mhd])$/)
 })
 
 test('the menu fits the screen, with the readout folded away', async ({ page }) => {
@@ -151,11 +152,19 @@ test('new session offers the folders pi is already in, and starting one joins it
 
   // Starting one in beta spawns a fresh session there and lands on it: the
   // title names a session the list never had, and the fixture's own cwd line
-  // proves the child really came up in that folder.
+  // proves the child really came up in that folder. The id must be one the
+  // seeded store never held — the seeded beta row would satisfy the title
+  // alone, which would make this pass even if /start never ran.
+  const seeded = await page.evaluate(() => fetch('/places').then(r => r.json()))
+  const seededIds = new Set(seeded.sessions.map(s => s.id))
   await rows(page).filter({ hasText: 'beta' }).click()
   await expect.poll(() => page.title()).toContain('/beta')
   await expect.poll(async () =>
     (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/beta')
+  const joined = await page.evaluate(() => fetch('/places').then(r => r.json()))
+  const started = joined.sessions.find(s => !seededIds.has(s.id))
+  expect(started, 'a new id appeared in the list').toBeTruthy()
+  expect(started.running).toBe(true)
 
   // And it is a place now: back to the menu, it is listed, running, labeled.
   await openMenu(page)

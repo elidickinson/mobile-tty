@@ -14,9 +14,9 @@ const RESIZE_EVERY_MS = 200
 // Every second, stop reading for most of it and let the session pile up.
 const HOLD_MS = 750
 const HOLD_EVERY_MS = 1_000
-const DEBT_MS = 2_000       // rogue alone, building a backlog before anyone joins
-const ABUSE_MS = 10_000     // long enough that what it is owed fits in no sane buffer
-const SETTLE_MS = 2_000     // deferred is not lost, so give it time to arrive
+const DEBT_MS = 1_500       // rogue alone, building a backlog before anyone joins
+const ABUSE_MS = 2_500      // the rogue is cut loose well inside this window
+const SETTLE_MS = 500       // deferred is not lost, so give it a beat to arrive
 // Two, not one: every extra client is another write the session must complete
 // per read, and the loss only shows up once there are enough of them.
 const N_VIEWERS = 2
@@ -69,11 +69,32 @@ class Viewer {
   }
 }
 
-/** Sequence numbers missing from the capture. The `S` matters: a number
- *  straddling a frame edge would otherwise be read as two shorter ones. */
+/** Sequence numbers truly missing from the capture. The `S` matters: a
+ *  number straddling a frame edge would otherwise be read as two shorter
+ *  ones. A number below the running maximum is a snapshot redraw (a relay
+ *  that fell behind and reset replays screen-then-live), not a loss — the
+ *  stream splits into runs there, and each run must be contiguous. */
 const gaps = bytes => {
   const seen = [...Buffer.concat(bytes).toString('latin1').matchAll(/S(\d{9})/g)].map(m => +m[1])
-  return seen.flatMap((n, i) => (i > 0 && n !== seen[i - 1] + 1 ? [[seen[i - 1], n]] : []))
+  const missing = []
+  let floor = -1
+  for (const n of seen) {
+    if (n <= floor) { floor = n; continue } // a reset: the new run starts here
+    if (n !== floor + 1 && floor >= 0) missing.push([floor, n])
+    floor = n
+  }
+  return missing
+}
+
+// A relative gap-check would read a dropped HEAD as clean — the first number
+// seen simply becomes the baseline. The counter starts at 0, so the first
+// full read of a stream from its beginning must show it, modulo the very
+// first line racing the capture's start.
+const firstSeen = bytes => +(Buffer.concat(bytes).toString('latin1').match(/S(\d{9})/)?.[1] ?? -1)
+
+const lastSeen = bytes => {
+  const all = [...Buffer.concat(bytes).toString('latin1').matchAll(/S(\d{9})/g)].map(m => +m[1])
+  return all[all.length - 1] ?? -1
 }
 
 test('a rogue viewer costs the well-behaved ones nothing', async () => {
@@ -108,6 +129,7 @@ test('a viewer joining mid-stream gets the screen and then every byte after it',
   try {
     // Join repeatedly while the session is at full rate: each snapshot has to
     // split the stream exactly, with nothing lost or repeated at the seam.
+    let priorLast = null
     for (let i = 0; i < 5; i++) {
       const viewer = new Viewer(stack.url)
       await viewer.opened
@@ -118,6 +140,16 @@ test('a viewer joining mid-stream gets the screen and then every byte after it',
       const total = bytes.reduce((n, b) => n + b.length, 0)
       assert.ok(total > 64 * 1024, `join ${i} captured only ${total} bytes`)
       assert.deepEqual(missing, [], `join ${i}: ${missing.length} seams, of ${total} bytes`)
+      // Seam continuity across joins: the first number this capture saw may
+      // trail the last of the previous one (the screen scrolled between), but
+      // it must never be a jump BACKWARD — and the very first join, landing
+      // on a counter only a beat old, must open near zero rather than at
+      // whatever number would flatter a dropped head.
+      const first = firstSeen(bytes)
+      const last = lastSeen(bytes)
+      if (priorLast !== null) assert.ok(first >= priorLast, `join ${i} opened at ${first}, behind the prior capture's ${priorLast}`)
+      priorLast = last
+      if (i === 0) assert.ok(first < 10_000, `join 0 opened at S${first} — the head of the stream is missing`)
     }
   } finally { stack.stop() }
 })

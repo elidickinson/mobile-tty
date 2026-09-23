@@ -43,15 +43,21 @@ export const test = base.extend({
     // so a spec that also asks for `folders` still lands on the newest of
     // those. Each seed gets its own mtime, in the order seeded: the folder
     // session (cwd) oldest, then the named folders, so the last folder named
-    // in `folders` is what a fresh viewer lands on.
-    const stamp = Date.UTC(2026, 0, 1)
+    // in `folders` is what a fresh viewer lands on. Times are relative to
+    // now — a fixed future stamp would silently invert the order on a clock
+    // that reads before it — and a second apart, which no mtime resolution
+    // question can collapse.
+    const now = Date.now()
     await seed(process.cwd())
+    const hereFile = join(sessionDir, `-${process.cwd().replaceAll('/', '-')}-`, 'a.jsonl')
+    await utimes(hereFile, new Date(now - 60_000), new Date(now - 60_000))
     for (const [i, name] of folders.entries()) {
       const cwd = join(root, name)
       await mkdir(cwd)
       await seed(cwd)
+      const t = now - (folders.length - i) * 1000
       await utimes(join(sessionDir, `-${cwd.replaceAll('/', '-')}-`, 'a.jsonl'),
-        new Date(stamp + i + 1), new Date(stamp + i + 1))
+        new Date(t), new Date(t))
     }
     await use({ root, sessionDir, at: name => join(root, name) })
     await rm(root, { recursive: true, force: true })

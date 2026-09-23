@@ -87,9 +87,10 @@ if (new URLSearchParams(location.search).has('debug')) {
 // the menu, or remembered from last time) rather than tracked by the server:
 // there is no longer one "current" session, since a phone, a browser tab and
 // any number of `attach`ed terminals can each be looking at a different one
-// at once. Remembered in localStorage as a per-viewer convenience only — it
-// is never read back by anything else and can come back empty without harm.
+// at once. A place is a (session, folder) pair — the same session resumed in
+// two folders is two rows — so the pair is what is remembered and matched.
 let currentId = null
+const placeKey = (id, cwd) => `${id} ${cwd}`
 const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
 const sessionUrl = (id, cwd) =>
   `${wsBase}?session=${encodeURIComponent(id)}` +
@@ -100,12 +101,18 @@ const fetchPlaces = () => fetch('/places').then(r => r.json())
 /** The last path segment, for chooser rows and titles. */
 const basename = path => path.slice(path.lastIndexOf('/') + 1)
 
-/** The session to land on when the page first loads: last time's, if it is
+/** The place to land on when the page first loads: last time's, if it is
  *  still around, otherwise whatever `/places` says is most recent. */
-async function resolveInitialSession() {
+async function resolveInitialPlace() {
   const { current, sessions } = await fetchPlaces()
-  const remembered = localStorage.getItem('mtty-session')
-  return sessions.some(s => s.id === remembered) ? remembered : current
+  const remembered = localStorage.getItem('mtty-place')
+  const rememberedId = remembered?.split(' ')[0]
+  // Last time's exact row if it is still listed, else last time's session in
+  // whatever row of it remains, else the newest row there is.
+  return sessions.find(s => placeKey(s.id, s.cwd) === remembered)
+    ?? sessions.find(s => s.id === rememberedId)
+    ?? sessions.find(s => s.id === current)
+    ?? null
 }
 
 const term = new WTerm(screen, {
@@ -120,7 +127,7 @@ const term = new WTerm(screen, {
 })
 
 const conn = new TtydConnection({
-  // A placeholder until resolveInitialSession() picks the real one in main() —
+  // A placeholder until resolveInitialPlace() picks the real one in main() —
   // never actually dialed, since connect() is not called until it has.
   url: wsBase,
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
@@ -667,7 +674,7 @@ function openMenu() {
  * acts the moment it is tapped rather than asking for a second confirming tap
  * the way ending a program used to need.
  */
-function showPlaces({ sessions, total, here }) {
+function showPlaces({ sessions, hidden, here }) {
   places.textContent = ''
 
   // The one way to be somewhere with no transcript yet. Pinned where a thumb
@@ -706,10 +713,10 @@ function showPlaces({ sessions, total, here }) {
   // The server caps the list rather than reading and sending every session
   // pi has ever kept a transcript for, which on a working machine can be a
   // lot -- said plainly here rather than the list just quietly stopping.
-  if (total > sessions.length) {
+  if (hidden > 0) {
     const more = document.createElement('div')
     more.className = 'place-more'
-    more.textContent = `+${total - sessions.length} older, not shown`
+    more.textContent = `+${hidden} older, not shown`
     places.append(more)
   }
 }
@@ -772,7 +779,7 @@ async function startSession(dir) {
 /** Point the connection at another session's socket and reconnect to it. */
 function joinSession(sess) {
   currentId = sess.id
-  localStorage.setItem('mtty-session', sess.id)
+  localStorage.setItem('mtty-place', placeKey(sess.id, sess.cwd))
   placeNow.textContent = sess.path
   document.title = `${sess.name} — ${sess.path}`
   // The cwd rides along: it is half of what names a place, and the server
@@ -1046,18 +1053,18 @@ async function main() {
   // the real values are in.
   requestAnimationFrame(() => fitGrid(applyLayout()))
 
-  currentId = await resolveInitialSession()
-  if (currentId) {
-    conn.url = sessionUrl(currentId)
-    localStorage.setItem('mtty-session', currentId)
-    // Named before the first connect, so the header reads right even if the
-    // menu is never opened this page-load: /places is already in hand.
-    fetchPlaces().then(({ sessions }) => {
-      const place = sessions.find(s => s.id === currentId)
-      if (place) placeNow.textContent = place.path
-    }).catch(() => {})
+  const place = await resolveInitialPlace()
+  currentId = place?.id ?? null
+  // The URL must be final before connect(): the join names a (session, cwd)
+  // pair now, and there is no bare path to dial any more — dialing one would
+  // be refused, not attached. With no session to join, the menu is the way in
+  // and the socket stays down until it picks one.
+  if (place) {
+    localStorage.setItem('mtty-place', placeKey(place.id, place.cwd))
+    conn.url = sessionUrl(place.id, place.cwd)
+    placeNow.textContent = place.path
+    conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
   }
-  conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
 
   checkForNewBuild()
 

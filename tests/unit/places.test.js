@@ -103,15 +103,18 @@ test('newest first, across every folder', async () => {
 test('past `limit`, only the most recent sessions are read at all', async () => {
   const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
   const project = join(root, 'proj')
-  // The oldest one's body is unparseable JSON: if it were read at all, this
-  // would throw from inside readHeader rather than just being left out.
-  await withSession(sessionDir, project, { id: 'oldest', at: Date.UTC(2020, 0, 1), body: 'not json\n' })
+  // All three bodies are valid, so the cap is what decides what comes back:
+  // a broken-body trick would prove only that the cap decides what is READ,
+  // not that it decides what is listed.
+  await withSession(sessionDir, project, { id: 'oldest', at: Date.UTC(2020, 0, 1) })
   await withSession(sessionDir, project, { id: 'middle', at: Date.UTC(2024, 0, 1) })
   await withSession(sessionDir, project, { id: 'newest', at: Date.UTC(2026, 0, 1) })
   try {
     const { sessions, total } = await readPlaces({ sessionDir, limit: 2 })
     assert.deepEqual(sessions.map(s => s.id), ['newest', 'middle'], 'the cap keeps the most recent, not an arbitrary subset')
     assert.equal(total, 3, 'total still counts every candidate found, capped or not')
+    const everything = await readPlaces({ sessionDir, limit: 99 })
+    assert.equal(everything.sessions.length, 3, 'over-provisioned limit lists all three')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -241,6 +244,29 @@ test('an explicit clear of the name is honored, falling back to the first ask', 
       JSON.stringify({ type: 'session', version: 3, id: 'cleared', cwd: join(root, 'app') }),
       JSON.stringify({ type: 'session_info', name: 'will be cleared' }),
       JSON.stringify({ type: 'message', message: { role: 'user', content: 'the first question' } }),
+      JSON.stringify({ type: 'session_info', name: '' }),
+    ].join('\n'),
+  })
+  try {
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.equal(sessions[0].label, 'the first question')
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a clear deep in the file is honored too, even though the tail find it', async () => {
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'app')) })
+  // Same shape as the deep rename: too big for the forward pass to reach, so
+  // only the tail read sees the clear — and it must unset the early name
+  // exactly as a late rename would have replaced it.
+  const filler = Array.from({ length: 60 }, (_, i) =>
+    JSON.stringify({ type: 'message', message: { role: i % 2 ? 'assistant' : 'user', content: 'x'.repeat(1024) } })).join('\n')
+  await withSession(sessionDir, join(root, 'app'), {
+    id: 'late-cleared',
+    body: [
+      JSON.stringify({ type: 'session', version: 3, id: 'late-cleared', cwd: join(root, 'app') }),
+      JSON.stringify({ type: 'session_info', name: 'early name' }),
+      JSON.stringify({ type: 'message', message: { role: 'user', content: 'the first question' } }),
+      filler,
       JSON.stringify({ type: 'session_info', name: '' }),
     ].join('\n'),
   })

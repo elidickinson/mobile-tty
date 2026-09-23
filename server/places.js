@@ -139,10 +139,11 @@ const readLabel = async (file, size) => {
         Buffer.alloc(TAIL_BYTES), 0, TAIL_BYTES, size - TAIL_BYTES)
       for (const line of buffer.subarray(0, bytesRead).toString().split('\n')) {
         const entry = tryParse(line)
-        // In the tail, later still wins — but again, only a real name; a clear
-        // in the tail falls back to whatever the forward pass had found.
-        if (entry?.type === 'session_info' && entry.name?.trim()) {
-          named = entry.name.trim()
+        // In the tail, later still wins — and an empty name is as much a
+        // "later" as a real one: a late clear has to unset, too, or an old
+        // title would outlive its own removal.
+        if (entry?.type === 'session_info') {
+          named = entry.name?.trim() || undefined
         }
       }
     } finally {

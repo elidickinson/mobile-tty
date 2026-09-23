@@ -93,7 +93,11 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const rows = [...found, ...fresh].sort((a, b) => b.at - a.at)
       const live = id => registry.child(id)?.cwd
       const sessions = rows.map(place => ({ ...place, running: live(place.id) === place.cwd }))
-      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, total, here: defaultDir })
+      // `total` counts store transcripts; the list also carries transcript-
+      // less live sessions, so "older, not shown" must count from what is
+      // actually shown, not from the store total alone.
+      const hidden = Math.max(0, total - found.length)
+      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, hidden, here: defaultDir })
       return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     }
 
@@ -111,12 +115,18 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       }
       const body = await readBody(req, 512).catch(() => null)
       const wanted = body ? await canonical(body.cwd?.trim()) : null
+      const here = await canonical(defaultDir)
+      // The offered folders are: this server's own, every store row's, and
+      // every live child's — a just-started session's folder is offered in
+      // the chooser but may have no row yet, so the same set that authorizes
+      // must include it.
       let spawnable = false
       if (wanted) {
-        if (wanted === await canonical(defaultDir)) spawnable = true
+        if (wanted === here) spawnable = true
         else {
           const { sessions } = await readPlaces({ sessionDir })
-          spawnable = sessions.some(place => place.cwd === wanted)
+          spawnable = sessions.some(place => place.cwd === wanted) ||
+            registry.running().some(id => registry.child(id).cwd === wanted)
         }
       }
       if (!spawnable) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such place to start a session in')
@@ -211,23 +221,27 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       // over whatever any listing said. Without a cwd in the join, the child's
       // folder (or the newest row's) is what you get; with one, a mismatch is
       // refused rather than served from the wrong place.
-      const running = registry.child(id)
+      // Which folder this session lives in is decided before any place is
+      // picked: a running child is the authority for its own id, and if the
+      // join names a different folder than the one the child runs in, that is
+      // a refusal (4009) — never a silent attach to the child's folder, which
+      // is what ensure() would otherwise do by keeping the existing child.
+      const live = registry.child(id)
+      if (live && cwd && live.cwd !== cwd) {
+        ws.close(4009, 'that session is running somewhere else')
+        return
+      }
       // A started-with-no-transcript session exists only as its live child;
-      // the store will list it once pi writes the file. Either way, a cwd on
-      // the join must match the folder the child actually runs in.
+      // the store will list it once pi writes the file.
       const place = (cwd
         ? sessions.find(p => p.id === id && p.cwd === cwd)
-          ?? (running?.cwd === cwd ? { id, cwd } : null)
-        : sessions.find(p => p.id === id && p.cwd === running?.cwd)
+          ?? (live?.cwd === cwd ? { id, cwd } : null)
+        : sessions.find(p => p.id === id && p.cwd === live?.cwd)
           ?? sessions.find(p => p.id === id)
-          ?? (running ? { id, cwd: running.cwd } : null))
+          ?? (live ? { id, cwd: live.cwd } : null))
       if (closed) return
       if (!id || !place) {
         ws.close(4004, 'no such session')
-        return
-      }
-      if (cwd && place.cwd !== cwd) {
-        ws.close(4009, 'that session is running somewhere else')
         return
       }
 

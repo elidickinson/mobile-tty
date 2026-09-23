@@ -9,7 +9,7 @@
 // Nothing outside the supervisor's own process tree is meant to pass it.
 import { createTerminalServer } from './index.js'
 import { createSupervisor } from './supervisor.js'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -48,7 +48,7 @@ if (!['dark', 'light'].includes(theme)) {
 // run was pointed somewhere else. Resolved to a real path now, so a typo is
 // refused at startup rather than on the phone's first tap.
 const newDir = arg('--new-dir')
-if (newDir && !existsSync(newDir)) {
+if (newDir && !(existsSync(newDir) && statSync(newDir).isDirectory())) {
   console.error(`no such directory: ${newDir}`)
   process.exit(2)
 }
