@@ -37,10 +37,9 @@ test('a row shows when the session was last active', async ({ page, store }) => 
   await openMenu(page)
 
   const beta = rows(page).filter({ hasText: 'beta' })
-  // The store stamps sessions now, so the honest reading of an mtime is the
-  // time-ago at the END of the row -- anchored, since the path itself can
-  // contain digits that would otherwise match (a tmpdir hash, say).
-  await expect(beta.locator('.place-path')).toContainText(/· (now|[0-9]+[mhd])$/)
+  // Store timestamps stay with the path text, separate from the viewer count
+  // at the right edge.
+  await expect(beta.locator('.place-path-text')).toContainText(/· (now|[0-9]+[mhd])$/)
 })
 
 test('the menu fits the screen, with the readout folded away', async ({ page }) => {
@@ -168,12 +167,82 @@ test('new session offers the folders pi is already in, and starting one joins it
 
   // And it is a place now: back to the menu, it is listed, running, labeled.
   await openMenu(page)
-  const beta = rows(page).filter({ hasText: betaLabel() })
-  await expect(beta.first()).toHaveClass(/running/, { timeout: 8_000 })
+  const beta = page.locator(`#places .place-row[data-session-id="${started.id}"] > .place`)
+  await expect(beta).toHaveClass(/running/, { timeout: 8_000 })
 })
 
 /** beta's row label: the folder name — the fresh session there has no history. */
 const betaLabel = () => 'beta'
+
+test('another viewer ending a session tells the bystander why it left', async ({ page, context }) => {
+  await ready(page)
+  const ender = await context.newPage()
+  await ready(ender)
+  await openMenu(ender)
+
+  const endedId = await ender.evaluate(async () => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    return sessions.find(session => session.label === 'beta' && session.running)?.id
+  })
+  expect(endedId).toBeTruthy()
+  const row = rows(ender).filter({ hasText: betaLabel() }).first()
+  const end = row.locator('xpath=..').locator('.place-end')
+  await end.click()
+  await end.click()
+
+  await expect.poll(() => page.title()).toBe('mobile-tty')
+  await expect(page.locator('#menu')).toBeVisible()
+  await expect(page.locator('#menu-notice')).toHaveText('ended by a terminal')
+  const isRunning = () => page.evaluate(async id => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    return sessions.find(session => session.id === id)?.running ?? false
+  }, endedId)
+  await expect.poll(isRunning, { timeout: 8_000 }).toBe(false)
+  await expect.poll(() => page.evaluate(() => window.mtty.conn.started)).toBe(false)
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(100)
+    expect(await isRunning()).toBe(false)
+    expect(await page.title()).toBe('mobile-tty')
+  }
+})
+
+test('the previous-session pin returns to the last joined session', async ({ page }) => {
+  await ready(page)
+  const first = await page.evaluate(async () => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    return sessions.find(session => session.label === 'beta')
+  })
+  expect(first).toBeTruthy()
+
+  await openMenu(page)
+  await rows(page).filter({ hasText: '+ New session…' }).click()
+  await page.locator('#places .place.dir').filter({ hasText: 'beta' }).click()
+  await expect.poll(() => page.title()).toContain('/beta')
+  await expect.poll(() => page.evaluate(() => {
+    const [id] = localStorage.getItem('mtty-place').split(' ')
+    return id
+  })).not.toBe(first.id)
+
+  await openMenu(page)
+  const pin = page.locator('#places .place.previous')
+  await expect(pin).toContainText('↩ beta')
+  await pin.click()
+  await expect(page.locator('#menu')).toBeHidden()
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('mtty-place')))
+    .toBe(`${first.id} ${first.cwd}`)
+  await expect.poll(() => page.title()).toContain('/beta')
+  await expect(page.locator('#screen')).toContainText('fake-pi ready')
+})
+
+test('a shared session row shows its viewer count', async ({ page, context }) => {
+  await ready(page)
+  const other = await context.newPage()
+  await ready(other)
+  await openMenu(page)
+
+  const beta = page.locator('#places .place-row').filter({ hasText: 'beta' })
+  await expect(beta.locator('.place-watchers')).toHaveText('2 watching')
+})
 
 test('ending a running session from its row stops it and leaves the menu', async ({ page }) => {
   await ready(page)
@@ -205,6 +274,7 @@ test('ending a running session from its row stops it and leaves the menu', async
   await expect.poll(isRunning, { timeout: 8_000 }).toBe(false)
   await expect.poll(() => page.evaluate(() => window.mtty.conn.started)).toBe(false)
   await expect(page.locator('#menu-state')).toContainText('disconnected')
+  await expect(page.locator('#menu-notice')).toBeHidden()
   await expect(row).not.toHaveClass(/running/)
   await expect(end).toHaveCount(0)
 

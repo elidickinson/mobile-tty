@@ -61,7 +61,7 @@ export class Registry {
    */
   watch(id, fn) {
     const child = this.#children.get(id)
-    if (!child) { fn(); return () => {} }
+    if (!child) { fn('pi exited'); return () => {} }
     child.sockets.push(fn)
     return () => {
       const at = child.sockets.indexOf(fn)
@@ -122,7 +122,7 @@ export class Registry {
       proc.on('exit', () => {
         if (this.#children.get(id) === child) this.#children.delete(id)
         rm(socketPath, { force: true }).catch(() => {})
-        for (const fn of child.sockets.splice(0)) fn()
+        for (const fn of child.sockets.splice(0)) fn(child.endReason ?? 'pi exited')
         resolve()
       })
     })
@@ -131,9 +131,10 @@ export class Registry {
   }
 
   /** Ask a session to end, and wait until it actually has. */
-  async end(id) {
+  async end(id, reason = 'ended by a terminal') {
     const child = this.#children.get(id)
     if (!child) return
+    child.endReason = reason
     child.proc.kill('SIGTERM')
     const escalate = setTimeout(() => child.proc.kill('SIGKILL'), KILL_GRACE_MS)
     escalate.unref()
@@ -142,7 +143,7 @@ export class Registry {
   }
 
   async endAll() {
-    await Promise.all(this.running().map(id => this.end(id)))
+    await Promise.all(this.running().map(id => this.end(id, 'server stopped')))
   }
 
   #evictIfFull(spawning) {
@@ -153,6 +154,6 @@ export class Registry {
     const [oldest] = this.running().filter(id => id !== spawning)
     // Not awaited: the new session can start spawning immediately, and the
     // evicted one's socket file is cleaned up by its own exit handler above.
-    this.end(oldest).catch(err => console.error(`server: could not end session ${oldest}`, err))
+    this.end(oldest, 'evicted to make room').catch(err => console.error(`server: could not end session ${oldest}`, err))
   }
 }

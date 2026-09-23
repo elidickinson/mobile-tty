@@ -344,6 +344,7 @@ html, body {
 .menu-row button[data-theme].sticky { background: var(--accent); color: var(--on-accent); }
 
 #menu-state { flex: 1; color: var(--muted); }
+#menu-notice { margin: 0 0 8px; color: var(--muted); font-size: 12px; }
 
 /* Its own scroller: there is a folder here for every directory pi has ever run
    in, which on a working machine is a hundred of them. The card must not grow
@@ -356,7 +357,7 @@ html, body {
   background: var(--inset);
 }
 
-.place + .place, .place.start + .place-row, .place-row + .place-row { border-top: 1px solid var(--edge); }
+.place + .place, .place + .place-row, .place-row + .place-row { border-top: 1px solid var(--edge); }
 
 /* A row is a session, not a folder: tapping it joins straight away, so it is
    a plain button rather than a two-step disclose-then-act control. Joining
@@ -377,7 +378,9 @@ html, body {
 }
 
 /* The name is pi's folder; the path is what tells two `extensions` apart. */
-.place-path { color: var(--muted); font-size: 11px; }
+.place-path { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 11px; }
+.place-path-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.place-watchers { margin-left: auto; white-space: nowrap; }
 
 /* Where you already are, so a list of a hundred rows still says which is this. */
 .place.here .place-name::after { content: ' ·'; color: var(--accent); }

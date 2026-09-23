@@ -111,9 +111,9 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     }
 
     // End a running session for good: the child gets SIGTERM, then SIGKILL
-    // after a grace (`registry.end`), and its viewers see the session end
-    // exactly as if pi had exited on its own. Deleted-for-real is pi's own
-    // business; this stops the process, which is what mobile-tty owns.
+    // after a grace (`registry.end`), and its viewers hear that a terminal
+    // asked for it. Deleted-for-real is pi's own business; this stops the
+    // process, which is what mobile-tty owns.
     if (path === '/session' && req.method === 'DELETE') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
       if (!originAllowedReq(req)) return void res.writeHead(403).end()
@@ -273,7 +273,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const sock = await connectChild(child.socketPath)
       if (closed) { sock.close(); return }
       inner = sock
-      registered = registry.watch(id, () => { sock.close(); ws.close(1001, 'session ended') })
+      registered = registry.watch(id, reason => { sock.close(); ws.close(1001, reason) })
       for (const data of buffered) inner.send(data)
       buffered = null
       // Same rule the session itself applies to its viewers (server/viewer.js):
@@ -291,7 +291,11 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         }
         ws.send(data)
       })
-      inner.on('close', () => { registered?.(); ws.close(1001, 'session ended') })
+      inner.on('close', () => {
+        const reason = registry.child(id)?.endReason ?? 'pi exited'
+        registered?.()
+        ws.close(1001, reason)
+      })
       inner.on('error', () => { registered?.(); ws.close(1011, 'lost the session') })
     }).catch(err => {
       console.error(`server: could not reach session ${id}`, err)

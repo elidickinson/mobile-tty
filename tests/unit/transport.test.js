@@ -15,7 +15,7 @@ class FakeSocket {
   close() { this.readyState = 3 }
   open() { this.readyState = 1; this.onopen?.() }
   message(bytes) { this.onmessage?.({ data: new Uint8Array(bytes).buffer }) }
-  drop(code = 1006) { this.readyState = 3; this.onclose?.({ code }) }
+  drop(code = 1006, reason = '') { this.readyState = 3; this.onclose?.({ code, reason }) }
 }
 
 const text = u => new TextDecoder().decode(u)
@@ -145,12 +145,12 @@ test('reconnectNow opens immediately and invalidates the pending retry', () => {
   assert.equal(sock(), fresh, 'the cancelled retry did not open a second socket')
 })
 
-test('state changes are reported for the connection indicator', () => {
-  const { c, events, sock } = setup()
+test('state changes include the WebSocket close code and reason', () => {
+  const { c, events, sock } = setup({ onState: (...state) => events.state.push(state) })
   c.connect({ cols: 50, rows: 30 })
   sock().open()
-  sock().drop()
-  assert.deepEqual(events.state, ['connecting', 'connected', 'disconnected'])
+  sock().drop(1001, 'pi exited')
+  assert.deepEqual(events.state, [['connecting'], ['connected'], ['disconnected', 1001, 'pi exited']])
 })
 
 test('resize sends the new size and remembers it for the next reconnect', () => {

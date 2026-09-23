@@ -5,6 +5,9 @@
 // that a browser gets for free is act like a terminal: raw mode restored
 // whatever happens, SIGWINCH forwarded, and Ctrl-C and Ctrl-Z passed through to
 // the far side rather than acted on here.
+import { readFile, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { WebSocket } from 'ws'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
@@ -30,8 +33,18 @@ export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chu
 // once on the way in. Long enough to read, short enough not to be in the way.
 const BANNER = '\r\n\r\n    [mobile-tty] You can press Ctrl-] to disconnect this terminal when done\r\n\r\n'
 const BANNER_MS = 4000
+const LAST_SESSION = join(homedir(), '.mtty-last-session')
 
 const frame = (cmd, text) => Buffer.concat([Buffer.from([cmd]), Buffer.from(text)])
+
+async function readLastSession() {
+  try { return (await readFile(LAST_SESSION, 'utf8')).trim() || null } catch (err) {
+    if (err.code === 'ENOENT') return null
+    throw err
+  }
+}
+
+const rememberSession = id => writeFile(LAST_SESSION, `${id}\n`, { mode: 0o600 })
 
 // The same login the browser does, rather than a second way in: post the
 // password, keep the cookie, put it on the handshake.
@@ -96,7 +109,15 @@ async function resolveSession(url, { session, match, headers }) {
   return choice?.id ?? null
 }
 
-export async function attach({ url, session, match }) {
+export async function attach({ url, session, match, previous = false }) {
+  if (previous && !session) {
+    session = await readLastSession()
+    if (!session) {
+      console.error('attach: no previous session to reattach')
+      process.exit(1)
+    }
+  }
+
   const { stdin, stdout } = process
   if (!stdin.isTTY) {
     console.error('attach: not a terminal')
@@ -143,7 +164,8 @@ export async function attach({ url, session, match }) {
 
   const size = () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 })
 
-  ws.on('open', () => {
+  ws.on('open', async () => {
+    await rememberSession(id)
     stdin.setRawMode(true)
     stdin.resume()
 

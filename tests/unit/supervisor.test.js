@@ -47,10 +47,11 @@ const join = (base, id, { columns = 50, rows = 20, cwd } = {}) => {
     ws.send(JSON.stringify({ AuthToken: '', columns, rows }))
     resolve()
   }))
-  const closed = new Promise(resolve => ws.on('close', code => resolve(code)))
+  const closeDetails = new Promise(resolve => ws.on('close', (code, reason) => resolve({ code, reason: reason.toString() })))
+  const closed = closeDetails.then(({ code }) => code)
   ws.on('message', d => { if (Buffer.from(d)[0] === 0x30) output += Buffer.from(d).subarray(1).toString() })
   return {
-    opened, closed,
+    opened, closed, closeDetails,
     get output() { return output },
     send: text => ws.send(Buffer.concat([Buffer.from([0x30]), Buffer.from(text)])),
     close: () => ws.close(),
@@ -203,9 +204,28 @@ test('DELETE ends one running session and closes its viewer', async () => {
     assert.deepEqual(await ended.json(), { ended: 'a' })
     await until(() => registryRunning(supervisor) === 0, 'the child to exit')
     assert.equal(await viewer.closed, 1001, 'the connected viewer sees the session end')
+    assert.equal((await viewer.closeDetails).reason, 'ended by a terminal')
 
     assert.equal((await fetch(`${page}/session?id=a`, { method: 'DELETE' })).status, 404)
     assert.equal((await fetch(`${page}/session`, { method: 'DELETE' })).status, 404)
+  } finally {
+    viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('pi exiting on its own reports a neutral close reason', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  try {
+    await viewer.opened
+    await until(() => viewer.output.includes('work'), 'the session to be up')
+    viewer.send('/quit\r')
+    const closed = await viewer.closeDetails
+    assert.equal(closed.code, 1001)
+    assert.equal(closed.reason, 'pi exited')
   } finally {
     viewer.close()
     await supervisor.close()
@@ -269,7 +289,8 @@ test('evicting a session pulls the relay out from under its viewer at once', asy
       closing.then(code => (clearTimeout(cutoff), code)),
       new Promise((_, bad) => { cutoff = setTimeout(() => bad(new Error('viewer never told')), 8_000) }),
     ])
-    assert.equal(why === null || why === 1001, true, `expected a clean end, got ${why}`)
+    assert.equal(why, 1001, `expected a clean end, got ${why}`)
+    assert.equal((await a.closeDetails).reason, 'evicted to make room')
     b.close()
   } finally {
     await supervisor.close()

@@ -18,6 +18,7 @@ const toBottom = $('to-bottom')
 const menu = $('menu')
 const places = $('places')
 const placeNow = $('place-now')
+const menuNotice = $('menu-notice')
 
 // iOS keeps its own copy of a home-screen app's launch document despite the
 // server's `cache-control: no-cache`. So the page checks for a newer build
@@ -104,7 +105,8 @@ const sessionUrl = (id, cwd) =>
   (cwd ? `&cwd=${encodeURIComponent(cwd)}` : '')
 
 const fetchPlaces = () => fetch('/places').then(r => r.json())
-function refreshPlaces() {
+function refreshPlaces({ preserveNotice = false } = {}) {
+  if (!preserveNotice) clearMenuNotice()
   const request = ++placesRequest
   return fetchPlaces().then(data => {
     if (request === placesRequest) showPlaces(data)
@@ -153,20 +155,24 @@ const conn = new TtydConnection({
   onTitle: title => { document.title = title; clearFooter() },
   onSize: ({ cols, rows }) => { snapshotPending = true; applyServerSize(cols, rows) },
   onFooter: showFooter,
-  onState: (status, code) => {
+  onState: (status, code, reason) => {
     // 'connecting' covers reconnectNow (which closes the old socket so its
     // onclose never fires) as well as every ordinary open.
     if (status !== 'connected') dropHeld()
-    // 1001 is the server saying the session itself ended (pi exited, or
-    // someone ended it) — not a dropped phone. Retrying would spawn a fresh
-    // process from the transcript, which is the "just quit and it restarted"
-    // puzzle, so the loop stops and the menu lists what is left instead.
+    // 1001 is the server saying the session itself ended, not a dropped
+    // phone. Retrying would spawn a fresh process from the transcript, so the
+    // loop stops and the menu lists what is left instead.
     if (status !== 'connected' && code === SESSION_ENDED) {
+      const endedByThisViewer = endingIds.has(currentId)
+      const previous = localStorage.getItem('mtty-place')
+      if (previous) localStorage.setItem('mtty-prev', previous)
+      if (endedByThisViewer) clearMenuNotice()
+      else showMenuNotice(reason || 'session ended')
       conn.stop()
       showConnection('disconnected')
       currentId = null
       document.title = 'mobile-tty'
-      openMenu()
+      openMenu({ preserveNotice: !endedByThisViewer })
       return
     }
     showConnection(status)
@@ -182,6 +188,16 @@ function showConnection(status) {
   bolt.setAttribute('aria-label', status)
   bolt.title = status
   bolt.hidden = status === 'connected'
+}
+
+function clearMenuNotice() {
+  menuNotice.textContent = ''
+  menuNotice.hidden = true
+}
+
+function showMenuNotice(text) {
+  menuNotice.textContent = text
+  menuNotice.hidden = false
 }
 
 // Diagnostic seam: the e2e suite and the on-device probe read the same shape.
@@ -677,14 +693,14 @@ function foldDiag(open) {
   $('diag-caret').textContent = open ? '▾' : '▸'
 }
 
-function openMenu() {
+function openMenu({ preserveNotice = false } = {}) {
   dismissKeyboard()
   // Always on the ordinary view: the menu is mostly the session list now, and
   // opening into last time's diagnostics would be a puzzle.
   foldDiag(false)
   // Asked for on the way in rather than held from last time: pi is used from
   // other terminals too, so the list goes stale between openings.
-  refreshPlaces().catch(() => {})
+  refreshPlaces({ preserveNotice }).catch(() => {})
   menu.hidden = false
 }
 
@@ -699,6 +715,22 @@ function openMenu() {
  * acts the moment it is tapped rather than asking for a second confirming tap
  * the way ending a program used to need.
  */
+function placePath(sess) {
+  const path = document.createElement('span')
+  path.className = 'place-path'
+  const details = document.createElement('span')
+  details.className = 'place-path-text'
+  details.textContent = `${sess.path} · ${ago(sess.at)}`
+  path.append(details)
+  if (sess.viewers >= 1) {
+    const viewers = document.createElement('span')
+    viewers.className = 'place-watchers'
+    viewers.textContent = `${sess.viewers} watching`
+    path.append(viewers)
+  }
+  return path
+}
+
 function showPlaces({ sessions, hidden, here }) {
   places.textContent = ''
 
@@ -717,6 +749,21 @@ function showPlaces({ sessions, hidden, here }) {
   start.addEventListener('click', () => showDirs({ sessions, here }))
   places.append(start)
 
+  const previousKey = localStorage.getItem('mtty-prev')
+  const previous = sessions.find(sess => placeKey(sess.id, sess.cwd) === previousKey)
+  const viewedKey = currentId === null ? null : localStorage.getItem('mtty-place')
+  if (previous && previousKey !== viewedKey) {
+    const pin = document.createElement('button')
+    pin.className = previous.running ? 'place previous running' : 'place previous'
+    pin.dataset.sessionId = previous.id
+    const name = document.createElement('span')
+    name.className = 'place-name'
+    name.textContent = `↩ ${previous.label}`
+    pin.append(name, placePath(previous))
+    pin.addEventListener('click', () => joinSession(previous))
+    places.append(pin)
+  }
+
   for (const sess of sessions) {
     const wrap = document.createElement('div')
     wrap.className = 'place-row'
@@ -732,11 +779,7 @@ function showPlaces({ sessions, hidden, here }) {
     // pi names a session once it has read the first exchange; before that,
     // the label is whatever was first asked, so the row is never bare.
     name.textContent = sess.label
-    const path = document.createElement('span')
-    path.className = 'place-path'
-    path.textContent = `${sess.path} · ${ago(sess.at)}`
-
-    row.append(name, path)
+    row.append(name, placePath(sess))
     row.addEventListener('click', () => joinSession(sess))
     wrap.append(row)
 
@@ -878,8 +921,12 @@ async function startSession(dir) {
 /** Point the connection at another session's socket and reconnect to it. */
 function joinSession(sess) {
   clearEndArm()
+  const currentPlace = localStorage.getItem('mtty-place')
+  const nextPlace = placeKey(sess.id, sess.cwd)
+  if (currentPlace && currentPlace !== nextPlace) localStorage.setItem('mtty-prev', currentPlace)
+  clearMenuNotice()
   currentId = sess.id
-  localStorage.setItem('mtty-place', placeKey(sess.id, sess.cwd))
+  localStorage.setItem('mtty-place', nextPlace)
   placeNow.textContent = sess.path
   document.title = `${sess.name} — ${sess.path}`
   // The cwd rides along: it is half of what names a place, and the server

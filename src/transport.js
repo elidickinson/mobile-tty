@@ -122,7 +122,7 @@ export class TtydConnection {
 
     ws.onclose = ev => {
       if (this.ws !== ws) return
-      this.onState?.('disconnected', ev.code)
+      this.onState?.('disconnected', ev.code, ev.reason)
       this._scheduleRetry()
     }
   }
