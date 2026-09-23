@@ -59,6 +59,32 @@ export async function sessions(url) {
   live.forEach((s, i) => console.log(placeRow(s, i + 1)))
 }
 
+/** `mobile-tty new` — start a fresh session in the caller's folder. Returns the
+ *  started session and the ws url to attach to, or nothing after saying why
+ *  not. `attach` joins what exists; this starts one — in any directory the
+ *  supervisor can see, since a joined session is a full bash prompt either way. */
+export async function start(url, { cwd }) {
+  const result = await reach(url)
+  if (!result) return noServer(url)
+  if (result.error) return
+  if (result.status) return console.error(result.status === 401
+    ? 'new: login refused — set MTTY_PASSWORD and try again'
+    : `new: could not reach the server (HTTP ${result.status})`)
+  const res = await fetch(new URL('/start', baseUrl(url)), {
+    method: 'POST',
+    headers: { ...result.headers, 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd }),
+  }).catch(() => null)
+  if (!res) return noServer(url)
+  if (!res.ok) return console.error(res.status === 422
+    ? `new: no such directory: ${cwd}`
+    : `new: could not start a session (HTTP ${res.status})`)
+  const { id } = await res.json()
+  // attach() logs in again itself: the HttpOnly cookie reach got cannot cross
+  // to the ws handshake, and a second login mints its own valid token.
+  return { id, wsUrl: new URL('/ws', baseUrl(url)).toString() }
+}
+
 /** `mobile-tty end [fragment|n]` — end a running session for good, confirmed once. */
 export async function end(url, { match, yes = false }) {
   const result = await reach(url)

@@ -14,6 +14,9 @@ while [[ -L "$self" ]]; do
   [[ "$self" == /* ]] || self=$self_dir/$self
 done
 root=$(cd -P "$(dirname "$self")" && pwd)
+# The folder the user ran this in, before the dispatch below cd's into the
+# checkout: `new` starts a session there, not here.
+caller_cwd=$PWD
 cd "$root" || { echo "mobile-tty: cannot enter $root" >&2; exit 1; }
 [[ -f server/cli.js ]] || { echo "mobile-tty: $root does not look like the mobile-tty checkout" >&2; exit 1; }
 
@@ -36,6 +39,7 @@ Usage: mobile-tty [command] [options] [program...]
   sessions       list sessions on the server (default)
   end [fragment|n] end a running session
   serve          serve the terminal
+  new            start a fresh session in this folder and attach to it
   attach [fragment|n] attach this terminal to a running server
   attach -       reattach to the last session attached from this machine
   tunnel         run the Cloudflare tunnel on its own
@@ -65,7 +69,8 @@ same time, the way running pi a few times in different terminals would be.
 Whichever session a viewer is looking at, the narrowest viewer of that one
 decides its size, because this is meant to be read on a phone.
 `attach [name-or-path|n]` joins a server that is already running; it does not
-start one, and prompts if more than one session matches. `attach -` rejoins the
+start one, and prompts if more than one session matches. `new` starts a fresh
+session in the folder it was run from and attaches to it at once. `attach -` rejoins the
 last session attached from this machine. `sessions` lists the
 running ones, and `end [fragment|n]` stops a running session after confirmation;
 `--yes` skips that confirmation. Exiting the program in a session also ends it,
@@ -114,7 +119,7 @@ take_options() {
         [[ "$cmd" == attach && "$attach_previous" -eq 0 ]] || usage_error "unknown option $1"
         attach_previous=1; shift ;;
       -*) usage_error "unknown option $1" ;;
-      serve|sessions|end|attach|tunnel|setup)
+      serve|sessions|end|new|attach|tunnel|setup)
         [[ -z "$cmd" ]] || break        # a second one is the program's business
         cmd=$1; shift ;;
       *)
@@ -222,6 +227,11 @@ case "$cmd" in
     # into the -e source below, since it is arbitrary text you typed.
     exec env MTTY_ATTACH_MATCH="${1:-}" node -e \
       "import('./server/attach.js').then(m => m.attach({ url: 'ws://$host:$port/ws', match: process.env.MTTY_ATTACH_MATCH || undefined }))"
+    ;;
+  new)
+    [[ $# -eq 0 ]] || usage_error "new takes no arguments"
+    exec env MTTY_NEW_CWD="$caller_cwd" node -e \
+      "import('./server/control.js').then(async m => { const started = await m.start('ws://$host:$port', { cwd: process.env.MTTY_NEW_CWD }); if (started) await m.attach({ url: started.wsUrl, session: started.id }) })"
     ;;
   tunnel)
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"

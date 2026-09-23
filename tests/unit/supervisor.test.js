@@ -320,28 +320,36 @@ test('joining a running session in the wrong folder is refused, not redirected',
   }
 })
 
-test('/start begins a session in an offered folder, and nowhere else', async () => {
+test('/start begins a session in any directory that exists', async () => {
   const store = await storeFor([{ name: 'listed', id: 'a' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
   const post = (body) => fetch(`${page}/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  const fresh = await mkdtemp(pathJoin(tmpdir(), 'mtty-new-'))
   try {
-    // An unlisted folder is refused with a clear status, spawning nothing.
+    // A folder that does not exist is refused, spawning nothing.
     const refused = await post({ cwd: pathJoin(store.root, 'elsewhere') })
     assert.equal(refused.status, 422)
     assert.equal(registryRunning(supervisor), 0)
 
-    // A folder the listing offers spawns a session that then joins.
-    const ok = await post({ cwd: store.at('listed') })
+    // A folder that was never a place and is not this server's own still
+    // spawns: `mobile-tty new` runs it in any project folder the user is in.
+    const ok = await post({ cwd: fresh })
     assert.equal(ok.status, 200)
     const { id, cwd } = await ok.json()
     assert.match(id, /^[0-9a-f-]{36}$/)
-    assert.equal(cwd, store.at('listed'))
+    assert.equal(cwd, await realpath(fresh))
     const viewer = join(base, id, { cwd })
     await viewer.opened
     await until(() => viewer.output.length > 0, 'the started session serves its screen')
+    viewer.close()
+
+    // A folder the listing offers still works as it always did.
+    const listed = await post({ cwd: store.at('listed') })
+    assert.equal(listed.status, 200)
   } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
+    await rm(fresh, { recursive: true, force: true })
   }
 })
 

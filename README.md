@@ -58,6 +58,7 @@ pi install "$PWD/pi-extensions/mtty-footer.ts"
 ./mobile-tty end --yes my-project    # skip the confirmation
 ./mobile-tty serve bash              # a program other than pi
 ./mobile-tty serve pi --model whatever # arguments after the program go to it
+./mobile-tty new                     # start a fresh pi here and attach to it
 ./mobile-tty attach                  # join a session from a second terminal (Ctrl-] detaches)
 ./mobile-tty attach my-project       # attach straight to a session by name, path or id fragment
 ./mobile-tty attach 2                # join the second running session

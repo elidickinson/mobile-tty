@@ -126,32 +126,16 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     }
 
     // Start a session that has no transcript yet: mint an id, spawn pi in the
-    // named directory, and let the client join it like any other. The
-    // directory is one this server itself offers (its own cwd, or one some
-    // /places row already refers to), checked fresh here against the store as
-    // it stands now — so a posted path is only ever honored if the operator
-    // has been running pi there, and one deleted since the last listing
-    // fails cleanly instead of spawning anywhere.
+    // named directory, and let the client join it like any other.
     if (path === '/start' && req.method === 'POST') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
       if (!originAllowedReq(req)) return void res.writeHead(403).end()
       const body = await readBody(req, 512).catch(() => null)
+      // Any directory that exists can hold a session: joining one already
+      // gives a full bash prompt, so restricting the start list would be
+      // ceremony. canonical() is null for a path that does not resolve.
       const wanted = body ? await canonical(body.cwd?.trim()) : null
-      const here = await canonical(defaultDir)
-      // The offered folders are: this server's own, every store row's, and
-      // every live child's — a just-started session's folder is offered in
-      // the chooser but may have no row yet, so the same set that authorizes
-      // must include it.
-      let spawnable = false
-      if (wanted) {
-        if (wanted === here) spawnable = true
-        else {
-          const { sessions } = await readPlaces({ sessionDir })
-          spawnable = sessions.some(place => place.cwd === wanted) ||
-            registry.running().some(id => registry.child(id).cwd === wanted)
-        }
-      }
-      if (!spawnable) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such place to start a session in')
+      if (!wanted) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such directory to start a session in')
       const id = randomUUID()
       registry.ensure(id, wanted)
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted }))
