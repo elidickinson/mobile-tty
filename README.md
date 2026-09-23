@@ -54,9 +54,24 @@ pi install "$PWD/pi-extensions/mtty-footer.ts"
 ./mobile-tty serve bash             # a program other than pi
 ./mobile-tty pi --model whatever    # arguments after the program go to it
 ./mobile-tty attach                 # join a session from a second terminal (Ctrl-] detaches)
-./mobile-tty attach my-project      # attach straight to a session by name or path fragment
+./mobile-tty attach my-project      # attach straight to a session by name, path or id fragment
 ./mobile-tty --port 1234            # --bind and --hostname too
 ./mobile-tty serve --tunnel         # run the tunnel alongside; needs setup first (below)
+```
+
+`attach [fragment]` matches case-insensitively against everything that
+identifies a session: the **basename of the folder** the pi conversation ran
+in (`my-project` for `~/work/my-project`), the **path** of that folder
+(`work/my-pro` works), or the **session id**. A fragment that matches several
+sessions -- including every older transcript of the same folder, which are
+all named alike -- brings up a numbered pick list instead of guessing
+(● marks the ones already running):
+
+```
+attach: which session?
+  1) ● mobile-tty   ~/projects/mobile-tty
+  2)   mobile-tty   ~/projects/mobile-tty
+>
 ```
 
 **Only tested on an iPhone** (Safari, and the e2e suite runs WebKit). Android is untested -- reports welcome. Requires node 22+, plus `cloudflared` for the tunnel. macOS gets a prebuilt `node-pty`; on Linux `npm install` compiles it, which wants python and a C++ toolchain. Alt-screen apps (Claude Code, vim) are out of scope.
@@ -73,7 +88,7 @@ pi install "$PWD/pi-extensions/mtty-footer.ts"
 
 The `≡` menu lists every session pi has a transcript for, newest first, a running one marked ●. Tap one to join it -- if it isn't already running, it's started in the background first; if it is, you're looking at it instantly, exactly as it was left. Joining never ends anything else: leave a session and it keeps running, so the phone, a browser tab and any number of `attach`ed terminals can each be looking at a different one, the same as running pi a few times in different terminals -- except the menu is how you get back to any of them from the phone.
 
-There is currently no way to start a brand-new session from the menu itself -- run pi in a folder once from any terminal (`./mobile-tty serve bash`, then cd and run pi, works with no terminal handy) and it shows up in the list from then on.
+There is currently no way to start a brand-new session from the menu itself -- run pi in a folder once from any terminal (`./mobile-tty serve bash`, then cd and run pi, works with no terminal handy) and it shows up in the list from then on. Attach can only name a session pi has already written a transcript for: it joins, it does not create. Neither the menu nor `attach` picks a session by name purely -- two conversations in one folder differ only by recency (the menu shows it; the picker numbers them), or by their ids.
 
 ## Reach it from anywhere
 
