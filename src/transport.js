@@ -1,6 +1,6 @@
 // The connection: framing and reconnect. The server owns the PTY size and says
 // what it is, so there are no size games left here.
-import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE, SET_SIZE, FOOTER } from './ttyd.js'
+import { encodeInput, encodeResize, encodeHandshake, decodeFrame, OUTPUT, SET_TITLE, SET_SIZE, FOOTER, PROCESS } from './ttyd.js'
 
 const BACKOFF_MIN = 500
 const BACKOFF_MAX = 10_000
@@ -13,7 +13,7 @@ const BACKOFF_MAX = 10_000
  * server kept.
  */
 export class TtydConnection {
-  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout.bind(globalThis), onOutput, onTitle, onSize, onFooter, onState }) {
+  constructor({ url, token = '', socketFactory, schedule, cancel = clearTimeout.bind(globalThis), onOutput, onTitle, onSize, onFooter, onProcess, onState }) {
     this.url = url
     this.token = token
     this.socketFactory = socketFactory
@@ -23,6 +23,7 @@ export class TtydConnection {
     this.onTitle = onTitle
     this.onSize = onSize
     this.onFooter = onFooter
+    this.onProcess = onProcess
     this.onState = onState
 
     this.cols = 0
@@ -94,6 +95,12 @@ export class TtydConnection {
     this._cancelRetry()
   }
 
+  /** Forget input aimed at a place this connection never reached: flushing it
+   *  at whatever is joined next would type it into the wrong session. */
+  discardInput() {
+    this.queue.length = 0
+  }
+
   _open() {
     this.onState?.('connecting')
     const ws = this.socketFactory(this.url, ['tty'])
@@ -118,6 +125,7 @@ export class TtydConnection {
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
       else if (f.cmd === SET_SIZE) this.onSize?.({ cols: f.json.columns, rows: f.json.rows })
       else if (f.cmd === FOOTER) this.onFooter?.(f.text)
+      else if (f.cmd === PROCESS) this.onProcess?.(f.json)
     }
 
     ws.onclose = ev => {

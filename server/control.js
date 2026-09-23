@@ -39,7 +39,6 @@ const reach = async url => {
   return { data: await res.json(), headers }
 }
 
-/** `mobile-tty sessions` — every session the server lists, with ● and a count. */
 /** `mobile-tty sessions` — the sessions actually running, with ● and a count.
  *  Transcript history is the picker's business; this is what is live now. */
 export async function sessions(url) {
@@ -72,10 +71,10 @@ export async function start(url, { cwd }) {
   if (!res.ok) return console.error(res.status === 422
     ? `new: no such directory: ${cwd}`
     : `new: could not start a session (HTTP ${res.status})`)
-  const { id } = await res.json()
+  const { processId } = await res.json()
   // attach() logs in again itself: the HttpOnly cookie reach got cannot cross
   // to the ws handshake, and a second login mints its own valid token.
-  return { id, wsUrl: new URL('/ws', baseUrl(url)).toString() }
+  return { processId, wsUrl: new URL('/ws', baseUrl(url)).toString() }
 }
 
 /** `mobile-tty end [fragment|n]` — end a running session for good, confirmed once. */
@@ -118,7 +117,7 @@ export async function end(url, { match, yes = false }) {
     const answer = (await ask(`end "${target.label || target.name}"? [y/N] `)).trim().toLowerCase()
     if (answer !== 'y' && answer !== 'yes') return console.error('left it running')
   }
-  const res = await fetch(new URL(`/session?id=${encodeURIComponent(target.id)}`, baseUrl(url)), {
+  const res = await fetch(new URL(`/terminal?process=${encodeURIComponent(target.processId)}`, baseUrl(url)), {
     method: 'DELETE',
     headers,
   }).catch(() => null)

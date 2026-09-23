@@ -12,7 +12,7 @@ const intercept = calls => async (input, init = {}) => {
   }
   if (url.endsWith('/start')) {
     calls.push({ url, method: 'POST', headers: init.headers, body: JSON.parse(init.body) })
-    return { ok: true, status: 200, json: async () => ({ id: 'fresh-id' }) }
+    return { ok: true, status: 200, json: async () => ({ processId: 'fresh-process' }) }
   }
   throw new Error(`unexpected fetch ${url}`)
 }
@@ -31,7 +31,7 @@ test('start posts the caller folder and returns what attach needs', async () => 
       headers: { 'content-type': 'application/json' },
       body: { cwd: '/work/here' },
     }])
-    assert.deepEqual(result, { id: 'fresh-id', wsUrl: 'http://127.0.0.1:7681/ws' })
+    assert.deepEqual(result, { processId: 'fresh-process', wsUrl: 'http://127.0.0.1:7681/ws' })
   } finally {
     globalThis.fetch = realFetch
     if (realPassword !== undefined) process.env.MTTY_PASSWORD = realPassword

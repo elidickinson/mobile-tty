@@ -1,4 +1,4 @@
-// The server: it owns pi, and it is the session.
+// One live terminal: it owns a PTY and the program inside it.
 //
 // It replaces ttyd and dtach both. dtach is gone because it silently discarded
 // the unwritten tail of a read whenever a client socket filled, which is where
@@ -6,11 +6,12 @@
 //
 // One instance serves exactly one program, in one folder, for its whole life
 // — no switching. Running several sessions concurrently, and picking between
-// them, is `server/supervisor.js`'s job: it spawns one of these per session id
+// them, is `server/supervisor.js`'s job: it spawns one of these per PTY
 // (over a Unix socket, see `socketPath` below) and keeps it running in the
 // background, so this file only ever has to think about "one PTY, N viewers,
 // one screen".
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { basename, join, resolve } from 'node:path'
@@ -19,10 +20,11 @@ import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { removeFooterFiles, watchFooter } from './footer.js'
 import { isAddress, originAllowed } from './origin.js'
+import { placeNames } from './places.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
-import { INPUT, RESIZE, decodeHandshake, decodeSize } from './protocol.js'
+import { INPUT, RESIZE, PROCESS, decodeHandshake, decodeSize } from './protocol.js'
 
 // Cloudflare drops idle sockets and the phone sleeps, so the socket has to be
 // spoken to even when pi is silent. ttyd did this and it is why `up` survived a
@@ -61,6 +63,11 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
   // directory the supervisor itself was launched from.
   const program = command.includes('/') ? resolve(process.cwd(), command) : command
   const viewers = new Set()
+  // Set for a background child: the supervisor seeds it before forking and the
+  // mtty-session extension rewrites it as pi switches conversations. The
+  // program may not be pi at all, so this is the only thing that knows what
+  // conversation a viewer was admitted to.
+  const identityPath = process.env.MTTY_IDENTITY
 
   // The program, its screen, and the folder it is in. Set once, from listen(),
   // and never replaced — there is no switching here any more.
@@ -73,6 +80,17 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
 
   const title = `${basename(program)} — ${cwd}`
 
+  /**
+   * The place this PTY is in, as one frame. The child is the only sender: it
+   * owns the identity file, so a relay never has to guess. `name` and `path`
+   * come from the same formatter a menu row uses.
+   */
+  const processFrame = state => JSON.stringify({
+    ...state,
+    processId: process.env.MTTY_PROCESS_ID,
+    ...placeNames(state.cwd),
+  })
+
   /** Start the program and make it the session. Called exactly once. */
   const start = () => {
     const session = new Session({ command: program, args, cwd, env: { ...process.env, MTTY_FOOTER: footerPath } })
@@ -84,6 +102,11 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
       unit.lastFooter = text
       for (const viewer of viewers) viewer.footer(text)
     })
+    unit.stopIdentity = identityPath && watchFooter(identityPath, text => {
+      if (unit.retired) return
+      const frame = processFrame(JSON.parse(text))
+      for (const viewer of viewers) viewer.send(PROCESS, frame)
+    }, { removeOnStop: false })
 
     /**
      * A resize re-sends the screen rather than letting viewers reflow it.
@@ -128,6 +151,7 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
     session.onExit = status => {
       unit.resolveGone()
       unit.stopFooter()
+      unit.stopIdentity?.()
       for (const viewer of viewers) viewer.close(1000, 'session ended')
       onExit?.(status)
     }
@@ -183,6 +207,11 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
   }
 
   const admit = viewer => {
+    // Before the screen: a viewer knows which place it landed on by the frame
+    // that says so, and the frame cannot be second if the screen is to be
+    // committed to it. Reading the file rather than a cached copy, since
+    // admission can beat the watcher's first poll.
+    if (identityPath) viewer.send(PROCESS, processFrame(JSON.parse(readFileSync(identityPath, 'utf8'))))
     active.session.add(viewer)
     viewer.title(title)
     // The latest strip line after the screen: a viewer that connects mid-session
@@ -330,6 +359,7 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
       clearInterval(ping)
       clearTimeout(fitTimer)
       active?.stopFooter()
+      active?.stopIdentity?.()
       active?.session.kill()
       // Terminated, not closed: a close frame waits for one back, and a phone
       // asleep behind a dead tunnel does not answer for 30 seconds — which is

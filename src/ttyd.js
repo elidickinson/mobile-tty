@@ -7,6 +7,7 @@ export const OUTPUT = '0'
 export const SET_TITLE = '1'
 export const SET_SIZE = '3'
 export const FOOTER = '4'
+export const PROCESS = '5'
 
 // No SWITCH/ASK_PLACES/PLACES here any more: which session a socket shows is
 // chosen by its URL (`/ws?session=<id>`), and the session list is a plain
@@ -46,6 +47,6 @@ export function decodeFrame(buffer) {
   const payload = all.subarray(1)
   if (cmd === OUTPUT) return { cmd, payload }
   const text = dec.decode(payload)
-  if (cmd === SET_SIZE) return { cmd, text, json: JSON.parse(text) }
+  if (cmd === SET_SIZE || cmd === PROCESS) return { cmd, text, json: JSON.parse(text) }
   return { cmd, text }
 }

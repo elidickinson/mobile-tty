@@ -126,6 +126,7 @@ test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_
     const early = await connectViewer(url, 80, 24)
     viewers.push(early)
     await waitFor(() => early.text().includes('MTTY_EXTENSION_READY'), 'real pi and test extension startup')
+    await waitFor(() => early.screen().some(line => line.includes('mobile-tty')), 'mobile-tty indicator in pi footer')
     await waitFor(() => early.footers().length > 0, 'a status-strip frame from the mtty-footer extension')
     const footer = early.footers().at(-1)
     assert.equal(typeof footer.ts, 'number', 'the strip line carries a timestamp')
@@ -180,6 +181,7 @@ test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_
 
     assert.deepEqual(late.history(), early.history(), 'viewers after pi redraw')
     assert.deepEqual(late.screen(), early.screen(), 'screens after pi redraw')
+    assert.ok(early.screen().some(line => line.includes('mobile-tty')), 'indicator survives 50-column redraw')
     assert.deepEqual(fixtureIds(early.text()), expectedIds, 'pi redraw preserves every fixture line in order')
     assert.ok(early.history().length > 250, `expected deep history, got ${early.history().length} rows`)
 

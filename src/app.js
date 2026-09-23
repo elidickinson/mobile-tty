@@ -84,13 +84,11 @@ if (new URLSearchParams(location.search).has('debug')) {
   screen.addEventListener('beforeinput', e => recordInput(`before type=${e.inputType} data=${JSON.stringify(e.data)}`))
 }
 
-// Which session this viewer is looking at. Chosen client-side (from a tap in
-// the menu, or remembered from last time) rather than tracked by the server:
-// there is no longer one "current" session, since a phone, a browser tab and
-// any number of `attach`ed terminals can each be looking at a different one
-// at once. A place is a (session, folder) pair — the same session resumed in
-// two folders is two rows — so the pair is what is remembered and matched.
-let currentId = null
+// A live PTY has a stable process ID even when pi switches conversations.
+// Keep the requested row separate from the one that actually admitted us.
+let currentPlace = null
+let pendingPlace = null
+let selectionVersion = 0
 let armedEndId = null
 let endArmTimer = null
 const endingIds = new Set()
@@ -98,11 +96,22 @@ let placesRequest = 0
 // The close code the supervisor sends when the session itself is over — pi
 // exited, or someone ended it — as opposed to an ordinary dropped socket.
 const SESSION_ENDED = 1001
-const placeKey = (id, cwd) => `${id} ${cwd}`
+// The close code range the supervisor reserves for a refused join, as opposed
+// to a dropped socket. A refusal is final; anything else is a phone that lost
+// its network and gets the ordinary backoff.
+const REFUSED = code => code >= 4000 && code < 5000
+const samePlace = (a, b) => Boolean(a && b && a.id === b.id && a.cwd === b.cwd)
+// What the last visit was looking at, whole: a process ID that is gone means
+// nothing on its own, while the conversation it was showing is still there to
+// reopen.
+const readPlace = key => {
+  try { return JSON.parse(localStorage.getItem(key)) } catch { return null }
+}
+const writePlace = (key, place) => localStorage.setItem(key, JSON.stringify(place))
 const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
-const sessionUrl = (id, cwd) =>
-  `${wsBase}?session=${encodeURIComponent(id)}` +
-  (cwd ? `&cwd=${encodeURIComponent(cwd)}` : '')
+const sessionUrl = place => place.processId
+  ? `${wsBase}?process=${encodeURIComponent(place.processId)}`
+  : `${wsBase}?session=${encodeURIComponent(place.id)}&cwd=${encodeURIComponent(place.cwd)}`
 
 const fetchPlaces = () => fetch('/places').then(r => r.json())
 function refreshPlaces({ preserveNotice = false } = {}) {
@@ -120,14 +129,30 @@ const basename = path => path.slice(path.lastIndexOf('/') + 1)
  *  still around, otherwise whatever `/places` says is most recent. */
 async function resolveInitialPlace() {
   const { current, sessions } = await fetchPlaces()
-  const remembered = localStorage.getItem('mtty-place')
-  const rememberedId = remembered?.split(' ')[0]
-  // Last time's exact row if it is still listed, else last time's session in
-  // whatever row of it remains, else the newest row there is.
-  return sessions.find(s => placeKey(s.id, s.cwd) === remembered)
-    ?? sessions.find(s => s.id === rememberedId)
-    ?? sessions.find(s => s.id === current)
+  const remembered = readPlace('mtty-place')
+  // A remembered process that has since ended has no row; the conversation it
+  // was showing does, which is why the whole place was kept rather than a key.
+  return sessions.find(s => remembered?.processId && s.processId === remembered.processId)
+    ?? sessions.find(s => remembered && samePlace(s, remembered))
+    ?? sessions.find(s => s.processId === current)
+    ?? sessions[0]
     ?? null
+}
+
+/**
+ * The place this viewer is really looking at: whichever one a PROCESS frame
+ * named. Nothing else promotes a requested place, so the header cannot end up
+ * naming a session the screen is not showing.
+ */
+function commitPlace(next) {
+  const previous = currentPlace
+  currentPlace = next
+  pendingPlace = null
+  if (previous && !samePlace(previous, currentPlace)) writePlace('mtty-prev', previous)
+  writePlace('mtty-place', currentPlace)
+  placeNow.textContent = currentPlace.path
+  document.title = `${currentPlace.name} — ${currentPlace.path}`
+  if (!menu.hidden) refreshPlaces().catch(() => {})
 }
 
 const term = new WTerm(screen, {
@@ -148,29 +173,56 @@ const conn = new TtydConnection({
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => { lastOutput = Date.now(); deliver(bytes) },
+  onProcess: process => {
+    if (pendingPlace) commitPlace({ ...pendingPlace, ...process })
+    else if (currentPlace?.processId === process.processId) commitPlace({ ...currentPlace, ...process })
+  },
   // The title is only restated on a fresh admission, and the strip belongs to
   // whichever program was running before that. Drop it rather than leave the
   // last one's model and thinking level sitting under a different session;
   // the new one's own line arrives within a poll.
-  onTitle: title => { document.title = title; clearFooter() },
+  onTitle: title => {
+    clearFooter()
+    document.title = currentPlace ? `${currentPlace.name} — ${currentPlace.path}` : title
+  },
   onSize: ({ cols, rows }) => { snapshotPending = true; applyServerSize(cols, rows) },
   onFooter: showFooter,
   onState: (status, code, reason) => {
     // 'connecting' covers reconnectNow (which closes the old socket so its
     // onclose never fires) as well as every ordinary open.
     if (status !== 'connected') dropHeld()
+    // A refused join is the server saying no: clear what was asked for, drop
+    // the keys typed at a session that never took them, and let the menu say
+    // why. A dropped socket instead keeps its backoff and reconnects silently.
+    if (status === 'disconnected' && REFUSED(code) && pendingPlace) {
+      pendingPlace = null
+      conn.stop()
+      conn.discardInput()
+      showMenuNotice(reason || 'could not join that conversation')
+      showConnection('disconnected')
+      openMenu({ preserveNotice: true })
+      return
+    }
     // 1001 is the server saying the session itself ended, not a dropped
     // phone. Retrying would spawn a fresh process from the transcript, so the
-    // loop stops and the menu lists what is left instead.
-    if (status !== 'connected' && code === SESSION_ENDED) {
-      const endedByThisViewer = endingIds.has(currentId)
-      const previous = localStorage.getItem('mtty-place')
-      if (previous) localStorage.setItem('mtty-prev', previous)
+    // loop stops and the menu lists what is left instead. A refusal with
+    // nothing pending is the same news arriving late — the terminal this
+    // viewer was on went away while its socket was down — and gets the same
+    // bookkeeping, or the header would keep naming somewhere nothing is.
+    if (status !== 'connected' && (code === SESSION_ENDED || REFUSED(code))) {
+      const endedByThisViewer = endingIds.has(currentPlace?.processId)
+      if (currentPlace) {
+        const conversation = { id: currentPlace.id, cwd: currentPlace.cwd }
+        writePlace('mtty-prev', conversation)
+        writePlace('mtty-place', conversation)
+      }
       if (endedByThisViewer) clearMenuNotice()
-      else showMenuNotice(reason || 'session ended')
+      else showMenuNotice(reason || 'terminal ended')
       conn.stop()
+      conn.discardInput()
+      pendingPlace = null
       showConnection('disconnected')
-      currentId = null
+      currentPlace = null
       document.title = 'mobile-tty'
       openMenu({ preserveNotice: !endedByThisViewer })
       return
@@ -732,6 +784,11 @@ function placePath(sess) {
 }
 
 function showPlaces({ sessions, hidden, here }) {
+  const active = currentPlace?.processId && sessions.find(s => s.processId === currentPlace.processId)
+  if (active) {
+    currentPlace = active
+    placeNow.textContent = active.path
+  }
   places.textContent = ''
 
   // The one way to be somewhere with no transcript yet. Pinned where a thumb
@@ -749,10 +806,8 @@ function showPlaces({ sessions, hidden, here }) {
   start.addEventListener('click', () => showDirs({ sessions, here }))
   places.append(start)
 
-  const previousKey = localStorage.getItem('mtty-prev')
-  const previous = sessions.find(sess => placeKey(sess.id, sess.cwd) === previousKey)
-  const viewedKey = currentId === null ? null : localStorage.getItem('mtty-place')
-  if (previous && previousKey !== viewedKey) {
+  const previous = sessions.find(sess => samePlace(sess, readPlace('mtty-prev')))
+  if (previous && !samePlace(previous, currentPlace)) {
     const pin = document.createElement('button')
     pin.className = previous.running ? 'place previous running' : 'place previous'
     pin.dataset.sessionId = previous.id
@@ -771,7 +826,7 @@ function showPlaces({ sessions, hidden, here }) {
     if (sess.running) wrap.classList.add('has-end')
 
     const row = document.createElement('button')
-    row.className = sess.id === currentId ? 'place here' : 'place'
+    row.className = samePlace(sess, currentPlace) ? 'place here' : 'place'
     if (sess.running) row.classList.add('running')
 
     const name = document.createElement('span')
@@ -788,17 +843,17 @@ function showPlaces({ sessions, hidden, here }) {
     if (sess.running) {
       const end = document.createElement('button')
       end.className = 'place-end'
-      end.dataset.sessionId = sess.id
+      end.dataset.processId = sess.processId
       end.dataset.label = sess.label
       end.addEventListener('click', () => {
-        if (armedEndId !== sess.id) {
-          armEnd(sess.id)
+        if (armedEndId !== sess.processId) {
+          armEnd(sess.processId)
           return
         }
         clearEndArm()
         void endSession(sess)
       })
-      updateEndControl(sess.id, end)
+      updateEndControl(sess.processId, end)
       wrap.append(end)
     }
     places.append(wrap)
@@ -816,7 +871,7 @@ function showPlaces({ sessions, hidden, here }) {
 
 function updateEndControl(id, existing) {
   const control = existing ?? [...places.querySelectorAll('.place-end')]
-    .find(button => button.dataset.sessionId === id)
+    .find(button => button.dataset.processId === id)
   if (!control) return
   const ending = endingIds.has(id)
   const armed = armedEndId === id
@@ -846,21 +901,20 @@ function armEnd(id) {
   }, 4_000)
 }
 
-/** End a running session, then refresh the shared place list. The close handler
- *  owns clearing currentId and returning an active viewer to the picker. */
+/** End a running PTY, then refresh the shared place list. */
 async function endSession(sess) {
-  endingIds.add(sess.id)
-  updateEndControl(sess.id)
+  endingIds.add(sess.processId)
+  updateEndControl(sess.processId)
   try {
-    const res = await fetch(`/session?id=${encodeURIComponent(sess.id)}`, { method: 'DELETE' })
+    const res = await fetch(`/terminal?process=${encodeURIComponent(sess.processId)}`, { method: 'DELETE' })
     if (!res.ok && res.status !== 404) $('menu-state').textContent = `End failed (${res.status})`
   } catch {
     $('menu-state').textContent = 'End failed'
   } finally {
     // Settled either way: a failed end must not read as "this viewer ended
     // it" if someone else gets the session killed for real a moment later.
-    endingIds.delete(sess.id)
-    updateEndControl(sess.id)
+    endingIds.delete(sess.processId)
+    updateEndControl(sess.processId)
     refreshPlaces().catch(() => {})
   }
 }
@@ -913,8 +967,10 @@ async function startSession(dir) {
     body: JSON.stringify({ cwd: dir }),
   })
   if (!res.ok) return
-  const { id, cwd } = await res.json()
-  await joinSession({ id, cwd, name: basename(dir), path: dir })
+  const { id, cwd, processId } = await res.json()
+  // Name and path come from the PROCESS frame that follows, which is the one
+  // formatting of a folder the header and the menu agree on.
+  joinSession({ id, cwd, processId })
   // The list is stale the moment this worked: a row now exists for a session
   // with no transcript.
   refreshPlaces().catch(() => {})
@@ -922,18 +978,16 @@ async function startSession(dir) {
 
 /** Point the connection at another session's socket and reconnect to it. */
 function joinSession(sess) {
+  selectionVersion++
   clearEndArm()
-  const currentPlace = localStorage.getItem('mtty-place')
-  const nextPlace = placeKey(sess.id, sess.cwd)
-  if (currentPlace && currentPlace !== nextPlace) localStorage.setItem('mtty-prev', currentPlace)
   clearMenuNotice()
-  currentId = sess.id
-  localStorage.setItem('mtty-place', nextPlace)
-  placeNow.textContent = sess.path
-  document.title = `${sess.name} — ${sess.path}`
-  // The cwd rides along: it is half of what names a place, and the server
-  // needs it to refuse steering an id into the wrong folder.
-  conn.join(sessionUrl(sess.id, sess.cwd))
+  pendingPlace = sess
+  const url = sessionUrl(sess)
+  if (conn.started) conn.join(url)
+  else {
+    conn.url = url
+    conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
+  }
   menu.hidden = true
 }
 
@@ -1174,6 +1228,7 @@ async function checkForNewBuild() {
 }
 
 async function main() {
+  const initialVersion = selectionVersion
   state.cell = measureCell(state.fontSize)
   // Set on the element, not :root — `.wterm` declares its own defaults, which
   // would win over anything merely inherited.
@@ -1203,15 +1258,9 @@ async function main() {
   requestAnimationFrame(() => fitGrid(applyLayout()))
 
   const place = await resolveInitialPlace()
-  currentId = place?.id ?? null
-  // The URL must be final before connect(): the join names a (session, cwd)
-  // pair now, and there is no bare path to dial any more — dialing one would
-  // be refused, not attached. With no session to join, the menu is the way in
-  // and the socket stays down until it picks one.
-  if (place) {
-    localStorage.setItem('mtty-place', placeKey(place.id, place.cwd))
-    conn.url = sessionUrl(place.id, place.cwd)
-    placeNow.textContent = place.path
+  if (place && selectionVersion === initialVersion) {
+    pendingPlace = place
+    conn.url = sessionUrl(place)
     conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
   }
 

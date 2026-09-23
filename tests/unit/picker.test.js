@@ -48,12 +48,38 @@ test('resolveSession picks a running row by number, refusing others', async () =
   const realError = console.error
   console.error = line => errors.push(line)
   try {
-    assert.equal(await resolveSession('ws://x/ws', { match: '1' }), 'live-id', '1 means the first running session, not the first row')
+    assert.deepEqual(await resolveSession('ws://x/ws', { match: '1' }), sessions[1], '1 means the first running row, not the first row')
     assert.deepEqual(await resolveSession('ws://x/ws', { match: '2' }), null, 'the index is over running rows only')
     assert.deepEqual(errors, ['attach: no running session numbered 2'])
   } finally {
     globalThis.fetch = realFetch
     console.error = realError
+  }
+})
+
+test('attach keeps the folder when two saved rows share a conversation id', async () => {
+  const sessions = [
+    { id: 'same', cwd: '/one', label: 'one', path: '/one' },
+    { id: 'same', cwd: '/two', label: 'two', path: '/two' },
+  ]
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ sessions }) })
+  try {
+    assert.deepEqual(await resolveSession('ws://x/ws', { match: '/two' }), sessions[1])
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('attach - reopens the saved conversation when its PTY has ended', async () => {
+  const previous = { processId: 'gone', id: 'a', cwd: '/work' }
+  const saved = { id: 'a', cwd: '/work', label: 'work' }
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ sessions: [saved] }) })
+  try {
+    assert.deepEqual(await resolveSession('ws://x/ws', { session: previous }), saved)
+  } finally {
+    globalThis.fetch = realFetch
   }
 })
 

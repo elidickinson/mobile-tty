@@ -61,6 +61,13 @@ export const shorten = path => {
 }
 
 /**
+ * How a folder is shown wherever it is named: a menu row, the header. One
+ * place does it, so a row and the frame that committed the place cannot
+ * disagree about the same folder.
+ */
+export const placeNames = cwd => ({ name: basename(cwd), path: shorten(cwd) })
+
+/**
  * A session file's header, or null if it does not look like one.
  *
  * I/O errors are left to propagate — an unreadable store is worth hearing
@@ -215,7 +222,7 @@ const resolve = async ({ file, at }) => {
   // A transcript with no conversation in it yet has nothing to label it with;
   // the folder name is the honest row then, and the only one there is.
   const label = await readLabel(file, size) || basename(cwd)
-  return { id: header.id, cwd, name: basename(cwd), path: shorten(cwd), at, label }
+  return { id: header.id, cwd, ...placeNames(cwd), at, label }
 }
 
 /**

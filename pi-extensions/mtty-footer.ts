@@ -1,4 +1,4 @@
-// The status-strip capture: the active model, for mobile-tty.
+// Show when pi is running through mobile-tty and capture its active model for the status strip.
 //
 // pi truncates its footer to the terminal width as it renders, so at phone
 // width everything past column ~50 was never written to the PTY and no client
@@ -14,10 +14,6 @@
 //   { "ts": 1712345678901, "text": "anthropic/claude-opus-5 - max" }
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { renameSync, writeFileSync } from "node:fs";
-
-// Only these events can change the line: the model itself, its thinking level,
-// and the first write at startup.
-const EVENTS = ["session_start", "model_select", "thinking_level_select"] as const;
 
 export default function (pi: ExtensionAPI) {
   const out = process.env.MTTY_FOOTER;
@@ -40,5 +36,10 @@ export default function (pi: ExtensionAPI) {
     renameSync(`${out}.tmp`, out);
   };
 
-  for (const event of EVENTS) pi.on(event as "session_start", (_event, ctx) => write(ctx));
+  pi.on("session_start", (_event, ctx) => {
+    if (ctx.mode === "tui") ctx.ui.setStatus("mobile-tty", ctx.ui.theme.fg("accent", "mobile-tty"));
+    write(ctx);
+  });
+  pi.on("model_select", (_event, ctx) => write(ctx));
+  pi.on("thinking_level_select", (_event, ctx) => write(ctx));
 }

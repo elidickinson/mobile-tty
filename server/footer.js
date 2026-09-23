@@ -3,7 +3,8 @@
 // for broadcast. Polled rather than fs.watch because the file exists only when
 // the served program is pi — most programs never create it — and watching the
 // directory for a file that may never appear means noise from every other tmp
-// file on the machine. Two tiny reads a second is nothing.
+// file on the machine. Two tiny reads a second is nothing. Identity files
+// belong to the supervisor, so their watcher leaves them for it to remove.
 import { rmSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 
@@ -14,7 +15,7 @@ export function removeFooterFiles(path) {
   rmSync(`${path}.tmp`, { force: true })
 }
 
-export function watchFooter(path, onChange) {
+export function watchFooter(path, onChange, { removeOnStop = true } = {}) {
   let stopped = false
   let last = null
 
@@ -46,6 +47,6 @@ export function watchFooter(path, onChange) {
   return () => {
     stopped = true
     clearInterval(timer)
-    removeFooterFiles(path)
+    if (removeOnStop) removeFooterFiles(path)
   }
 }

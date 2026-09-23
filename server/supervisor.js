@@ -1,4 +1,4 @@
-// The front door: one process, holding one Unix-socket child per pi session.
+// The front door: one supervisor holding live PTYs independently of pi conversations.
 //
 // Auth, origin-checking and the client HTML build live here, once, the way
 // server/index.js used to hold them for its one program. What used to be
@@ -6,9 +6,8 @@
 // joins keeps running after that viewer leaves, and a different viewer (phone,
 // a second `attach`, a third) can be looking at a different one at the same
 // time. `GET /places` answers what sessions exist and which are running;
-// `POST /start` begins one that has no transcript yet; `/ws?session=<id>` is a
-// raw pipe into that session's child, spawning it via `server/registry.js` if
-// it is not already up.
+// `POST /start` begins a fresh PTY; `/ws?process=<id>` joins a live one,
+// while `/ws?session=<id>&cwd=<path>` opens a saved conversation.
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -17,7 +16,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
-import { PI_SESSIONS, readPlaces, canonical, shorten } from './places.js'
+import { PI_SESSIONS, placeNames, readPlaces, canonical } from './places.js'
 import { BACKLOG_LIMIT, TOO_FAR_BEHIND } from './viewer.js'
 import { Registry } from './registry.js'
 
@@ -29,8 +28,8 @@ const MAX_FRAME = 1024 * 1024
 const CHILD_READY_MS = 8_000
 const CHILD_RETRY_MS = 75
 
-const connectChild = socketPath => new Promise((resolveConn, rejectConn) => {
-  const deadline = Date.now() + CHILD_READY_MS
+const connectChild = (socketPath, readyMs) => new Promise((resolveConn, rejectConn) => {
+  const deadline = Date.now() + readyMs
   const attempt = () => {
     const sock = new WebSocket(`ws+unix://${socketPath}:/ws`, ['tty'])
     sock.once('open', () => resolveConn(sock))
@@ -43,7 +42,7 @@ const connectChild = socketPath => new Promise((resolveConn, rejectConn) => {
   attempt()
 })
 
-export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', newDir, onListen, onExit }) {
+export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, onListen, onExit }) {
   const auth = new Auth(password)
   const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme })
   // Where a brand-new session starts: given, or the folder this run was
@@ -70,7 +69,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     req.on('error', reject)
   })
 
-  const http = createServer(async (req, res) => {
+  const handle = async (req, res) => {
     const path = req.url?.split('?')[0]
 
     if (path === '/login' && req.method === 'POST' && auth.required) {
@@ -84,29 +83,27 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       if (!auth.admits(req)) return void res.writeHead(401).end()
       // How many viewers are on each live child, for the listings: "2 watching"
       // on a row says the session is shared right now, not just alive.
-      const viewers = (id, cwd) => [...wss.clients].filter(
-        c => c.readyState === c.OPEN && c.sessionId === id && c.sessionCwd === cwd).length
       const { sessions: found, total } = await readPlaces({ sessionDir })
-      // A live child pins its row: same id resumed under two folders lists
-      // twice, but only the folder the child actually runs in is running.
-      // And a child with no transcript yet (just started) is listed anyway —
-      // otherwise the thing it just began on the phone would vanish from the
-      // very menu that started it.
-      const listed = new Set(found.map(p => `${p.id}\u0000${p.cwd}`))
-      const fresh = registry.running().flatMap(id => {
-        const child = registry.child(id)
-        return listed.has(`${id}\u0000${child.cwd}`)
-          ? []
-          : [{ id, cwd: child.cwd, name: basename(child.cwd), path: shorten(child.cwd), at: child.joinedAt, label: basename(child.cwd) }]
-      })
-      const rows = [...found, ...fresh].sort((a, b) => b.at - a.at)
-      const live = id => registry.child(id)?.cwd
-      const sessions = rows.map(place => ({ ...place, running: live(place.id) === place.cwd, viewers: viewers(place.id, place.cwd) }))
+      const rows = [...found]
+      for (const child of registry.running()) {
+        const current = registry.current(child)
+        let row = rows.find(p => p.id === current.id && p.cwd === current.cwd)
+        if (!row) {
+          row = { id: current.id, cwd: current.cwd, ...placeNames(current.cwd), at: current.at ?? child.joinedAt, label: basename(current.cwd) }
+          rows.push(row)
+        }
+        row.processId = child.processId
+      }
+      const sessions = rows.sort((a, b) => b.at - a.at).map(place => ({
+        ...place,
+        running: Boolean(place.processId),
+        viewers: place.processId ? [...wss.clients].filter(c => c.readyState === c.OPEN && c.processId === place.processId).length : 0,
+      }))
       // `total` counts store transcripts; the list also carries transcript-
       // less live sessions, so "older, not shown" must count from what is
       // actually shown, not from the store total alone.
       const hidden = Math.max(0, total - found.length)
-      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, hidden, here: defaultDir })
+      const body = JSON.stringify({ current: sessions.find(s => s.running)?.processId ?? null, sessions, hidden, here: defaultDir })
       return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     }
 
@@ -114,13 +111,13 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     // after a grace (`registry.end`), and its viewers hear that a terminal
     // asked for it. Deleted-for-real is pi's own business; this stops the
     // process, which is what mobile-tty owns.
-    if (path === '/session' && req.method === 'DELETE') {
+    if (path === '/terminal' && req.method === 'DELETE') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
       if (!originAllowedReq(req)) return void res.writeHead(403).end()
-      const id = new URL(req.url, 'http://internal').searchParams.get('id')
+      const id = new URL(req.url, 'http://internal').searchParams.get('process')
       const child = id && registry.child(id)
-      if (!child) return void res.writeHead(404, { 'content-type': 'text/plain' }).end(id ? 'that session is not running' : 'which session')
-      console.error(`server: ending session ${id} on request`)
+      if (!child) return void res.writeHead(404, { 'content-type': 'text/plain' }).end(id ? 'that terminal is not running' : 'which terminal')
+      console.error(`server: ending terminal ${id} on request`)
       await registry.end(id)
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ended: id }))
     }
@@ -137,8 +134,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const wanted = body ? await canonical(body.cwd?.trim()) : null
       if (!wanted) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such directory to start a session in')
       const id = randomUUID()
-      registry.ensure(id, wanted)
-      return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted }))
+      const child = registry.start(id, wanted)
+      return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted, processId: child.processId }))
     }
 
     if (path !== '/') return void res.writeHead(404).end()
@@ -153,6 +150,16 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     const headers = { etag: client.etag, 'cache-control': 'no-cache' }
     if (req.headers['if-none-match'] === client.etag) return void res.writeHead(304, headers).end()
     res.writeHead(200, { ...headers, 'content-type': 'text/html' }).end(client.page)
+  }
+
+  // A throw in here used to be the end of the supervisor and every PTY under
+  // it; a request that cannot be answered is one 500 instead.
+  const http = createServer((req, res) => {
+    handle(req, res).catch(err => {
+      console.error('server: could not answer a request', err)
+      if (res.headersSent) return void res.end()
+      res.writeHead(500, { 'content-type': 'text/plain' }).end(String(err.message ?? err))
+    })
   })
 
   const wss = new WebSocketServer({
@@ -183,26 +190,18 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     onExit?.({ exitCode: 1, signal: 0 })
   })
 
-  // `?session=<id>&cwd=<path>` names which session to join. There is no
-  // "start a random one" here — a viewer only ever names an id and folder it
-  // learned from `GET /places` or made by `POST /start`.
-  //
-  // The cwd is part of the contract because an id alone no longer is one:
-  // pi files a session per (id, cwd) pair, so the same conversation resumed
-  // elsewhere lists twice, and a running child pins its own folder. Joining
-  // names the folder you meant; if the child already up lives in a different
-  // one, that is refused rather than silently served from somewhere else.
+  // A process ID joins an existing PTY regardless of /new or /resume inside
+  // it. A conversation ID plus cwd opens history only if it is not live.
   wss.on('connection', (ws, req) => {
-    // Cleared before each ping and set by the pong that answers it.
-    alive.add(ws)
-    ws.on('pong', () => alive.add(ws))
-    ws.on('close', () => alive.delete(ws))
-    ws.on('error', () => alive.delete(ws))
+    // Set by the pong that answers each ping and cleared by the ping itself;
+    // a socket that misses a round is terminated by the loop below.
+    ws.answered = true
+    ws.on('pong', () => { ws.answered = true })
 
     const url = new URL(req.url, 'http://internal')
     const id = url.searchParams.get('session')
     const cwd = url.searchParams.get('cwd')
-    ws.sessionId = id
+    const processId = url.searchParams.get('process')
 
     let inner = null
     let buffered = []
@@ -223,41 +222,26 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     ws.on('close', () => { closed = true; registered?.(); inner?.close() })
     ws.on('error', () => { closed = true; registered?.(); inner?.close() })
 
-    readPlaces({ sessionDir }).then(async ({ sessions }) => {
-      // A live child pins its own folder — registry.child(id) is authoritative
-      // over whatever any listing said. Without a cwd in the join, the child's
-      // folder (or the newest row's) is what you get; with one, a mismatch is
-      // refused rather than served from the wrong place.
-      // Which folder this session lives in is decided before any place is
-      // picked: a running child is the authority for its own id, and if the
-      // join names a different folder than the one the child runs in, that is
-      // a refusal (4009) — never a silent attach to the child's folder, which
-      // is what ensure() would otherwise do by keeping the existing child.
-      const live = registry.child(id)
-      if (live && cwd && live.cwd !== cwd) {
-        ws.close(4009, 'that session is running somewhere else')
-        return
+    ;(async () => {
+      let child
+      if (processId) {
+        child = registry.child(processId)
+        if (!child) { ws.close(4004, 'terminal is no longer running'); return }
+        child.joinedAt = Date.now()
+      } else {
+        const { sessions } = await readPlaces({ sessionDir })
+        const place = cwd ? sessions.find(p => p.id === id && p.cwd === cwd) : sessions.find(p => p.id === id)
+        if (!id || !place) { ws.close(4004, 'no such conversation'); return }
+        child = registry.ensure(id, place.cwd)
       }
-      // A started-with-no-transcript session exists only as its live child;
-      // the store will list it once pi writes the file.
-      const place = (cwd
-        ? sessions.find(p => p.id === id && p.cwd === cwd)
-          ?? (live?.cwd === cwd ? { id, cwd } : null)
-        : sessions.find(p => p.id === id && p.cwd === live?.cwd)
-          ?? sessions.find(p => p.id === id)
-          ?? (live ? { id, cwd: live.cwd } : null))
       if (closed) return
-      if (!id || !place) {
-        ws.close(4004, 'no such session')
-        return
-      }
-
-      const child = registry.ensure(id, place.cwd)
-      ws.sessionCwd = child.cwd
-      const sock = await connectChild(child.socketPath)
+      ws.processId = child.processId
+      const sock = await connectChild(child.socketPath, childReadyMs)
       if (closed) { sock.close(); return }
+      // The child states the place on admission, from the identity file it
+      // owns: this relay carries frames, it does not invent them.
       inner = sock
-      registered = registry.watch(id, reason => { sock.close(); ws.close(1001, reason) })
+      registered = registry.watch(child.processId, reason => { sock.close(); ws.close(1001, reason) })
       for (const data of buffered) inner.send(data)
       buffered = null
       // Same rule the session itself applies to its viewers (server/viewer.js):
@@ -281,29 +265,28 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         // whenever the inner socket beats the registry's own exit callback
         // here; the other order, the callback above already closed this ws
         // with the same reason and this close is the ignored one.
-        ws.close(1001, registry.child(id)?.endReason ?? 'pi exited')
+        ws.close(1001, registry.child(child.processId)?.endReason ?? 'pi exited')
       })
       inner.on('error', () => { registered?.(); ws.close(1011, 'lost the session') })
-    }).catch(err => {
-      console.error(`server: could not reach session ${id}`, err)
-      ws.close(1011, 'could not reach the session')
+    })().catch(err => {
+      console.error(`server: could not reach terminal ${processId ?? id}`, err)
+      ws.close(4005, 'could not reach the session')
     })
   })
 
-  // Sockets we have pinged and are waiting on. Terminated on the second
-  // unanswered ping, exactly as one session's server does its viewers.
-  const alive = new WeakSet()
-
+  // Cleared before each ping and set by the pong that answers it, exactly as
+  // one session's server does its viewers (server/index.js): a socket that
+  // has not answered the last ping is terminated, since a phone asleep behind
+  // a dead tunnel is gone for good — and holding its relay open holds memory
+  // on this side too.
   const ping = setInterval(() => {
     for (const ws of wss.clients) {
       if (ws.readyState !== ws.OPEN) continue
-      // Unanswered from last round: a phone asleep behind a dead tunnel is gone
-      // for good, and holding its relay open holds memory on this side too.
-      if (!alive.has(ws)) { ws.terminate(); continue }
-      alive.add(ws)
+      if (!ws.answered) { ws.terminate(); continue }
+      ws.answered = false
       ws.ping()
     }
-  }, 30_000)
+  }, pingMs)
   ping.unref()
 
   http.listen(port, bind, () => onListen?.({ port: http.address().port, bind }))

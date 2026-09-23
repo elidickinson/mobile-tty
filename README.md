@@ -11,7 +11,7 @@ Access your Pi coding agent (with *all* the features) from a mobile device. Uses
 
 ## How it works
 
-One Node process, the supervisor, holds every session -- one pi (or other program) per session id, kept running in the background once you've joined it, whether or not anyone is looking. Each session is a real terminal (a PTY) of its own, and every viewer -- phone, desktop tab, any number of `attach`es -- is a WebSocket client watching one of them. A session's own grid is one size for everyone watching it: the narrowest viewer's, because a real terminal can only be one width.
+One Node process, the supervisor, holds the live terminals -- one pi (or other program) per PTY, kept running in the background once you've joined it, whether or not anyone is looking. Each session is a real terminal (a PTY) of its own, and every viewer -- phone, desktop tab, any number of `attach`es -- is a WebSocket client watching one of them. A session's own grid is one size for everyone watching it: the narrowest viewer's, because a real terminal can only be one width.
 
 Each session also feeds every byte into a second, headless terminal (`server/mirror.js`). That copy does two jobs: a joining viewer is handed a snapshot of it instead of making pi redraw (joining costs one screen, not the transcript), and it survives disconnects -- close the tab, reopen, the screen is back instantly.
 
@@ -43,7 +43,7 @@ export MTTY_PASSWORD=...    # the page becomes a login
 
 and open `http://<your computer's address>:7681` on the phone. From anywhere instead of just home, run it through a Cloudflare tunnel -- see [Reach it from anywhere](#reach-it-from-anywhere). Either way, on the phone: **Add to Home Screen** (standalone mode is worth ~7 rows over Safari).
 
-Optional: install pi extension to print the model at the bottom of the screen (otherwise it is obscured on a narrow phone screen). The extension is only active when pi is run through mobile-tty.
+Optional: install the pi extension to show a `mobile-tty` indicator in pi's footer and print the model at the bottom of the phone screen (otherwise it is obscured at narrow widths). The extension is only active when pi is run through mobile-tty.
 ```
 pi install "$PWD/pi-extensions/mtty-footer.ts"
 ```
@@ -95,7 +95,7 @@ attach: which session?
 
 ## Sessions
 
-The `≡` menu lists every session pi has a transcript for, newest first, a running one marked ●. Tap one to join it -- if it isn't already running, it's started in the background first; if it is, you're looking at it instantly, exactly as it was left. Joining never ends anything else: leave a session and it keeps running, so the phone, a browser tab and any number of `attach`ed terminals can each be looking at a different one, the same as running pi a few times in different terminals -- except the menu is how you get back to any of them from the phone.
+The `≡` menu lists pi's saved conversations, newest first, with a live terminal marked ●. Tap one to join it -- if no terminal has it open, a pi process starts in the background; otherwise you join the existing process, exactly as it was left. Pi's `/new` and `/resume` change the conversation in that terminal without changing which process viewers are attached to. Joining never ends anything else: leave a session and it keeps running, so the phone, a browser tab and any number of `attach`ed terminals can each be looking at a different one, the same as running pi a few times in different terminals -- except the menu is how you get back to any of them from the phone.
 
 `mobile-tty end [fragment|n]` stops a running session without deleting its transcript, and asks for `[y/N]` confirmation unless `--yes` is given; a bare number selects the same running-only row. A running row in the `≡` menu has an **End** control that works the same way: one tap asks, a second ends. Ending the session you are watching closes it and leaves you at the menu -- it is not restarted. Exiting pi also ends that session; `Ctrl-C` in the serving terminal ends every session. Detaching an `attach` terminal with Ctrl-] leaves its session running.
 
@@ -127,7 +127,7 @@ Desktop can join too (same URL, or `./mobile-tty attach [name-or-path]` for a se
 
 - The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME`, `$MTTY_THEME`, `$MTTY_NEW_DIR` (and `$MTTY_PASSWORD`, above).
 - The session menu is built from pi's history under `~/.pi/agent/sessions`; `$PI_CODING_AGENT_SESSION_DIR` points it elsewhere.
-- A folder used for several separate pi conversations offers all of them in the list, not just the newest -- there's no more need to `/resume` inside pi to reach an older one in the same folder.
+- A folder used for several separate pi conversations offers all of them in the list, not just the newest. `/resume` inside pi works too: the live marker follows the conversation while viewers remain attached to that pi process.
 - **The list itself is capped at the 50 most recent sessions**, not everything pi has ever kept a transcript for -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." The list says how many older ones are being left out when there are any. This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
 - Up to 4 sessions run in the background at once by default; joining a fifth ends whichever one was looked at longest ago to make room.
 - Restarting the server ends every session; `./mobile-tty serve pi --session-id whatever` pins one to come back to.
@@ -148,11 +148,11 @@ npm run test:real-pi    # real pi behind the real server, resized mid-draw
 
 ## Architecture
 
-One node process, the supervisor, owns the front door; each session it holds is a *second* node process, one per pi (or other program), spawned over a Unix socket rather than a network port. A viewer -- phone, desktop tab, `attach` -- is a WebSocket client of the supervisor, which is a raw pipe into whichever session's socket the connection names (`/ws?session=<id>`); the wire protocol itself (`server/protocol.js`, four byte-tagged frames) is unchanged by that hop and the supervisor never parses it, it just forwards bytes.
+One node process, the supervisor, owns the front door; each live terminal it holds is a *second* node process, one per pi (or other program), spawned over a Unix socket rather than a network port. A viewer -- phone, desktop tab, `attach` -- connects to a stable PTY ID (`/ws?process=<id>`), while a saved conversation is selected by its pi ID and folder. The supervisor sends the PTY ID on admission, then forwards terminal bytes unchanged.
 
 - **`server/index.js`** is one session: one PTY, N viewers, one screen, for its whole life -- no switching. `server/mirror.js` feeds every output byte into an `@xterm/headless` terminal and serializes it on demand, so a joining viewer is handed a snapshot instead of making pi redraw, and it is what survives a disconnect (`server/auth.js` and `origin.js` guard the door when a session is reached directly; `footer.js` relays the status strip).
 - **`server/supervisor.js`** is the front door: auth, origin-checking and the client HTML build live here once. `GET /places` (`server/places.js` reading pi's own session store) lists every session, running or not; a `/ws` connection is proxied into the right one, spawning it via `server/registry.js` if it is not already up.
-- **`server/registry.js`** spawns and tracks the background sessions -- each is `server/cli.js` re-invoked with `--internal-socket`, so it's exactly `server/index.js` bound to a Unix socket instead of a port. Past a cap (4 by default) the least recently joined session is ended to make room for a new one.
+- **`server/registry.js`** spawns and tracks background PTYs by their own IDs -- each is `server/cli.js` re-invoked with `--internal-socket`, so it's exactly `server/index.js` bound to a Unix socket instead of a port. `pi-extensions/mtty-session.ts` reports which conversation a pi process currently has open. Past a cap (4 by default) the least recently joined session is ended to make room for a new one.
 - **`server/client.js`** builds the client with esbuild *inside the request* -- JS, CSS and the VT core's WASM inlined into one HTML document, hashed into its own ETag. One file is one thing for the phone's cache to get right, and a document built from disk on demand cannot be stale.
 - **`src/app.js`** is the client. `@wterm/dom` -- vendored under `vendor/wterm`, see `docs/plan-ios-input.md` -- renders the terminal into the DOM, so native momentum scroll, selection and find come free and the terminal's own scrollback is the history -- no copy-mode, no alternate screen. The vendored copy is TypeScript imported straight into the bundle, which is why the esbuild build passes `tsconfig.json` and `npm run typecheck` covers it; `@wterm/core`, the WASM VT engine it renders with, stays a pinned npm dependency. Around it: `viewport.js` sizes the grid from `visualViewport` (the keyboard never reflows pi), `ttyd.js` and `transport.js` are the wire, `keys.js` encodes the bar keys.
 

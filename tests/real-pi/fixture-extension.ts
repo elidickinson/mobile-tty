@@ -47,6 +47,13 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	pi.registerCommand("mtty-resume", {
+		description: "Switch to a saved session without opening the picker",
+		async handler(path, ctx) {
+			await ctx.switchSession(path.trim());
+		},
+	});
+
 	pi.registerCommand("mtty-mark", {
 		description: "Render a synchronization marker without an agent turn",
 		async handler(args) {

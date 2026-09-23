@@ -3,6 +3,8 @@
 // list says where you are and what is still running, and that a session with
 // no transcript yet can be begun from the same list.
 import { test, expect, ready } from './helpers.js'
+import { readFile, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 
 test.use({ folders: ['alpha', 'beta'] })
 
@@ -12,6 +14,11 @@ const openMenu = async page => {
 }
 
 const rows = page => page.locator('#places .place')
+
+/** The place the page remembered under `key`, as the app stores it. */
+const storedPlace = (page, key) => page.evaluate(key => {
+  try { return JSON.parse(localStorage.getItem(key)) } catch { return null }
+}, key)
 
 // The cwd the test server starts in: this checkout's root, seeded oldest so a
 // spec that also asks for folders lands on the newest of those instead.
@@ -30,6 +37,105 @@ test('the menu lists every session plus the row that starts one', async ({ page 
   // beta is the newest seed, so a fresh viewer lands on that session.
   await expect(page.locator('#places .place.here .place-name')).toHaveText('beta')
   await expect(page.locator('#place-now')).toContainText('beta')
+  // The header and the row spell the folder the same way, both straight from
+  // the place frame rather than formatted twice.
+  const rowPath = await page.locator('#places .place.here .place-path-text').textContent()
+  await expect(page.locator('#place-now')).toHaveText(rowPath.split(' · ')[0])
+})
+
+test('two folders sharing a conversation id remain separate running terminals', async ({ page, store }) => {
+  const file = name => join(store.sessionDir, `-${store.at(name).replaceAll('/', '-')}-`, 'a.jsonl')
+  const alpha = JSON.parse(await readFile(file('alpha'), 'utf8'))
+  const beta = JSON.parse(await readFile(file('beta'), 'utf8'))
+  await writeFile(file('beta'), `${JSON.stringify({ ...beta, id: alpha.id })}\n`)
+
+  await ready(page)
+  await openMenu(page)
+  const alphaRow = rows(page).filter({ hasText: 'alpha' })
+  await alphaRow.click()
+  await expect(page.locator('#screen')).toContainText('alpha')
+  await openMenu(page)
+  await expect(page.locator('#places .place.here')).toHaveCount(1)
+  await expect(alphaRow).toHaveClass(/here/)
+  await page.locator('#places .place-row > .place').filter({ hasText: 'beta' }).click()
+  await expect(page.locator('#screen')).toContainText('beta')
+  await openMenu(page)
+  await expect(page.locator('#places .place.here')).toHaveCount(1)
+  await expect(page.locator('#places .place-row.has-end')).toHaveCount(2)
+})
+
+test('a remembered place whose terminal has gone finds its conversation again', async ({ page }) => {
+  await ready(page)
+  const alpha = await page.evaluate(async () => (await (await fetch('/places')).json()).sessions.find(s => s.label === 'alpha'))
+  // What the phone last saw is a process that has since ended. The conversation
+  // it was showing is what it should land on, not simply the newest row.
+  await page.evaluate(place => localStorage.setItem('mtty-place', JSON.stringify({ ...place, processId: 'ended-process' })), alpha)
+  await page.reload()
+  await expect(page.locator('#screen')).toContainText('alpha')
+  await openMenu(page)
+  await expect(page.locator('#places .place.here .place-name')).toHaveText('alpha')
+})
+
+test('a rejected selection keeps the last admitted terminal', async ({ page, store }) => {
+  await ready(page)
+  await openMenu(page)
+  const current = await page.locator('#places .place.here .place-name').textContent()
+  const other = current === 'alpha' ? 'beta' : 'alpha'
+  const oldTitle = await page.title()
+  await unlink(join(store.sessionDir, `-${store.at(other).replaceAll('/', '-')}-`, 'a.jsonl'))
+  await page.locator('#places .place-row > .place').filter({ hasText: other }).click()
+  await expect(page.locator('#menu')).toBeVisible()
+  await expect(page.locator('#menu-notice')).toContainText('no such conversation')
+  await expect.poll(() => page.title()).toBe(oldTitle)
+  await expect(page.locator('#screen')).toContainText(current)
+})
+
+test('a terminal that went away while the phone was off the air ends like any other', async ({ page, context }) => {
+  // A first viewer starts the session, so this page lands on a running row and
+  // dials it by process ID. Joining by conversation instead would simply
+  // spawn a new terminal, which is not the path under test.
+  const first = await context.newPage()
+  await ready(first)
+  const beta = await first.evaluate(async () =>
+    (await (await fetch('/places')).json()).sessions.find(s => s.label === 'beta' && s.running))
+  await first.close()
+
+  await ready(page)
+  await expect.poll(() => page.evaluate(() => window.mtty.conn.url)).toContain(`process=${beta.processId}`)
+
+  // The socket goes down and the process dies before the client's next
+  // attempt: the refusal a phone meets coming back after a while, rather than
+  // a selection going wrong.
+  await page.evaluate(async processId => {
+    window.mtty.conn.ws.close()
+    await fetch(`/terminal?process=${encodeURIComponent(processId)}`, { method: 'DELETE' })
+  }, beta.processId)
+
+  await expect(page.locator('#menu')).toBeVisible({ timeout: 8_000 })
+  await expect(page.locator('#menu-notice')).toContainText('no longer running')
+  // The header is cleared rather than left naming a terminal nothing is
+  // connected to, and the conversation is what the next visit lands on.
+  await expect.poll(() => page.title()).toBe('mobile-tty')
+  await expect.poll(() => storedPlace(page, 'mtty-place')).toMatchObject({ id: beta.id, cwd: beta.cwd })
+})
+
+test('a late startup lookup cannot replace an explicit selection', async ({ page }) => {
+  let release
+  const held = new Promise(done => { release = done })
+  let requests = 0
+  await page.route('**/places', async route => {
+    if (++requests === 1) await held
+    await route.continue()
+  })
+  await page.goto('/')
+  await openMenu(page)
+  await expect(rows(page).filter({ hasText: 'alpha' })).toBeVisible()
+  await rows(page).filter({ hasText: 'alpha' }).click()
+  await expect(page.locator('#screen')).toContainText('alpha')
+  release()
+  await expect.poll(() => page.title()).toContain('/alpha')
+  await openMenu(page)
+  await expect(page.locator('#places .place.here .place-name')).toHaveText('alpha')
 })
 
 test('a row shows when the session was last active', async ({ page, store }) => {
@@ -198,6 +304,7 @@ test('another viewer ending a session tells the bystander why it left', async ({
     return sessions.find(session => session.id === id)?.running ?? false
   }, endedId)
   await expect.poll(isRunning, { timeout: 8_000 }).toBe(false)
+  await expect(page.locator('#places .place.previous')).toContainText('↩ beta')
   await expect.poll(() => page.evaluate(() => window.mtty.conn.started)).toBe(false)
   for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(100)
@@ -218,18 +325,16 @@ test('the previous-session pin returns to the last joined session', async ({ pag
   await rows(page).filter({ hasText: '+ New session…' }).click()
   await page.locator('#places .place.dir').filter({ hasText: 'beta' }).click()
   await expect.poll(() => page.title()).toContain('/beta')
-  await expect.poll(() => page.evaluate(() => {
-    const [id] = localStorage.getItem('mtty-place').split(' ')
-    return id
-  })).not.toBe(first.id)
+  await expect.poll(() => storedPlace(page, 'mtty-prev'))
+    .toMatchObject({ id: first.id, cwd: first.cwd, processId: first.processId })
 
   await openMenu(page)
   const pin = page.locator('#places .place.previous')
   await expect(pin).toContainText('↩ beta')
   await pin.click()
   await expect(page.locator('#menu')).toBeHidden()
-  await expect.poll(() => page.evaluate(() => localStorage.getItem('mtty-place')))
-    .toBe(`${first.id} ${first.cwd}`)
+  await expect.poll(() => storedPlace(page, 'mtty-place'))
+    .toMatchObject({ id: first.id, cwd: first.cwd, processId: first.processId })
   await expect.poll(() => page.title()).toContain('/beta')
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
 })

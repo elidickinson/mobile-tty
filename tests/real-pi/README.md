@@ -7,6 +7,7 @@ Run with `npm run test:real-pi`. Uses port 0 and never touches 7681; teardown ki
 ## The suite
 
 - `resize-reconnect.test.js` -- history order and count through an 80-to-50 shrink; an attached viewer equals a viewer admitted after the resize, both before and after pi's redraw.
+- `session-switch.test.js` -- `/new` and resume change the conversation inside one PTY; another pi cannot resume a conversation already open in a different PTY.
 
 A browser-level counterpart (Playwright through `src/app.js`: reload, reconnect, compare history digests) was planned to replace the overlapping checks in `tests/smoke/real-pi.spec.js`; not written yet.
 

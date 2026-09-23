@@ -11,6 +11,7 @@ export const OUTPUT = 0x30       // '0'
 export const SET_TITLE = 0x31    // '1'
 export const SET_SIZE = 0x33     // '3'  the grid the PTY actually has
 export const FOOTER = 0x34       // '4'  the status-strip line, verbatim from the mtty-footer extension
+export const PROCESS = 0x35      // '5'  this PTY's place: on admission, and again at every conversation change
 
 // The session list and switching between sessions are no longer frames on
 // this socket: a server instance now serves exactly one session for its

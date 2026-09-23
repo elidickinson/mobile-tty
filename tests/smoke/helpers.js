@@ -4,9 +4,10 @@
 // pick, so tests never collide on a port still in TIME_WAIT.
 import { test as base, expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 export { expect }
 
@@ -17,16 +18,28 @@ export const test = base.extend({
     // model aliases, and swallows the first keystroke while doing so. The test
     // machine's aliases must never leak into a fixture run.
     const agentDir = mkdtempSync(join(tmpdir(), 'mobile-tty-smoke-'))
+    // And a scratch session store holding one session in the folder this suite
+    // runs from. pi itself is launched --no-session, so without this the picker
+    // lands on the newest row of the host's own store, wherever that happens
+    // to be -- which is how this suite used to depend on the machine it ran on.
+    const sessionDir = mkdtempSync(join(tmpdir(), 'mobile-tty-smoke-sessions-'))
+    writeFileSync(join(sessionDir, `${randomUUID()}.jsonl`),
+      `${JSON.stringify({ type: 'session', version: 3, id: randomUUID(), cwd: process.cwd() })}\n`)
     const server = spawn('node', [
       'server/cli.js', '--port', '0',
       '--', 'pi',
       '-ne', '--offline', '--no-session', '--no-builtin-tools', '--no-skills',
       '--no-prompt-templates', '--no-themes', '--no-context-files', '--no-approve',
-      '--tui-mode', 'regular', '-e', 'tests/real-pi/fixture-extension.ts',
-      '-e', 'pi-extensions/mtty-footer.ts',
+      '--tui-mode', 'regular', '-e', resolve('tests/real-pi/fixture-extension.ts'),
+      '-e', resolve('pi-extensions/mtty-footer.ts'),
     ], {
       stdio: ['ignore', 'pipe', 'inherit'],
-      env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_OFFLINE: '1' },
+      env: {
+        ...process.env,
+        PI_CODING_AGENT_DIR: agentDir,
+        PI_CODING_AGENT_SESSION_DIR: sessionDir,
+        PI_OFFLINE: '1',
+      },
     })
     try {
       const port = await new Promise((resolve, reject) => {
@@ -40,6 +53,7 @@ export const test = base.extend({
     } finally {
       server.kill('SIGKILL')
       rmSync(agentDir, { recursive: true, force: true })
+      rmSync(sessionDir, { recursive: true, force: true })
     }
   },
 })

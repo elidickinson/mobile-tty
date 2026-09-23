@@ -29,9 +29,9 @@ const storeFor = async entries => {
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
 
-const start = async ({ sessionDir, cap = 4, socketDir, command = fakePi, args = [] }) => {
+const start = async ({ sessionDir, cap = 4, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath }) => {
   const supervisor = createSupervisor({
-    port: 0, bind: '127.0.0.1', command, args, cliPath, sessionDir, cap,
+    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, pingMs, childReadyMs,
     socketDir: socketDir ?? await mkdtemp(pathJoin(tmpdir(), 'mtty-sock-')),
   })
   await new Promise(r => supervisor.http.on('listening', r))
@@ -40,8 +40,9 @@ const start = async ({ sessionDir, cap = 4, socketDir, command = fakePi, args = 
 }
 
 /** Join a session, collecting its screen output as text. */
-const join = (base, id, { columns = 50, rows = 20, cwd } = {}) => {
-  const ws = new WebSocket(`${base}?session=${id}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ''}`, ['tty'])
+const join = (base, id, { columns = 50, rows = 20, cwd, processId } = {}) => {
+  const query = processId ? `process=${processId}` : `session=${id}${cwd ? `&cwd=${encodeURIComponent(cwd)}` : ''}`
+  const ws = new WebSocket(`${base}?${query}`, ['tty'])
   let output = ''
   const opened = new Promise(resolve => ws.on('open', () => {
     ws.send(JSON.stringify({ AuthToken: '', columns, rows }))
@@ -51,7 +52,7 @@ const join = (base, id, { columns = 50, rows = 20, cwd } = {}) => {
   const closed = closeDetails.then(({ code }) => code)
   ws.on('message', d => { if (Buffer.from(d)[0] === 0x30) output += Buffer.from(d).subarray(1).toString() })
   return {
-    opened, closed, closeDetails,
+    opened, closed, closeDetails, ws,
     get output() { return output },
     send: text => ws.send(Buffer.concat([Buffer.from([0x30]), Buffer.from(text)])),
     close: () => ws.close(),
@@ -90,6 +91,23 @@ test('joining an id the server never listed is refused', async () => {
   try {
     const code = await viewer.closed
     assert.equal(code, 4004)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a session that cannot be reached is refused with its own code', async () => {
+  const store = await storeFor([{ name: 'known', id: 'a' }])
+  // A child that dies before it can listen: the join waits for it, gives up,
+  // and says so distinctly from a conversation that does not exist.
+  const cli = pathJoin(store.root, 'not-a-cli.js')
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cli, childReadyMs: 300 })
+  const viewer = join(base, 'a')
+  try {
+    const { code, reason } = await viewer.closeDetails
+    assert.equal(code, 4005)
+    assert.match(reason, /could not reach/)
   } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
@@ -193,21 +211,23 @@ test('DELETE ends one running session and closes its viewer', async () => {
       return sessions.find(s => s.id === 'a')?.viewers === 1
     }, 'the viewer to appear in the list')
 
-    const refused = await fetch(`${page}/session?id=a`, {
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    const processId = sessions.find(s => s.id === 'a').processId
+    const refused = await fetch(`${page}/terminal?process=${processId}`, {
       method: 'DELETE', headers: { origin: 'https://attacker.example' },
     })
     assert.equal(refused.status, 403)
     assert.equal(registryRunning(supervisor), 1)
 
-    const ended = await fetch(`${page}/session?id=a`, { method: 'DELETE' })
+    const ended = await fetch(`${page}/terminal?process=${processId}`, { method: 'DELETE' })
     assert.equal(ended.status, 200)
-    assert.deepEqual(await ended.json(), { ended: 'a' })
+    assert.deepEqual(await ended.json(), { ended: processId })
     await until(() => registryRunning(supervisor) === 0, 'the child to exit')
     assert.equal(await viewer.closed, 1001, 'the connected viewer sees the session end')
     assert.equal((await viewer.closeDetails).reason, 'ended by a terminal')
 
-    assert.equal((await fetch(`${page}/session?id=a`, { method: 'DELETE' })).status, 404)
-    assert.equal((await fetch(`${page}/session`, { method: 'DELETE' })).status, 404)
+    assert.equal((await fetch(`${page}/terminal?process=${processId}`, { method: 'DELETE' })).status, 404)
+    assert.equal((await fetch(`${page}/terminal`, { method: 'DELETE' })).status, 404)
   } finally {
     viewer.close()
     await supervisor.close()
@@ -297,23 +317,20 @@ test('evicting a session pulls the relay out from under its viewer at once', asy
     await rm(store.root, { recursive: true, force: true })
   }
 })
-test('joining a running session in the wrong folder is refused, not redirected', async () => {
-  // Two rows share the id in the store (resumed under two folders); one child
-  // is up in the first. A join naming the second folder must get a clear
-  // refusal — ensure() would happily keep the running child and attach the
-  // viewer to the wrong folder with no word.
+test('two folders with the same conversation id get separate PTYs', async () => {
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'a' }])
-  const { supervisor, base } = await start({ sessionDir: store.sessionDir })
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
   try {
-    const running = join(base, 'a', { cwd: store.at('one') })
-    await running.opened
-
-    const stranger = join(base, 'a', { cwd: store.at('two') })
-    const code = await stranger.closed
-    assert.equal(code, 4009, 'a mismatched join is refused')
-    assert.equal(registryRunning(supervisor), 1, 'the refusal spawned nothing')
-    // The original viewer is untouched by it.
-    await until(() => running.output.length > 0, 'the running session still streams')
+    const first = join(base, 'a', { cwd: store.at('one') })
+    await first.opened
+    const second = join(base, 'a', { cwd: store.at('two') })
+    await second.opened
+    await until(() => first.output.includes('one') && second.output.includes('two'), 'each folder to serve its own screen')
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    assert.equal(new Set(sessions.map(s => s.processId)).size, 2)
+    assert.equal(registryRunning(supervisor), 2)
+    first.close()
+    second.close()
   } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
@@ -335,10 +352,10 @@ test('/start begins a session in any directory that exists', async () => {
     // spawns: `mobile-tty new` runs it in any project folder the user is in.
     const ok = await post({ cwd: fresh })
     assert.equal(ok.status, 200)
-    const { id, cwd } = await ok.json()
+    const { id, cwd, processId } = await ok.json()
     assert.match(id, /^[0-9a-f-]{36}$/)
     assert.equal(cwd, await realpath(fresh))
-    const viewer = join(base, id, { cwd })
+    const viewer = join(base, id, { processId })
     await viewer.opened
     await until(() => viewer.output.length > 0, 'the started session serves its screen')
     viewer.close()
@@ -403,6 +420,34 @@ test('rejoining a still-running session at a full cap evicts nothing', async () 
     assert.deepEqual(running, { a: true, b: true })
     again.close()
   } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a viewer that stops answering pings is dropped, not counted forever', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  // Ping every 200ms: the round that notices the dead socket is fast enough
+  // to wait for in a test.
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, pingMs: 200 })
+  const cli = join(base, 'a', { columns: 40, rows: 12 })
+  const web = join(base, 'a', { columns: 100, rows: 30 })
+  try {
+    await Promise.all([cli.opened, web.opened])
+    await until(() => cli.output.includes('40x12'), 'the narrow grid, while both viewers count')
+
+    // The web viewer is killed mid-tunnel: the TCP socket stays up and nothing
+    // ever answers the pings. Its close frame never arrives either. Before the
+    // fix, the ping loop never noticed and /places counted it forever.
+    web.ws._socket.pause()
+    await until(async () => {
+      const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+      return sessions.find(s => s.id === 'a')?.viewers === 1
+    }, 'the dead viewer to stop counting')
+    await until(() => cli.output.includes('40x12'), 'the remaining viewer keeps its screen')
+  } finally {
+    cli.close()
+    web.ws.terminate()
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
   }

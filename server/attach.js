@@ -5,11 +5,12 @@
 // that a browser gets for free is act like a terminal: raw mode restored
 // whatever happens, SIGWINCH forwarded, and Ctrl-C and Ctrl-Z passed through to
 // the far side rather than acted on here.
-import { readFile, writeFile } from 'node:fs/promises'
+import { writeFileSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
-import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
+import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE, PROCESS } from './protocol.js'
 import { ask, indexArgument, matching, pickFrom } from './picker.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
@@ -25,6 +26,11 @@ const DETACH_KITTY = /\x1b\[93(:[0-9]+)?;\d+u/
 // as the session ending.
 const DETACHED = 3
 
+// The supervisor's code for the session itself being over — pi exited, or
+// someone ended it. Every other way a socket can close here is this terminal
+// failing to stay attached, and reports itself as a failure.
+const SESSION_ENDED = 1001
+
 // Same chord in either encoding.
 export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chunk)
 
@@ -32,18 +38,18 @@ export const isDetach = chunk => chunk.includes(DETACH) || DETACH_KITTY.test(chu
 // once on the way in. Long enough to read, short enough not to be in the way.
 const BANNER = '\r\n\r\n    [mobile-tty] You can press Ctrl-] to disconnect this terminal when done\r\n\r\n'
 const BANNER_MS = 4000
-const LAST_SESSION = join(homedir(), '.mtty-last-session')
+const LAST_SESSION = join(homedir(), '.mtty-last-terminal')
 
 const frame = (cmd, text) => Buffer.concat([Buffer.from([cmd]), Buffer.from(text)])
 
+// A place this terminal wrote on its way out, or null. Unreadable, truncated,
+// or from a build that stored something else: all of them mean the same thing
+// here, which is that there is no previous session to reattach to.
 async function readLastSession() {
-  try { return (await readFile(LAST_SESSION, 'utf8')).trim() || null } catch (err) {
-    if (err.code === 'ENOENT') return null
-    throw err
-  }
+  try { return JSON.parse(await readFile(LAST_SESSION, 'utf8')) } catch { return null }
 }
 
-const rememberSession = id => writeFile(LAST_SESSION, `${id}\n`, { mode: 0o600 })
+const rememberSession = place => writeFileSync(LAST_SESSION, JSON.stringify(place), { mode: 0o600 })
 
 // The same login the browser does, rather than a second way in: post the
 // password, keep the cookie, put it on the handshake.
@@ -73,7 +79,7 @@ async function login(url, password) {
  * list this shows is exactly the one the phone's menu would.
  */
 export async function resolveSession(url, { session, match, headers }) {
-  if (session) return session
+  if (typeof session === 'string') return { processId: session }
 
   const listUrl = new URL(url)
   listUrl.protocol = listUrl.protocol === 'wss:' ? 'https:' : 'http:'
@@ -86,6 +92,12 @@ export async function resolveSession(url, { session, match, headers }) {
     return null
   }
   const { sessions } = await res.json()
+  if (session) {
+    const previous = sessions.find(s => s.processId === session.processId)
+      ?? sessions.find(s => s.id === session.id && s.cwd === session.cwd)
+    if (!previous) console.error('attach: previous conversation is no longer listed')
+    return previous ?? null
+  }
   if (sessions.length === 0) {
     console.error('attach: no sessions to join yet')
     return null
@@ -98,11 +110,11 @@ export async function resolveSession(url, { session, match, headers }) {
       console.error(`attach: no running session numbered ${match}`)
       return null
     }
-    return running[index - 1].id
+    return running[index - 1]
   }
 
   const candidates = match ? matching(sessions, match) : sessions
-  if (candidates.length === 1) return candidates[0].id
+  if (candidates.length === 1) return candidates[0]
   if (candidates.length === 0) {
     console.error(`attach: nothing matches ${JSON.stringify(match)}`)
     return null
@@ -110,7 +122,7 @@ export async function resolveSession(url, { session, match, headers }) {
 
   console.error('attach: which session?')
   const choice = await pickFrom(candidates, { ask, out: console.error })
-  return choice?.id ?? null
+  return choice ?? null
 }
 
 export async function attach({ url, session, match, previous = false }) {
@@ -132,10 +144,14 @@ export async function attach({ url, session, match, previous = false }) {
   const password = process.env.MTTY_PASSWORD
   const headers = password ? { cookie: await login(url, password) } : undefined
 
-  const id = await resolveSession(url, { session, match, headers })
-  if (!id) process.exit(1)
+  let place = await resolveSession(url, { session, match, headers })
+  if (!place) process.exit(1)
   const target = new URL(url)
-  target.searchParams.set('session', id)
+  if (place.processId) target.searchParams.set('process', place.processId)
+  else {
+    target.searchParams.set('session', place.id)
+    target.searchParams.set('cwd', place.cwd)
+  }
 
   const ws = new WebSocket(target, ['tty'], { headers })
   let restored = false
@@ -168,8 +184,7 @@ export async function attach({ url, session, match, previous = false }) {
 
   const size = () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 })
 
-  ws.on('open', async () => {
-    await rememberSession(id)
+  ws.on('open', () => {
     stdin.setRawMode(true)
     stdin.resume()
 
@@ -212,6 +227,10 @@ export async function attach({ url, session, match, previous = false }) {
         stdout.once('drain', () => ws._socket.resume())
       }
     }
+    else if (buf[0] === PROCESS) {
+      place = { ...place, ...JSON.parse(buf.subarray(1).toString()) }
+      rememberSession(place)
+    }
     else if (buf[0] === SET_TITLE) stdout.write(`\x1b]0;${buf.subarray(1)}\x07`)
     else if (buf[0] === SET_SIZE) {
       // A real terminal cannot be resized from in here, so when a narrower
@@ -227,6 +246,7 @@ export async function attach({ url, session, match, previous = false }) {
   })
 
   ws.on('close', (code, reason) => leave(
-    code === 1013 ? 'disconnected: this terminal fell too far behind' : `disconnected (${code}) ${reason}`))
+    code === 1013 ? 'disconnected: this terminal fell too far behind' : `disconnected (${code}) ${reason}`,
+    code === SESSION_ENDED ? 0 : 1))
   ws.on('error', err => leave(`attach: ${err.message}`, 1))
 }

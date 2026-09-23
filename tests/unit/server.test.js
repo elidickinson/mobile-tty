@@ -71,6 +71,41 @@ test('a nonsense handshake closes that socket and nothing else', async () => {
   } finally { await server.close() }
 })
 
+test('a viewer is told which conversation it landed on before the screen', async () => {
+  const dir = await mkdtemp(pathJoin(tmpdir(), 'mobile-tty-identity-'))
+  const identityPath = pathJoin(dir, 'mtty-1.identity')
+  const cwd = pathJoin(dir, 'project')
+  await writeFile(identityPath, JSON.stringify({ id: 'conversation', cwd, at: 7 }))
+  const saved = { identity: process.env.MTTY_IDENTITY, process: process.env.MTTY_PROCESS_ID }
+  process.env.MTTY_IDENTITY = identityPath
+  process.env.MTTY_PROCESS_ID = 'process-1'
+  const { server, url } = await start()
+  const frames = []
+  const ws = new WebSocket(url, ['tty'])
+  try {
+    await new Promise((done, fail) => { ws.once('open', done); ws.once('error', fail) })
+    ws.on('message', d => frames.push(Buffer.from(d)))
+    ws.send(JSON.stringify({ AuthToken: '', columns: 50, rows: 20 }))
+    for (let i = 0; i < 100 && !frames.some(f => [0x30, 0x33].includes(f[0])); i++) await settle(20)
+
+    // The child is the only sender, and the place is the first frame that
+    // draws: after it the screen is already being committed to a conversation.
+    const drew = frames.filter(f => [0x30, 0x33, 0x35].includes(f[0]))
+    assert.equal(drew[0]?.[0], 0x35)
+    assert.deepEqual(JSON.parse(drew[0].subarray(1).toString()), {
+      id: 'conversation', cwd, at: 7, processId: 'process-1', name: 'project', path: cwd,
+    })
+  } finally {
+    ws.close()
+    await server.close()
+    if (saved.identity === undefined) delete process.env.MTTY_IDENTITY
+    else process.env.MTTY_IDENTITY = saved.identity
+    if (saved.process === undefined) delete process.env.MTTY_PROCESS_ID
+    else process.env.MTTY_PROCESS_ID = saved.process
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('shutting down does not wait on a viewer that has stopped answering', async () => {
   const { server, url } = await start()
   const ws = new WebSocket(url, ['tty'])

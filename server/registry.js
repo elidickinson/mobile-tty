@@ -1,43 +1,26 @@
-// The live children: one pi per session id, kept running once joined.
-//
-// A join spawns a child on demand (see server/cli.js's --internal-socket mode,
-// which is exactly server/index.js's single-session server bound to a Unix
-// socket instead of a port) and leaves it running after the viewer goes away —
-// that is the whole point. A cap keeps them from accumulating without bound:
-// past it, the child nobody has looked at longest is ended to make room for
-// the one just asked for.
-/**
- * The live children: one pi per session id, kept running once joined.
- *
- * A join spawns a child on demand (see server/cli.js's --internal-socket mode,
- * which is exactly server/index.js's single-session server bound to a Unix
- * socket instead of a port) and leaves it running after the viewer goes away —
- * that is the whole point. A cap keeps them from accumulating without bound:
- * past it, the child nobody has looked at longest is ended to make room for
- * the one just asked for. Children listen on Unix sockets in the directory
- * given by `socketDir` — meant to be a fresh private directory per supervisor
- * (see cli.js), not the shared tmpdir, where any local user could squat on a
- * predictable socket name and answer joins meant for us.
- */
+// Live PTYs have their own stable IDs. Pi's conversation ID is only the
+// initial transcript to open; /new and /resume can change it in the same PTY.
 import { fork } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const KILL_GRACE_MS = 2_000
-
-// pi's own flag for resuming by id, and the test for whether naming one means
-// anything: `bash --session-id x` is an invalid option, not a session.
-const SESSION_FLAG = '--session-id'
+const SESSION_EXTENSION = fileURLToPath(new URL('../pi-extensions/mtty-session.ts', import.meta.url))
 const takesSessionId = command => basename(command) === 'pi'
 
 export class Registry {
-  #children = new Map() // id -> { proc, socketPath, cwd, joinedAt, gone, sockets }
+  #children = new Map() // processId -> child
   #cliPath
   #program
   #programArgs
   #socketDir
   #cap
   #theme
+  #nextSocket = 0
+  #evicting = new Set()
 
   constructor({ cliPath, program, programArgs = [], socketDir, cap = 4, theme = 'dark' }) {
     this.#cliPath = cliPath
@@ -48,19 +31,22 @@ export class Registry {
     this.#theme = theme
   }
 
-  has(id) { return this.#children.has(id) }
+  child(processId) { return this.#children.get(processId) }
 
-  /** The running child itself, or undefined — its cwd pins where a session lives. */
-  child(id) { return this.#children.get(id) }
+  /** The conversation this PTY currently has open. */
+  current(child) {
+    return JSON.parse(readFileSync(child.identityPath, 'utf8'))
+  }
 
-  /**
-   * Call back when `id`'s child is gone, however it went — eviction, wedge,
-   * plain exit. The returned function unregisters. A connected viewer registers
-   * here so the supervisor can cut its browser side the moment the session is
-   * over rather than waiting on a dead socket to be noticed.
-   */
-  watch(id, fn) {
-    const child = this.#children.get(id)
+  owner(sessionId, cwd) {
+    return [...this.#children.values()].find(child => {
+      const current = this.current(child)
+      return current.id === sessionId && current.cwd === cwd
+    })
+  }
+
+  watch(processId, fn) {
+    const child = this.child(processId)
     if (!child) { fn('pi exited'); return () => {} }
     child.sockets.push(fn)
     return () => {
@@ -69,70 +55,69 @@ export class Registry {
     }
   }
 
-  /** ids of every session currently running, oldest-joined first. */
   running() {
-    return [...this.#children.entries()].sort((a, b) => a[1].joinedAt - b[1].joinedAt).map(([id]) => id)
+    return [...this.#children.values()].sort((a, b) => a.joinedAt - b.joinedAt)
   }
 
-  /**
-   * The running child for `id`, spawning one in `cwd` if none is up yet.
-   *
-   * `cwd` is only used on the way up: an already-running child keeps whatever
-   * folder it started in, and touching it here just marks it as the most
-   * recently looked-at one for eviction purposes.
-   */
-  ensure(id, cwd) {
-    const existing = this.#children.get(id)
+  /** Join a current conversation if it is live, otherwise start another PTY. */
+  ensure(sessionId, cwd) {
+    const existing = this.owner(sessionId, cwd)
     if (existing) {
       existing.joinedAt = Date.now()
       return existing
     }
+    return this.start(sessionId, cwd)
+  }
 
-    this.#evictIfFull(id)
-
-    // The socket name is only a short prefix of the id, not the whole of it:
-    // a Unix socket path must fit in 104 bytes on macOS, and tmpdir + a uuid
-    // does not. The directory is this supervisor's alone (0700, fresh per
-    // run), so a short name cannot collide with anything but a sibling here.
-    const socketPath = join(this.#socketDir, `mtty-${id.slice(0, 8)}.sock`)
-    // The session id goes to pi alone: it is pi's own flag, and appending it to
-    // any other program's command line breaks it (bash exits on the unknown
-    // option before printing a prompt). The child learns its id from the socket
-    // path either way.
+  start(sessionId, cwd) {
+    this.#evictIfFull()
+    const processId = randomUUID()
+    // Short, unique names within this supervisor's private directory. Neither
+    // transport nor runtime identity is derived from a Pi conversation ID.
+    const socketPath = join(this.#socketDir, `mtty-${++this.#nextSocket}.sock`)
+    const identityPath = join(this.#socketDir, `mtty-${this.#nextSocket}.identity`)
+    writeFileSync(identityPath, JSON.stringify({ id: sessionId, cwd, at: Date.now() }))
     const program = this.#program
-    const runtimeArgs = takesSessionId(program) ? [...this.#programArgs, SESSION_FLAG, id] : [...this.#programArgs]
-    // fork(), not spawn(): it wires up an IPC channel for free, and
-    // --internal-socket's own handler listens for that channel's 'disconnect'
-    // to end itself if this process ever goes away without the chance to ask
-    // nicely first (a crash, or someone signalling the wrong pid) — otherwise
-    // an orphaned child has nothing tying its life to ours at all. `stdio`
-    // spells out 'ignore' for the three inherited streams explicitly, since
-    // fork()'s own default is to pipe them back here rather than drop them.
+    const runtimeArgs = takesSessionId(program)
+      ? [...this.#programArgs, '-e', SESSION_EXTENSION, '--session-id', sessionId]
+      : [...this.#programArgs]
     const proc = fork(this.#cliPath, [
       '--internal-socket', socketPath, '--internal-cwd', cwd,
       '--theme', this.#theme, '--', program, ...runtimeArgs,
-    ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
-    // A child that cannot even start must not wedge the process that spawned
-    // it — see the unhandled 'error' rule node-pty and node's own child_process
-    // both apply here.
-    proc.on('error', err => console.error(`server: session ${id} could not start`, err))
-
-    const child = { proc, socketPath, cwd, joinedAt: Date.now(), sockets: [] }
-    child.gone = new Promise(resolve => {
-      proc.on('exit', () => {
-        if (this.#children.get(id) === child) this.#children.delete(id)
-        rm(socketPath, { force: true }).catch(() => {})
-        for (const fn of child.sockets.splice(0)) fn(child.endReason ?? 'pi exited')
-        resolve()
-      })
+    ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: { ...process.env, MTTY_IDENTITY: identityPath, MTTY_PROCESS_ID: processId } })
+    const child = { processId, sessionId, proc, socketPath, identityPath, cwd, joinedAt: Date.now(), sockets: [] }
+    this.#children.set(processId, child)
+    let settled = false
+    let resolveGone
+    child.gone = new Promise(resolve => { resolveGone = resolve })
+    // 'error' and 'exit' can both arrive for one child, and the rest of the
+    // supervisor reads this map as "which PTYs exist": settling twice would
+    // drop an entry (and its identity file) out from under a live child.
+    const settle = () => {
+      if (settled) return
+      settled = true
+      if (this.child(processId) === child) this.#children.delete(processId)
+      for (const fn of child.sockets.splice(0)) fn(child.endReason ?? 'pi exited')
+      // The files go before `gone` resolves: a stale identity file still in
+      // the directory is one the next /resume would read as a live owner.
+      Promise.all([rm(socketPath, { force: true }), rm(identityPath, { force: true }), rm(`${identityPath}.tmp`, { force: true })])
+        .catch(err => console.error(`server: could not clean up terminal ${processId}`, err))
+        .finally(resolveGone)
+    }
+    proc.on('exit', settle)
+    proc.on('error', err => {
+      // No pid means the fork itself failed and there is no exit to come.
+      // Anything else is a live child reporting a signal or IPC problem, which
+      // is not a reason to forget that it exists.
+      if (proc.pid) return void console.error(`server: terminal ${processId} reported an error`, err)
+      console.error(`server: terminal ${processId} could not start`, err)
+      settle()
     })
-    this.#children.set(id, child)
     return child
   }
 
-  /** Ask a session to end, and wait until it actually has. */
-  async end(id, reason = 'ended by a terminal') {
-    const child = this.#children.get(id)
+  async end(processId, reason = 'ended by a terminal') {
+    const child = this.child(processId)
     if (!child) return
     child.endReason = reason
     child.proc.kill('SIGTERM')
@@ -143,17 +128,15 @@ export class Registry {
   }
 
   async endAll() {
-    await Promise.all(this.running().map(id => this.end(id, 'server stopped')))
+    await Promise.all(this.running().map(child => this.end(child.processId, 'server stopped')))
   }
 
-  #evictIfFull(spawning) {
-    if (this.#children.size < this.#cap) return
-    // The child being spawned right now is never the eviction candidate, even
-    // though it is not in the map yet: rejoining a session joined long ago is
-    // exactly the case an LRU exists to serve, not to refuse.
-    const [oldest] = this.running().filter(id => id !== spawning)
-    // Not awaited: the new session can start spawning immediately, and the
-    // evicted one's socket file is cleaned up by its own exit handler above.
-    this.end(oldest, 'evicted to make room').catch(err => console.error(`server: could not end session ${oldest}`, err))
+  #evictIfFull() {
+    if (this.#children.size - this.#evicting.size < this.#cap) return
+    const oldest = this.running().find(child => !this.#evicting.has(child.processId))
+    this.#evicting.add(oldest.processId)
+    this.end(oldest.processId, 'evicted to make room')
+      .catch(err => console.error(`server: could not end terminal ${oldest.processId}`, err))
+      .finally(() => this.#evicting.delete(oldest.processId))
   }
 }
