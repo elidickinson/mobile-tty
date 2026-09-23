@@ -32,14 +32,25 @@ const number = (name, fallback) => {
   return n
 }
 
+// A theme is a palette the client is built with; an unknown name would silently
+// serve the default, which is a typo that looks like a broken flag.
+const theme = arg('--theme') ?? 'dark'
+if (!['dark', 'light'].includes(theme)) {
+  console.error(`${theme} is not a theme (dark or light)`)
+  process.exit(2)
+}
+
 const internalSocket = arg('--internal-socket')
 
 if (internalSocket) {
+  // An internal child inherits the supervisor's theme, which decides the palette
+  // its own (rarely served) login page is built with.
   const cwd = arg('--internal-cwd')
   const [command, ...args] = rest()
   const server = createTerminalServer({
     socketPath: internalSocket,
     cwd,
+    theme,
     command,
     args,
     // A session this holds ending — pi exiting on its own — is the session
@@ -59,7 +70,7 @@ if (internalSocket) {
 } else {
   const [command, ...args] = rest()
   if (!command) {
-    console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME -- <command...>')
+    console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME --theme NAME -- <command...>')
     process.exit(2)
   }
 
@@ -67,6 +78,7 @@ if (internalSocket) {
     port: number('--port', 7681),
     bind: arg('--bind') ?? '127.0.0.1',
     hostname: arg('--hostname'),
+    theme,
     // Never a flag: a command line is readable by every process on the machine.
     password: process.env.MTTY_PASSWORD,
     command,

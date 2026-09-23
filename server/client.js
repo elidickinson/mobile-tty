@@ -15,12 +15,21 @@ import { fileURLToPath } from 'node:url'
 const root = new URL('../', import.meta.url)
 const at = path => fileURLToPath(new URL(path, root))
 
+// The client knows nothing about which theme was baked in beyond what the
+// served HTML carries as a class on <html>. buildClient returns the class so
+// callers can log/inspect it; the page itself is already themed.
+const THEMES = {
+  dark: { className: 'theme-dark', color: '#0b0b0d' },
+  light: { className: 'theme-light', color: '#fafafa' },
+}
+
 /**
  * Returns the page and its ETag, which is a hash of everything that went into
  * it. Identical source gives an identical tag, so an unchanged client answers
  * a launch with a 304 instead of 74 KB.
  */
-export async function buildClient() {
+export async function buildClient({ theme = 'dark' } = {}) {
+  const themes = THEMES[theme] ?? THEMES.dark
   const bundled = await build({
     entryPoints: [at('src/app.js')],
     absWorkingDir: at('.'),
@@ -38,14 +47,18 @@ export async function buildClient() {
     readFile(at('src/style.css'), 'utf8'),
   ])
 
-  // Hashed before the stamp goes in, since the stamp is part of the page.
+  // Hashed before the stamp goes in, since the stamp is part of the page. The
+  // theme is hashed too: a light page must never be served for a dark request
+  // off the same ETag.
   const hash = createHash('sha256')
-  for (const part of [js, html, wtermCss, css]) hash.update(part)
+  for (const part of [js, html, wtermCss, css, theme]) hash.update(part)
   const id = hash.digest('base64url').slice(0, 12)
 
   const page = html
     .replace('%BUILD_ID%', id)
+    .replace('%THEME_CLASS%', themes.className)
+    .replace('%THEME_COLOR%', themes.color)
     .replace('/*%CSS%*/', () => `${wtermCss}\n${css}`)
     .replace('/*%JS%*/', () => js)
-  return { page, etag: `"${id}"` }
+  return { page, etag: `"${id}"`, theme: themes.className }
 }

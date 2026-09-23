@@ -51,7 +51,7 @@ const DEFAULT_SCROLLBACK = 1000
  * desktop history ever matters, the answer is a deeper snapshot for `attach`
  * alone.
  */
-export function createTerminalServer({ port, bind, socketPath, hostname, password, command, args = [], cwd = process.cwd(), scrollback = DEFAULT_SCROLLBACK, footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
+export function createTerminalServer({ port, bind, socketPath, hostname, password, command, args = [], cwd = process.cwd(), scrollback = DEFAULT_SCROLLBACK, theme = 'dark', footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
   const auth = new Auth(password)
 
   // A program named by path means that program, not whatever happens to sit at
@@ -220,7 +220,7 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
 
     let client
     try {
-      client = await buildClient()
+      client = await buildClient({ theme })
     } catch (err) {
       return void res.writeHead(500, { 'content-type': 'text/plain' }).end(String(err.message ?? err))
     }

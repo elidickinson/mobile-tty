@@ -523,6 +523,7 @@ function dropHeld() {
 function deliver(bytes) {
   if (snapshotPending) {
     snapshotPending = false
+    const share = readingShareNow()
     // Everything being held is already inside the snapshot: the server writes
     // its mirror the same bytes it sends us, and serializes it at a boundary
     // behind them. Replaying the hold on top would apply it twice -- history
@@ -530,10 +531,10 @@ function deliver(bytes) {
     // -- pi's redraw on a resize -- follows as ordinary output, and the tail
     // window below writes it through.
     dropHeld()
-    snapshotTail = performance.now() + SNAPSHOT_TAIL_MS
+    snapshotTail = share === null ? 0 : performance.now() + SNAPSHOT_TAIL_MS
     term.write(bytes)
     applyPendingGrid()
-    pinReader()
+    if (share !== null) pinReader()
     // The snapshot reset the core, so the rendered window's keys no longer
     // match the fresh core's counts and the next render redraws it wholesale.
     return
@@ -845,6 +846,35 @@ function buildMenu() {
   fit.addEventListener('click', () => fitGrid())
   presets.appendChild(fit)
 
+  // The theme lives with the grid controls: it is a look choice, and sharing
+  // the row keeps the sheet short enough to stay on screen over a terminal.
+  const THEMES = {
+    dark: { className: 'theme-dark', color: '#0b0b0d' },
+    light: { className: 'theme-light', color: '#fafafa' },
+  }
+  for (const name of Object.keys(THEMES)) {
+    const b = document.createElement('button')
+    b.textContent = name[0].toUpperCase() + name.slice(1)
+    b.dataset.theme = name
+    presets.appendChild(b)
+  }
+  const named = () => document.documentElement.classList.contains(THEMES.light.className) ? 'light' : 'dark'
+  const applyTheme = (name, persist) => {
+    const t = THEMES[name] ?? THEMES.dark
+    document.documentElement.classList.toggle(THEMES.dark.className, name === 'dark')
+    document.documentElement.classList.toggle(THEMES.light.className, name === 'light')
+    document.querySelector('meta[name=theme-color]').setAttribute('content', t.color)
+    for (const b of document.querySelectorAll('[data-theme]')) b.classList.toggle('sticky', b.dataset.theme === name)
+    if (persist) { try { localStorage.setItem('mtty-theme', name) } catch {} }
+  }
+  // A saved preference wins only when it names a theme this server will serve
+  // on reload; otherwise the page default (from --theme) stands. An unknown
+  // stored value must not strip both classes (an html with no theme is a
+  // transparent page), so it resolves to dark and is not re-saved.
+  let saved = null
+  try { saved = localStorage.getItem('mtty-theme') } catch {}
+  applyTheme(saved && THEMES[saved] ? saved : named())
+
   const acts = {
     close: () => { menu.hidden = true },
     'zoom-in': () => setScale(state.scale * ZOOM_STEP),
@@ -880,6 +910,15 @@ function buildMenu() {
     reload: () => location.replace(`${location.pathname}?b=${Date.now().toString(36)}`),
   }
   menu.addEventListener('click', e => {
+    const theme = e.target.closest('[data-theme]')
+    if (theme) {
+      // Sticky next visit without a restart (which would kill pi). The choice
+      // is per-device and per-browser; it is not the server's flag -- theme is
+      // a suggestion, and this is the last word.
+      applyTheme(theme.dataset.theme)
+      try { localStorage.setItem('mtty-theme', theme.dataset.theme) } catch {}
+      return
+    }
     const target = e.target.closest('[data-act]')
     if (target) acts[target.dataset.act]()
     else if (e.target === menu) menu.hidden = true
