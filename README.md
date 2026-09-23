@@ -54,19 +54,22 @@ pi install "$PWD/pi-extensions/mtty-footer.ts"
 ./mobile-tty                         # list sessions (the default command)
 ./mobile-tty sessions                # list sessions with their connection counts
 ./mobile-tty end my-project          # stop a running session after confirmation
+./mobile-tty end 2                   # end the second running session
 ./mobile-tty end --yes my-project    # skip the confirmation
 ./mobile-tty serve bash              # a program other than pi
 ./mobile-tty serve pi --model whatever # arguments after the program go to it
 ./mobile-tty attach                  # join a session from a second terminal (Ctrl-] detaches)
 ./mobile-tty attach my-project       # attach straight to a session by name, path or id fragment
+./mobile-tty attach 2                # join the second running session
 ./mobile-tty serve --port 1234       # --bind and --hostname too
 ./mobile-tty serve --tunnel          # run the tunnel alongside; needs setup first (below)
 ```
 
-`attach [fragment]` matches case-insensitively against everything that
+`attach [fragment|n]` matches case-insensitively against everything that
 identifies a session: the **basename of the folder** the pi conversation ran
 in (`my-project` for `~/work/my-project`), the **path** of that folder
-(`work/my-pro` works), or the **session id**. A fragment that matches several
+(`work/my-pro` works), or the **session id**. A bare number selects that row
+from `mobile-tty sessions`. A fragment that matches several
 sessions -- including every older transcript of the same folder, which are
 all named alike -- brings up a numbered pick list instead of guessing
 (● marks the ones already running). Terminal pickers show ten rows at a time;
@@ -93,7 +96,7 @@ attach: which session?
 
 The `≡` menu lists every session pi has a transcript for, newest first, a running one marked ●. Tap one to join it -- if it isn't already running, it's started in the background first; if it is, you're looking at it instantly, exactly as it was left. Joining never ends anything else: leave a session and it keeps running, so the phone, a browser tab and any number of `attach`ed terminals can each be looking at a different one, the same as running pi a few times in different terminals -- except the menu is how you get back to any of them from the phone.
 
-`mobile-tty end [fragment]` stops a running session without deleting its transcript, and asks for `[y/N]` confirmation unless `--yes` is given. A running row in the `≡` menu has an **End** control that works the same way: one tap asks, a second ends. Ending the session you are watching closes it and leaves you at the menu -- it is not restarted. Exiting pi also ends that session; `Ctrl-C` in the serving terminal ends every session. Detaching an `attach` terminal with Ctrl-] leaves its session running.
+`mobile-tty end [fragment|n]` stops a running session without deleting its transcript, and asks for `[y/N]` confirmation unless `--yes` is given; a bare number selects the same running-only row. A running row in the `≡` menu has an **End** control that works the same way: one tap asks, a second ends. Ending the session you are watching closes it and leaves you at the menu -- it is not restarted. Exiting pi also ends that session; `Ctrl-C` in the serving terminal ends every session. Detaching an `attach` terminal with Ctrl-] leaves its session running.
 
 The list is labeled: each row's title is pi's own name for that session (written once it has read your first exchange), falling back to what you first asked there, and each shows how long ago it was last active. A session with no conversation in it yet is labeled by its folder. `mobile-tty sessions` lists the server's sessions with a connected-viewer count; the `attach` and `end` pickers show the same labels and times, and a fragment matches labels too -- two conversations in one folder are told apart by those, or by their ids.
 

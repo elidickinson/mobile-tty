@@ -32,6 +32,14 @@ export const matching = (sessions, fragment) =>
     ? sessions.filter(s => `${s.label || ''} ${s.name} ${s.path} ${s.id}`.toLowerCase().includes(fragment.toLowerCase()))
     : []
 
+/** Bare decimal digit strings are indices; other numeric literals are invalid,
+ *  and nonnumeric text remains a fragment. Zero is parsed for caller validation. */
+export const indexArgument = arg => {
+  if (typeof arg !== 'string') return null
+  if (/^\d+$/.test(arg)) return Number(arg)
+  return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(arg) ? Number.NaN : null
+}
+
 /**
  * The numbered prompt, ten rows at a time. Numbers stay global across pages,
  * so `7` means the same thing however many `more`s came before it. Answers:

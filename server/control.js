@@ -3,7 +3,7 @@
 // not answering is an answer, not an error: say how to start one and leave.
 
 import { createInterface } from 'node:readline/promises'
-import { matching, pickFrom, placeRow } from './picker.js'
+import { indexArgument, matching, pickFrom, placeRow } from './picker.js'
 
 const baseUrl = url => {
   const target = new URL(url)
@@ -59,7 +59,7 @@ export async function sessions(url) {
   live.forEach((s, i) => console.log(placeRow(s, i + 1)))
 }
 
-/** `mobile-tty end [fragment]` — end a running session for good, confirmed once. */
+/** `mobile-tty end [fragment|n]` — end a running session for good, confirmed once. */
 export async function end(url, { match, yes = false }) {
   const result = await reach(url)
   if (!result) return noServer(url)
@@ -70,7 +70,14 @@ export async function end(url, { match, yes = false }) {
   if (running.length === 0) return console.error('nothing is running')
 
   let target
-  if (match) {
+  const index = indexArgument(match)
+  if (index !== null) {
+    if (!Number.isSafeInteger(index) || index < 1 || index > running.length) {
+      console.error(`no running session numbered ${match}`)
+      return
+    }
+    target = running[index - 1]
+  } else if (match) {
     const hits = matching(running, match)
     if (hits.length === 1) target = hits[0]
     else if (hits.length === 0) {

@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { WebSocket } from 'ws'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
-import { matching, pickFrom } from './picker.js'
+import { indexArgument, matching, pickFrom } from './picker.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
 // and not Ctrl-C or Ctrl-Z, which are the whole point of passing through.
@@ -72,8 +72,8 @@ const ask = async question => {
 }
 
 /**
- * Which session to join: the one named outright, the one a substring of
- * `match` picks out uniquely, or, failing either, a plain numbered prompt.
+ * Which session to join: a running row selected by a bare number, the one a
+ * substring of `match` picks out uniquely, or, failing either, a numbered prompt.
  *
  * Reads `GET /places` rather than a fixed id, since sessions come and go — the
  * list this shows is exactly the one the phone's menu would.
@@ -95,6 +95,16 @@ async function resolveSession(url, { session, match, headers }) {
   if (sessions.length === 0) {
     console.error('attach: no sessions to join yet')
     return null
+  }
+
+  const index = indexArgument(match)
+  if (index !== null) {
+    const running = sessions.filter(s => s.running)
+    if (!Number.isSafeInteger(index) || index < 1 || index > running.length) {
+      console.error(`attach: no running session numbered ${match}`)
+      return null
+    }
+    return running[index - 1].id
   }
 
   const candidates = match ? matching(sessions, match) : sessions
@@ -187,7 +197,7 @@ export async function attach({ url, session, match, previous = false }) {
       if (isDetach(chunk)) leave(
         'detached; the session is still running\r\n' +
         '  rejoin it   mobile-tty attach\r\n' +
-        '  end it      mobile-tty end [fragment]\r\n' +
+        '  end it      mobile-tty end [fragment|n]\r\n' +
         '  end all     Ctrl-C in the terminal serving it', DETACHED)
       // The key that dismisses the banner is spent doing so: the session has
       // not been shown yet, so it was not typed at what is about to appear.

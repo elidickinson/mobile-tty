@@ -34,9 +34,9 @@ usage() {
 Usage: mobile-tty [command] [options] [program...]
 
   sessions       list sessions on the server (default)
-  end [fragment] end a running session
+  end [fragment|n] end a running session
   serve          serve the terminal
-  attach         attach this terminal to a running server
+  attach [fragment|n] attach this terminal to a running server
   attach -       reattach to the last session attached from this machine
   tunnel         run the Cloudflare tunnel on its own
   setup <host>   create the tunnel, DNS and Access login for a hostname
@@ -64,10 +64,10 @@ number of `attach`ed terminals can each be looking at a different one at the
 same time, the way running pi a few times in different terminals would be.
 Whichever session a viewer is looking at, the narrowest viewer of that one
 decides its size, because this is meant to be read on a phone.
-`attach [name-or-path]` joins a server that is already running; it does not
+`attach [name-or-path|n]` joins a server that is already running; it does not
 start one, and prompts if more than one session matches. `attach -` rejoins the
 last session attached from this machine. `sessions` lists the
-running ones, and `end [fragment]` stops a running session after confirmation;
+running ones, and `end [fragment|n]` stops a running session after confirmation;
 `--yes` skips that confirmation. Exiting the program in a session also ends it,
 and Ctrl-C in the terminal serving all of them ends every session at once.
 
@@ -205,7 +205,7 @@ case "$cmd" in
     exec env node -e "import('./server/control.js').then(m => m.sessions('ws://$host:$port'))"
     ;;
   end)
-    [[ $# -eq 0 ]] || usage_error "end takes at most one session fragment"
+    [[ $# -eq 0 ]] || usage_error "end takes at most one session fragment or number"
     exec env MTTY_END_MATCH="$end_match" MTTY_YES="$yes" node -e \
       "import('./server/control.js').then(m => m.end('ws://$host:$port', { match: process.env.MTTY_END_MATCH || undefined, yes: process.env.MTTY_YES === '1' }))"
     ;;
@@ -215,7 +215,7 @@ case "$cmd" in
       exec env node -e \
         "import('./server/attach.js').then(m => m.attach({ url: 'ws://$host:$port/ws', previous: true }))"
     fi
-    [[ $# -le 1 ]] || usage_error "attach takes at most one session name"
+    [[ $# -le 1 ]] || usage_error "attach takes at most one session fragment or number"
     # An optional name or path fragment picks which of the server's sessions to
     # join, the same way the phone's own menu lists them; bare `attach` prompts
     # when more than one matches. Passed through the environment, not baked

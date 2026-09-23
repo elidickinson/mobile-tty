@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { matching, pickFrom, placeRow } from '../../server/picker.js'
+import { indexArgument, matching, pickFrom, placeRow } from '../../server/picker.js'
 
 const places = [
   { id: 'alpha-id', name: 'alpha', label: 'Alpha conversation', path: '/work/alpha' },
@@ -16,6 +16,25 @@ test('placeRow numbers and marks a session, pads its label, and shows viewers an
   assert.ok(row.startsWith('  4) ● '))
   assert.equal(path - title, 62, 'the label is padded to 60 columns plus two spaces')
   assert.ok(row.endsWith('/work/alpha  2 watching  2m'))
+})
+
+test('indexArgument recognizes bare decimal integers, not fragments', () => {
+  assert.equal(indexArgument('2'), 2)
+  assert.equal(indexArgument('0'), 0)
+  assert.equal(indexArgument('issue-42'), null)
+  assert.equal(indexArgument('v2'), null)
+  assert.ok(Number.isNaN(indexArgument('1.5')))
+  assert.ok(Number.isNaN(indexArgument('-1')))
+})
+
+test('a numeric index uses the running-only session order', () => {
+  const sessions = [
+    { ...places[0], running: false },
+    { ...places[1], running: true },
+    { id: 'gamma-id', name: 'gamma', path: '/work/gamma', running: true },
+  ]
+  const running = sessions.filter(s => s.running)
+  assert.equal(running[indexArgument('2') - 1].id, 'gamma-id')
 })
 
 test('matching is case-insensitive across labels, names, paths and ids; empty matches nothing', () => {
