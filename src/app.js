@@ -857,6 +857,8 @@ async function endSession(sess) {
   } catch {
     $('menu-state').textContent = 'End failed'
   } finally {
+    // Settled either way: a failed end must not read as "this viewer ended
+    // it" if someone else gets the session killed for real a moment later.
     endingIds.delete(sess.id)
     updateEndControl(sess.id)
     refreshPlaces().catch(() => {})

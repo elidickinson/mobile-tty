@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { indexArgument, matching, pickFrom, placeRow } from '../../server/picker.js'
-
+import { resolveSession } from '../../server/attach.js'
 const places = [
   { id: 'alpha-id', name: 'alpha', label: 'Alpha conversation', path: '/work/alpha' },
   { id: 'beta-id', name: 'beta', label: 'Beta conversation', path: '/work/beta' },
@@ -35,6 +35,26 @@ test('a numeric index uses the running-only session order', () => {
   ]
   const running = sessions.filter(s => s.running)
   assert.equal(running[indexArgument('2') - 1].id, 'gamma-id')
+})
+
+test('resolveSession picks a running row by number, refusing others', async () => {
+  const sessions = [
+    { id: 'stopped-id', name: 'stopped', path: '/work/stopped', running: false },
+    { id: 'live-id', name: 'live', path: '/work/live', running: true },
+  ]
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async () => ({ ok: true, json: async () => ({ sessions }) })
+  const errors = []
+  const realError = console.error
+  console.error = line => errors.push(line)
+  try {
+    assert.equal(await resolveSession('ws://x/ws', { match: '1' }), 'live-id', '1 means the first running session, not the first row')
+    assert.deepEqual(await resolveSession('ws://x/ws', { match: '2' }), null, 'the index is over running rows only')
+    assert.deepEqual(errors, ['attach: no running session numbered 2'])
+  } finally {
+    globalThis.fetch = realFetch
+    console.error = realError
+  }
 })
 
 test('matching is case-insensitive across labels, names, paths and ids; empty matches nothing', () => {

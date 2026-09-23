@@ -78,7 +78,7 @@ const ask = async question => {
  * Reads `GET /places` rather than a fixed id, since sessions come and go — the
  * list this shows is exactly the one the phone's menu would.
  */
-async function resolveSession(url, { session, match, headers }) {
+export async function resolveSession(url, { session, match, headers }) {
   if (session) return session
 
   const listUrl = new URL(url)

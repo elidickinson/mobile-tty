@@ -102,8 +102,11 @@ export async function end(url, { match, yes = false }) {
   const res = await fetch(new URL(`/session?id=${encodeURIComponent(target.id)}`, baseUrl(url)), {
     method: 'DELETE',
     headers,
-  })
-  console.error(res.ok ? `ended: ${target.label || target.name}` : `could not end it (HTTP ${res.status})`)
+  }).catch(() => null)
+  if (!res) return console.error('could not reach the server')
+  console.error(res.ok ? `ended: ${target.label || target.name}`
+    : res.status === 404 ? 'it was already gone (nothing was running under that name)'
+    : `could not end it (HTTP ${res.status})`)
 }
 
 const noServer = url => console.error(`server not started; run mobile-tty serve (connects to ${url})`)
