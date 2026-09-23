@@ -9,6 +9,7 @@
 // Nothing outside the supervisor's own process tree is meant to pass it.
 import { createTerminalServer } from './index.js'
 import { createSupervisor } from './supervisor.js'
+import { existsSync } from 'node:fs'
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -40,6 +41,15 @@ const number = (name, fallback) => {
 const theme = arg('--theme') ?? 'dark'
 if (!['dark', 'light'].includes(theme)) {
   console.error(`${theme} is not a theme (dark or light)`)
+  process.exit(2)
+}
+
+// Where "new session" starts when the phone asks for one: here, unless this
+// run was pointed somewhere else. Resolved to a real path now, so a typo is
+// refused at startup rather than on the phone's first tap.
+const newDir = arg('--new-dir')
+if (newDir && !existsSync(newDir)) {
+  console.error(`no such directory: ${newDir}`)
   process.exit(2)
 }
 
@@ -85,6 +95,7 @@ if (internalSocket) {
     bind: arg('--bind') ?? '127.0.0.1',
     hostname: arg('--hostname'),
     theme,
+    newDir,
     // Never a flag: a command line is readable by every process on the machine.
     password: process.env.MTTY_PASSWORD,
     command,

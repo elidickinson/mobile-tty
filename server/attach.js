@@ -52,8 +52,17 @@ async function login(url, password) {
   return cookie.split(';')[0]
 }
 
-const ask = async question => {
-  const rl = createInterface({ input: process.stdin, output: process.stdout })
+/** `3m`, `2h`, `5d` — the same reading of last-active the menu shows. */
+const ago = at => {
+  if (!at) return ''
+  const s = Math.max(0, (Date.now() - at) / 1000)
+  if (s < 60) return 'now'
+  if (s < 3600) return `${s / 60 | 0}m`
+  if (s < 86400) return `${s / 3600 | 0}h`
+  return `${s / 86400 | 0}d`
+}
+
+const ask = async question => {  const rl = createInterface({ input: process.stdin, output: process.stdout })
   try { return await rl.question(question) } finally { rl.close() }
 }
 
@@ -84,7 +93,7 @@ async function resolveSession(url, { session, match, headers }) {
   }
 
   const candidates = match
-    ? sessions.filter(s => `${s.name} ${s.path} ${s.id}`.toLowerCase().includes(match.toLowerCase()))
+    ? sessions.filter(s => `${s.label || ''} ${s.name} ${s.path} ${s.id}`.toLowerCase().includes(match.toLowerCase()))
     : sessions
   if (candidates.length === 1) return candidates[0].id
   if (candidates.length === 0) {
@@ -93,7 +102,8 @@ async function resolveSession(url, { session, match, headers }) {
   }
 
   console.error('attach: which session?')
-  candidates.forEach((s, i) => console.error(`  ${i + 1}) ${s.running ? '●' : ' '} ${s.name}  ${s.path}`))
+  candidates.forEach((s, i) => console.error(
+    `  ${i + 1}) ${s.running ? '●' : ' '} ${(s.label || s.name).slice(0, 60).padEnd(60)}  ${s.path}  ${ago(s.at)}`))
   const pick = Number(await ask('> '))
   const choice = Number.isInteger(pick) ? candidates[pick - 1] : undefined
   if (!choice) console.error('attach: no such number on the list')

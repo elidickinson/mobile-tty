@@ -91,9 +91,14 @@ if (new URLSearchParams(location.search).has('debug')) {
 // is never read back by anything else and can come back empty without harm.
 let currentId = null
 const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
-const sessionUrl = id => `${wsBase}?session=${encodeURIComponent(id)}`
+const sessionUrl = (id, cwd) =>
+  `${wsBase}?session=${encodeURIComponent(id)}` +
+  (cwd ? `&cwd=${encodeURIComponent(cwd)}` : '')
 
 const fetchPlaces = () => fetch('/places').then(r => r.json())
+
+/** The last path segment, for chooser rows and titles. */
+const basename = path => path.slice(path.lastIndexOf('/') + 1)
 
 /** The session to land on when the page first loads: last time's, if it is
  *  still around, otherwise whatever `/places` says is most recent. */
@@ -662,8 +667,23 @@ function openMenu() {
  * acts the moment it is tapped rather than asking for a second confirming tap
  * the way ending a program used to need.
  */
-function showPlaces({ sessions, total }) {
+function showPlaces({ sessions, total, here }) {
   places.textContent = ''
+
+  // The one way to be somewhere with no transcript yet. Pinned where a thumb
+  // already is; the chooser it opens draws from the same list the rows below
+  // come from, so it never offers a folder this server cannot vouch for.
+  const start = document.createElement('button')
+  start.className = 'place start'
+  const startName = document.createElement('span')
+  startName.className = 'place-name'
+  startName.textContent = '+ New session…'
+  const startPath = document.createElement('span')
+  startPath.className = 'place-path'
+  startPath.textContent = basename(here)
+  start.append(startName, startPath)
+  start.addEventListener('click', () => showDirs({ sessions, here }))
+  places.append(start)
 
   for (const sess of sessions) {
     const row = document.createElement('button')
@@ -672,16 +692,17 @@ function showPlaces({ sessions, total }) {
 
     const name = document.createElement('span')
     name.className = 'place-name'
-    name.textContent = sess.name
+    // pi names a session once it has read the first exchange; before that,
+    // the label is whatever was first asked, so the row is never bare.
+    name.textContent = sess.label
     const path = document.createElement('span')
     path.className = 'place-path'
-    path.textContent = sess.path
+    path.textContent = `${sess.path} · ${ago(sess.at)}`
 
     row.append(name, path)
     row.addEventListener('click', () => joinSession(sess))
     places.append(row)
   }
-
   // The server caps the list rather than reading and sending every session
   // pi has ever kept a transcript for, which on a working machine can be a
   // lot -- said plainly here rather than the list just quietly stopping.
@@ -693,13 +714,70 @@ function showPlaces({ sessions, total }) {
   }
 }
 
+/** `3m`, `2h`, `5d`: file mtime is when the session was last active. */
+const ago = at => {
+  if (!at) return ''
+  const s = Math.max(0, (Date.now() - at) / 1000)
+  if (s < 60) return 'now'
+  if (s < 3600) return `${s / 60 | 0}m`
+  if (s < 86400) return `${s / 3600 | 0}h`
+  return `${s / 86400 | 0}d`
+}
+
+/**
+ * Where a brand-new session can go. The server's own folder comes first and
+ * is the one chosen by just tapping through; everything else is a folder this
+ * server already runs pi in, because that is the whole list it has.
+ */
+function showDirs({ sessions, here }) {
+  places.textContent = ''
+
+  const back = document.createElement('button')
+  back.className = 'place dir'
+  back.textContent = '‹ Back'
+  back.addEventListener('click', () => fetchPlaces().then(showPlaces).catch(() => {}))
+  places.append(back)
+
+  const dirs = [...new Set([here, ...sessions.map(s => s.cwd)])]
+  for (const dir of dirs) {
+    const row = document.createElement('button')
+    row.className = 'place dir'
+    const name = document.createElement('span')
+    name.className = 'place-name'
+    name.textContent = basename(dir)
+    const path = document.createElement('span')
+    path.className = 'place-path'
+    path.textContent = dir === here ? 'this folder' : ''
+    row.append(name, path)
+    row.addEventListener('click', () => startSession(dir))
+    places.append(row)
+  }
+}
+
+/** Ask the server to begin a fresh session in `dir`, then join it. */
+async function startSession(dir) {
+  const res = await fetch('/start', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ cwd: dir }),
+  })
+  if (!res.ok) return
+  const { id, cwd } = await res.json()
+  await joinSession({ id, cwd, name: basename(dir), path: dir })
+  // The list is stale the moment this worked: a row now exists for a session
+  // with no transcript.
+  fetchPlaces().then(showPlaces).catch(() => {})
+}
+
 /** Point the connection at another session's socket and reconnect to it. */
 function joinSession(sess) {
   currentId = sess.id
   localStorage.setItem('mtty-session', sess.id)
   placeNow.textContent = sess.path
   document.title = `${sess.name} — ${sess.path}`
-  conn.join(sessionUrl(sess.id))
+  // The cwd rides along: it is half of what names a place, and the server
+  // needs it to refuse steering an id into the wrong folder.
+  conn.join(sessionUrl(sess.id, sess.cwd))
   menu.hidden = true
 }
 
