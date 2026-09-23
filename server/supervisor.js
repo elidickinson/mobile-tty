@@ -122,6 +122,10 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     let inner = null
     let buffered = []
     let closed = false
+    // Registered with the registry once the relay is live, so an eviction or
+    // death of the child can cut this browser side down here rather than
+    // waiting for the socket teardown to be noticed below.
+    let registered = null
 
     // Attached before anything here awaits: the client sends its handshake the
     // instant its socket opens, and a listener added even one microtask late
@@ -131,8 +135,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       if (inner && inner.readyState === inner.OPEN) inner.send(data)
       else buffered?.push(data)
     })
-    ws.on('close', () => { closed = true; inner?.close() })
-    ws.on('error', () => { closed = true; inner?.close() })
+    ws.on('close', () => { closed = true; registered?.(); inner?.close() })
+    ws.on('error', () => { closed = true; registered?.(); inner?.close() })
 
     readPlaces({ sessionDir }).then(async ({ sessions }) => {
       const place = sessions.find(p => p.id === id)
@@ -146,6 +150,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const sock = await connectChild(child.socketPath)
       if (closed) { sock.close(); return }
       inner = sock
+      registered = registry.watch(id, () => { sock.close(); ws.close(1001, 'session ended') })
       for (const data of buffered) inner.send(data)
       buffered = null
       // Same rule the session itself applies to its viewers (server/viewer.js):
@@ -163,8 +168,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         }
         ws.send(data)
       })
-      inner.on('close', () => ws.close(1001, 'session ended'))
-      inner.on('error', () => ws.close(1011, 'lost the session'))
+      inner.on('close', () => { registered?.(); ws.close(1001, 'session ended') })
+      inner.on('error', () => { registered?.(); ws.close(1011, 'lost the session') })
     }).catch(err => {
       console.error(`server: could not reach session ${id}`, err)
       ws.close(1011, 'could not reach the session')
@@ -194,8 +199,12 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     registry,
     async close() {
       clearInterval(ping)
-      await registry.endAll()
+      // Children first, then the browser sockets: ending a session makes its
+      // viewers reconnect, so the sockets have to be gone before the sessions
+      // they would be reconnecting to start dying — otherwise a phone attached
+      // at Ctrl-C hammers a server that is already closing.
       for (const ws of wss.clients) ws.terminate()
+      await registry.endAll()
       wss.close()
       await new Promise(res => http.close(res))
     },

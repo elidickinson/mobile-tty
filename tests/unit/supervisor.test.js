@@ -191,6 +191,33 @@ test('past the cap, the least recently joined session is ended to make room', as
     await rm(store.root, { recursive: true, force: true })
   }
 })
+
+test('evicting a session pulls the relay out from under its viewer at once', async () => {
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cap: 1 })
+  const a = join(base, 'a')
+  try {
+    await a.opened
+    await until(() => a.output.includes('one'), 'the first session up')
+
+    // The next join evicts `a` while this viewer is still attached to it.
+    // Whatever the child does on the way down — a graceful close, or a socket
+    // that simply stops speaking — the browser side must hear an ending within
+    // a beat, not hang on a dead pipe until the OS gives up on it.
+    const closing = a.closed
+    const b = join(base, 'b')
+    await b.opened
+    const why = await Promise.race([
+      closing.then(code => code),
+      new Promise((_, bad) => setTimeout(() => bad(new Error('viewer never told')), 8_000)),
+    ])
+    assert.equal(why === null || why === 1001, true, `expected a clean end, got ${why}`)
+    b.close()
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
 test('a program that is not pi gets no pi-only flags on its command line', async () => {
   // bash exits on an unknown `--session-id` option, so if the flag reached it,
   // the child would be gone before its socket answered and this join would

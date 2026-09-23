@@ -28,6 +28,11 @@ const HEADER_BYTES = 4096
 // to answer "what are the 50 most recent" -- see readPlaces below.
 const DEFAULT_LIMIT = 50
 
+// A session id becomes a file name (`mtty-<id>.sock`) and part of a join URL;
+// anything outside this shape would be either a path-traversal attempt or a
+// name no client could have learned from this list in the first place.
+const ID_SHAPE = /^[A-Za-z0-9_-]+$/
+
 /** `~/projects/x` rather than `/Users/you/projects/x`: phone-width matters. */
 export const shorten = path => {
   const home = homedir()
@@ -102,7 +107,7 @@ const listFolder = async dir => {
  *  folders that no longer exist, same as before, just discovered later now. */
 const resolve = async ({ file, at }) => {
   const header = await readHeader(file)
-  if (!header) return null
+  if (!header || !ID_SHAPE.test(header.id)) return null
   const cwd = await canonical(header.cwd)
   if (!cwd) return null
   return { id: header.id, cwd, name: basename(cwd), path: shorten(cwd), at }

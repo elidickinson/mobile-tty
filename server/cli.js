@@ -9,6 +9,9 @@
 // Nothing outside the supervisor's own process tree is meant to pass it.
 import { createTerminalServer } from './index.js'
 import { createSupervisor } from './supervisor.js'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const arg = name => {
   const i = process.argv.indexOf(name)
@@ -41,6 +44,9 @@ if (!['dark', 'light'].includes(theme)) {
 }
 
 const internalSocket = arg('--internal-socket')
+
+/** A 0700 directory under the system temp dir, for this run's session sockets. */
+const mkdirPrivate = () => mkdtemp(join(tmpdir(), 'mtty-sock-'))
 
 if (internalSocket) {
   // An internal child inherits the supervisor's theme, which decides the palette
@@ -84,6 +90,10 @@ if (internalSocket) {
     command,
     args,
     cliPath: new URL(import.meta.url).pathname,
+    // A fresh private directory per supervisor: session sockets must not land
+    // in the shared tmpdir under a guessable name, where any local user could
+    // squat on one and answer a join in our place.
+    socketDir: await mkdirPrivate(),
     onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}` +
       (process.env.MTTY_PASSWORD ? ' (password required)' : '')),
     onExit: ({ exitCode }) => supervisor.close().then(() => process.exit(exitCode ?? 0)),

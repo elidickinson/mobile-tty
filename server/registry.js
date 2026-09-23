@@ -6,6 +6,19 @@
 // that is the whole point. A cap keeps them from accumulating without bound:
 // past it, the child nobody has looked at longest is ended to make room for
 // the one just asked for.
+/**
+ * The live children: one pi per session id, kept running once joined.
+ *
+ * A join spawns a child on demand (see server/cli.js's --internal-socket mode,
+ * which is exactly server/index.js's single-session server bound to a Unix
+ * socket instead of a port) and leaves it running after the viewer goes away —
+ * that is the whole point. A cap keeps them from accumulating without bound:
+ * past it, the child nobody has looked at longest is ended to make room for
+ * the one just asked for. Children listen on Unix sockets in the directory
+ * given by `socketDir` — meant to be a fresh private directory per supervisor
+ * (see cli.js), not the shared tmpdir, where any local user could squat on a
+ * predictable socket name and answer joins meant for us.
+ */
 import { fork } from 'node:child_process'
 import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
@@ -18,7 +31,7 @@ const SESSION_FLAG = '--session-id'
 const takesSessionId = command => basename(command) === 'pi'
 
 export class Registry {
-  #children = new Map() // id -> { proc, socketPath, cwd, joinedAt, gone }
+  #children = new Map() // id -> { proc, socketPath, cwd, joinedAt, gone, sockets }
   #cliPath
   #program
   #programArgs
@@ -36,6 +49,22 @@ export class Registry {
   }
 
   has(id) { return this.#children.has(id) }
+
+  /**
+   * Call back when `id`'s child is gone, however it went — eviction, wedge,
+   * plain exit. The returned function unregisters. A connected viewer registers
+   * here so the supervisor can cut its browser side the moment the session is
+   * over rather than waiting on a dead socket to be noticed.
+   */
+  watch(id, fn) {
+    const child = this.#children.get(id)
+    if (!child) { fn(); return () => {} }
+    child.sockets.push(fn)
+    return () => {
+      const at = child.sockets.indexOf(fn)
+      if (at !== -1) child.sockets.splice(at, 1)
+    }
+  }
 
   /** ids of every session currently running, oldest-joined first. */
   running() {
@@ -58,7 +87,11 @@ export class Registry {
 
     this.#evictIfFull(id)
 
-    const socketPath = join(this.#socketDir, `mtty-${id}.sock`)
+    // The socket name is only a short prefix of the id, not the whole of it:
+    // a Unix socket path must fit in 104 bytes on macOS, and tmpdir + a uuid
+    // does not. The directory is this supervisor's alone (0700, fresh per
+    // run), so a short name cannot collide with anything but a sibling here.
+    const socketPath = join(this.#socketDir, `mtty-${id.slice(0, 8)}.sock`)
     // The session id goes to pi alone: it is pi's own flag, and appending it to
     // any other program's command line breaks it (bash exits on the unknown
     // option before printing a prompt). The child learns its id from the socket
@@ -81,11 +114,12 @@ export class Registry {
     // both apply here.
     proc.on('error', err => console.error(`server: session ${id} could not start`, err))
 
-    const child = { proc, socketPath, cwd, joinedAt: Date.now() }
+    const child = { proc, socketPath, cwd, joinedAt: Date.now(), sockets: [] }
     child.gone = new Promise(resolve => {
       proc.on('exit', () => {
         if (this.#children.get(id) === child) this.#children.delete(id)
         rm(socketPath, { force: true }).catch(() => {})
+        for (const fn of child.sockets.splice(0)) fn()
         resolve()
       })
     })

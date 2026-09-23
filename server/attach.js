@@ -70,7 +70,14 @@ async function resolveSession(url, { session, match, headers }) {
   const listUrl = new URL(url)
   listUrl.protocol = listUrl.protocol === 'wss:' ? 'https:' : 'http:'
   listUrl.pathname = '/places'
-  const { sessions } = await fetch(listUrl, { headers }).then(r => r.json())
+  const res = await fetch(listUrl, { headers })
+  if (!res.ok) {
+    // 401 is the common one: a cookie the supervisor no longer honours.
+    console.error(res.status === 401 ? 'attach: login refused — set MTTY_PASSWORD and try again'
+      : `attach: could not list sessions (HTTP ${res.status})`)
+    return null
+  }
+  const { sessions } = await res.json()
   if (sessions.length === 0) {
     console.error('attach: no sessions to join yet')
     return null
@@ -87,7 +94,9 @@ async function resolveSession(url, { session, match, headers }) {
 
   console.error('attach: which session?')
   candidates.forEach((s, i) => console.error(`  ${i + 1}) ${s.running ? '●' : ' '} ${s.name}  ${s.path}`))
-  const choice = candidates[Number(await ask('> ')) - 1]
+  const pick = Number(await ask('> '))
+  const choice = Number.isInteger(pick) ? candidates[pick - 1] : undefined
+  if (!choice) console.error('attach: no such number on the list')
   return choice?.id ?? null
 }
 
