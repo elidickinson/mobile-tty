@@ -29,16 +29,16 @@ The phone renders to the DOM, so the terminal's own scrollback is real history: 
 ```
 git clone https://github.com/elidickinson/mobile-tty && cd mobile-tty
 npm install
-./mobile-tty
+./mobile-tty serve
 ```
 
-That serves `pi` on http://127.0.0.1:7681. Open it on this machine -- that's your regular pi session in a browser, and every browser tab that opens the URL sees the same session. The server holds the screen across disconnects, so reopening the page gets it back instantly and closing the tab ends nothing, and joining a different session leaves this one running in the background rather than ending it. `Ctrl-C` in the serving terminal ends every session at once. Keystrokes typed while briefly disconnected queue up and replay.
+That serves `pi` on http://127.0.0.1:7681. Open it on this machine -- that's your regular pi session in a browser, and every browser tab that opens the URL sees the same session. The server holds the screen across disconnects, so reopening the page gets it back instantly and closing the tab ends nothing, and joining a different session leaves this one running in the background rather than ending it. Bare `./mobile-tty` lists the running sessions on the default server instead of starting one; if it is down, the command tells you to run `mobile-tty serve` and shows the URL it expects. Keystrokes typed while briefly disconnected queue up and replay.
 
 **Then the phone**, which needs a way to reach the machine. On the same wifi:
 
 ```
 export MTTY_PASSWORD=...    # the page becomes a login
-./mobile-tty --lan          # listen on the LAN address
+./mobile-tty serve --lan   # listen on the LAN address
 ```
 
 and open `http://<your computer's address>:7681` on the phone. From anywhere instead of just home, run it through a Cloudflare tunnel -- see [Reach it from anywhere](#reach-it-from-anywhere). Either way, on the phone: **Add to Home Screen** (standalone mode is worth ~7 rows over Safari).
@@ -51,12 +51,16 @@ pi install "$PWD/pi-extensions/mtty-footer.ts"
 **Other ways to run it:**
 
 ```
-./mobile-tty serve bash             # a program other than pi
-./mobile-tty pi --model whatever    # arguments after the program go to it
-./mobile-tty attach                 # join a session from a second terminal (Ctrl-] detaches)
-./mobile-tty attach my-project      # attach straight to a session by name, path or id fragment
-./mobile-tty --port 1234            # --bind and --hostname too
-./mobile-tty serve --tunnel         # run the tunnel alongside; needs setup first (below)
+./mobile-tty                         # list sessions (the default command)
+./mobile-tty sessions                # list sessions with their connection counts
+./mobile-tty end my-project          # stop a running session after confirmation
+./mobile-tty end --yes my-project    # skip the confirmation
+./mobile-tty serve bash              # a program other than pi
+./mobile-tty serve pi --model whatever # arguments after the program go to it
+./mobile-tty attach                  # join a session from a second terminal (Ctrl-] detaches)
+./mobile-tty attach my-project       # attach straight to a session by name, path or id fragment
+./mobile-tty serve --port 1234       # --bind and --hostname too
+./mobile-tty serve --tunnel          # run the tunnel alongside; needs setup first (below)
 ```
 
 `attach [fragment]` matches case-insensitively against everything that
@@ -65,7 +69,8 @@ in (`my-project` for `~/work/my-project`), the **path** of that folder
 (`work/my-pro` works), or the **session id**. A fragment that matches several
 sessions -- including every older transcript of the same folder, which are
 all named alike -- brings up a numbered pick list instead of guessing
-(● marks the ones already running):
+(● marks the ones already running). Terminal pickers show ten rows at a time;
+type `more` to see the next page:
 
 ```
 attach: which session?
@@ -88,7 +93,9 @@ attach: which session?
 
 The `≡` menu lists every session pi has a transcript for, newest first, a running one marked ●. Tap one to join it -- if it isn't already running, it's started in the background first; if it is, you're looking at it instantly, exactly as it was left. Joining never ends anything else: leave a session and it keeps running, so the phone, a browser tab and any number of `attach`ed terminals can each be looking at a different one, the same as running pi a few times in different terminals -- except the menu is how you get back to any of them from the phone.
 
-The list is labeled: each row's title is pi's own name for that session (written once it has read your first exchange), falling back to what you first asked there, and each shows how long ago it was last active. A session with no conversation in it yet is labeled by its folder. `attach`'s numbered picker shows the same labels and times, and a fragment matches labels too -- two conversations in one folder are told apart by those, or by their ids.
+`mobile-tty end [fragment]` stops a running session without deleting its transcript, and asks for `[y/N]` confirmation unless `--yes` is given. Exiting pi also ends that session; `Ctrl-C` in the serving terminal ends every session. Detaching an `attach` terminal with Ctrl-] leaves its session running.
+
+The list is labeled: each row's title is pi's own name for that session (written once it has read your first exchange), falling back to what you first asked there, and each shows how long ago it was last active. A session with no conversation in it yet is labeled by its folder. `mobile-tty sessions` lists the server's sessions with a connected-viewer count; the `attach` and `end` pickers show the same labels and times, and a fragment matches labels too -- two conversations in one folder are told apart by those, or by their ids.
 
 **New session** at the top of the menu starts a brand-new conversation without any transcript to resume: it offers this server's own folder first (point `--new-dir` elsewhere if you would rather), then every folder a listed session runs in. The session begins immediately in the background and joins like any other; pi writes its transcript on first use and it is a normal row from then on. A session exists in the list either way, transcript or not, until the server holding it stops.
 
@@ -106,7 +113,7 @@ cloudflared tunnel login                 # once
 
 The server runs with no password here; Access authenticates at the edge, and `setup` verifies a login is really in place.
 
-**`$MTTY_PASSWORD`** (LAN/tailnet): the page becomes a login that mints a cookie; `attach` uses the same password. A single static secret over plain http -- fine on a network you trust.
+**`$MTTY_PASSWORD`** (LAN/tailnet): the page becomes a login that mints a cookie; `attach`, `sessions` and `end` use the same password. A single static secret over plain http -- fine on a network you trust.
 
 **`--hostname` is required behind any proxy.** Any web page you visit can open a WebSocket to your loopback, so a socket is refused unless its `Origin` matches where it connected. IPs work as-is; names must be declared via flag or `$MTTY_HOSTNAME`. Miss it and the page loads but never connects (reason on stderr).
 
@@ -117,9 +124,9 @@ Desktop can join too (same URL, or `./mobile-tty attach [name-or-path]` for a se
 - The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME`, `$MTTY_THEME`, `$MTTY_NEW_DIR` (and `$MTTY_PASSWORD`, above).
 - The session menu is built from pi's history under `~/.pi/agent/sessions`; `$PI_CODING_AGENT_SESSION_DIR` points it elsewhere.
 - A folder used for several separate pi conversations offers all of them in the list, not just the newest -- there's no more need to `/resume` inside pi to reach an older one in the same folder.
-- **The list itself is capped at the 50 most recent sessions**, not everything pi has ever kept a transcript for -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." The menu says how many older ones are being left out when there are any. This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
+- **The list itself is capped at the 50 most recent sessions**, not everything pi has ever kept a transcript for -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." The list says how many older ones are being left out when there are any. This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
 - Up to 4 sessions run in the background at once by default; joining a fifth ends whichever one was looked at longest ago to make room.
-- Restarting the server ends every session; `./mobile-tty pi --session-id whatever` pins one to come back to.
+- Restarting the server ends every session; `./mobile-tty serve pi --session-id whatever` pins one to come back to.
 - No terminal handy to seed a new folder? `./mobile-tty serve bash`, then cd and run pi once.
 
 ## Development

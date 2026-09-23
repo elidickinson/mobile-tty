@@ -8,6 +8,7 @@
 import { createInterface } from 'node:readline/promises'
 import { WebSocket } from 'ws'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE } from './protocol.js'
+import { matching, pickFrom } from './picker.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
 // and not Ctrl-C or Ctrl-Z, which are the whole point of passing through.
@@ -52,17 +53,8 @@ async function login(url, password) {
   return cookie.split(';')[0]
 }
 
-/** `3m`, `2h`, `5d` — the same reading of last-active the menu shows. */
-const ago = at => {
-  if (!at) return ''
-  const s = Math.max(0, (Date.now() - at) / 1000)
-  if (s < 60) return 'now'
-  if (s < 3600) return `${s / 60 | 0}m`
-  if (s < 86400) return `${s / 3600 | 0}h`
-  return `${s / 86400 | 0}d`
-}
-
-const ask = async question => {  const rl = createInterface({ input: process.stdin, output: process.stdout })
+const ask = async question => {
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
   try { return await rl.question(question) } finally { rl.close() }
 }
 
@@ -92,9 +84,7 @@ async function resolveSession(url, { session, match, headers }) {
     return null
   }
 
-  const candidates = match
-    ? sessions.filter(s => `${s.label || ''} ${s.name} ${s.path} ${s.id}`.toLowerCase().includes(match.toLowerCase()))
-    : sessions
+  const candidates = match ? matching(sessions, match) : sessions
   if (candidates.length === 1) return candidates[0].id
   if (candidates.length === 0) {
     console.error(`attach: nothing matches ${JSON.stringify(match)}`)
@@ -102,11 +92,7 @@ async function resolveSession(url, { session, match, headers }) {
   }
 
   console.error('attach: which session?')
-  candidates.forEach((s, i) => console.error(
-    `  ${i + 1}) ${s.running ? '●' : ' '} ${(s.label || s.name).slice(0, 60).padEnd(60)}  ${s.path}  ${ago(s.at)}`))
-  const pick = Number(await ask('> '))
-  const choice = Number.isInteger(pick) ? candidates[pick - 1] : undefined
-  if (!choice) console.error('attach: no such number on the list')
+  const choice = await pickFrom(candidates, { ask, out: console.error })
   return choice?.id ?? null
 }
 
@@ -179,7 +165,8 @@ export async function attach({ url, session, match }) {
       if (isDetach(chunk)) leave(
         'detached; the session is still running\r\n' +
         '  rejoin it   mobile-tty attach\r\n' +
-        '  end it      Ctrl-C in the terminal serving it', DETACHED)
+        '  end it      mobile-tty end [fragment]\r\n' +
+        '  end all     Ctrl-C in the terminal serving it', DETACHED)
       // The key that dismisses the banner is spent doing so: the session has
       // not been shown yet, so it was not typed at what is about to appear.
       if (!started) return start()

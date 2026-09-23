@@ -33,7 +33,9 @@ usage() {
   cat <<'USAGE'
 Usage: mobile-tty [command] [options] [program...]
 
-  serve          serve the terminal (default)
+  sessions       list sessions on the server (default)
+  end [fragment] end a running session
+  serve          serve the terminal
   attach         attach this terminal to a running server
   tunnel         run the Cloudflare tunnel on its own
   setup <host>   create the tunnel, DNS and Access login for a hostname
@@ -49,6 +51,7 @@ Options
   --new-dir DIR  where the phone's "new session" starts (default: this folder,
                  or $MTTY_NEW_DIR)
   --tunnel       run the Cloudflare tunnel alongside the server
+  --yes          skip the confirmation when ending a session
 
 Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
@@ -61,9 +64,10 @@ same time, the way running pi a few times in different terminals would be.
 Whichever session a viewer is looking at, the narrowest viewer of that one
 decides its size, because this is meant to be read on a phone.
 `attach [name-or-path]` joins a server that is already running; it does not
-start one, and prompts if more than one session matches. To end a session for
-good rather than just leaving it, exit the program in it; Ctrl-C in the
-terminal serving all of them ends every session at once.
+start one, and prompts if more than one session matches. `sessions` lists the
+running ones, and `end [fragment]` stops a running session after confirmation;
+`--yes` skips that confirmation. Exiting the program in a session also ends it,
+and Ctrl-C in the terminal serving all of them ends every session at once.
 
 The menu offers every session pi has a transcript for, newest first, whether
 or not it is currently running.
@@ -85,10 +89,11 @@ die() { echo "mobile-tty: $*" >&2; exit 1; }
 usage_error() { echo "mobile-tty: $*" >&2; exit 2; }
 
 cmd=""
+yes=0
+end_match=""
 
-# Options can come either side of the command, and everything after the first
-# thing that is neither is the program. Parsing in one pass in a fixed order
-# made `mobile-tty --lan up` run a program called "up".
+# Options can come either side of the command; serve's first non-option is the
+# program, while end captures one fragment and can still read options after it.
 take_options() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -99,13 +104,19 @@ take_options() {
       --theme) [[ $# -ge 2 ]] || usage_error "--theme needs a value"; theme=$2; shift 2 ;;
       --new-dir) [[ $# -ge 2 ]] || usage_error "--new-dir needs a value"; newdir=$2; shift 2 ;;
       --tunnel) with_tunnel=1; shift ;;
+      --yes) yes=1; shift ;;
       -h|--help|help) usage; exit 0 ;;
       --) shift; break ;;
       -*) usage_error "unknown option $1" ;;
-      serve|attach|tunnel|setup)
+      serve|sessions|end|attach|tunnel|setup)
         [[ -z "$cmd" ]] || break        # a second one is the program's business
         cmd=$1; shift ;;
-      *) break ;;
+      *)
+        if [[ "$cmd" == end && -z "$end_match" ]]; then
+          end_match=$1; shift
+        else
+          break
+        fi ;;
     esac
   done
   REST=("$@")
@@ -114,11 +125,16 @@ take_options() {
 REST=()
 take_options "$@"
 set -- ${REST[@]+"${REST[@]}"}
-[[ -n "$cmd" ]] || cmd=serve
+[[ -n "$cmd" ]] || cmd=sessions
 
 # setup takes a hostname, not our options, but it should still hear the port so
 # the tunnel it writes points at the right place.
 [[ "$cmd" == setup ]] && exec env MTTY_PORT="$port" scripts/cf-access.sh "$@"
+
+# Follows --bind: node resolves `localhost` to ::1 on a machine that prefers
+# IPv6, so a URL pinned to 127.0.0.1 would never find a server that bound by
+# name. An IPv6 literal needs brackets to go in one.
+case "$bind" in *:*) host="[$bind]" ;; *) host=$bind ;; esac
 
 # Empty unless a name was given, so the flag is absent rather than blank.
 host_args=()
@@ -178,11 +194,16 @@ case "$cmd" in
     [[ $status -eq 0 ]] || echo "mobile-tty: the server exited ($status); stopping the tunnel too" >&2
     exit $status
     ;;
+  sessions)
+    [[ $# -eq 0 ]] || usage_error "sessions takes no arguments"
+    exec env node -e "import('./server/control.js').then(m => m.sessions('ws://$host:$port'))"
+    ;;
+  end)
+    [[ $# -eq 0 ]] || usage_error "end takes at most one session fragment"
+    exec env MTTY_END_MATCH="$end_match" MTTY_YES="$yes" node -e \
+      "import('./server/control.js').then(m => m.end('ws://$host:$port', { match: process.env.MTTY_END_MATCH || undefined, yes: process.env.MTTY_YES === '1' }))"
+    ;;
   attach)
-    # Follows --bind: node resolves `localhost` to ::1 on a machine that prefers
-    # IPv6, so a URL pinned to 127.0.0.1 would never find a server that bound by
-    # name. An IPv6 literal needs brackets to go in one.
-    case "$bind" in *:*) host="[$bind]" ;; *) host=$bind ;; esac
     # An optional name or path fragment picks which of the server's sessions to
     # join, the same way the phone's own menu lists them; bare `attach` prompts
     # when more than one matches. Passed through the environment, not baked

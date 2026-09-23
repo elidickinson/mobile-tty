@@ -77,6 +77,10 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     if (path === '/places' && req.method === 'GET') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
+      // How many viewers are on each live child, for the listings: "2 watching"
+      // on a row says the session is shared right now, not just alive.
+      const viewers = (id, cwd) => [...wss.clients].filter(
+        c => c.readyState === c.OPEN && c.sessionId === id && c.sessionCwd === cwd).length
       const { sessions: found, total } = await readPlaces({ sessionDir })
       // A live child pins its row: same id resumed under two folders lists
       // twice, but only the folder the child actually runs in is running.
@@ -92,13 +96,27 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       })
       const rows = [...found, ...fresh].sort((a, b) => b.at - a.at)
       const live = id => registry.child(id)?.cwd
-      const sessions = rows.map(place => ({ ...place, running: live(place.id) === place.cwd }))
+      const sessions = rows.map(place => ({ ...place, running: live(place.id) === place.cwd, viewers: viewers(place.id, place.cwd) }))
       // `total` counts store transcripts; the list also carries transcript-
       // less live sessions, so "older, not shown" must count from what is
       // actually shown, not from the store total alone.
       const hidden = Math.max(0, total - found.length)
       const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, hidden, here: defaultDir })
       return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
+    }
+
+    // End a running session for good: the child gets SIGTERM, then SIGKILL
+    // after a grace (`registry.end`), and its viewers see the session end
+    // exactly as if pi had exited on its own. Deleted-for-real is pi's own
+    // business; this stops the process, which is what mobile-tty owns.
+    if (path === '/session' && req.method === 'DELETE') {
+      if (!auth.admits(req)) return void res.writeHead(401).end()
+      const id = new URL(req.url, 'http://internal').searchParams.get('id')
+      const child = id && registry.child(id)
+      if (!child) return void res.writeHead(404, { 'content-type': 'text/plain' }).end(id ? 'that session is not running' : 'which session')
+      console.error(`server: ending session ${id} on request`)
+      await registry.end(id)
+      return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ ended: id }))
     }
 
     // Start a session that has no transcript yet: mint an id, spawn pi in the
@@ -196,6 +214,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     const url = new URL(req.url, 'http://internal')
     const id = url.searchParams.get('session')
     const cwd = url.searchParams.get('cwd')
+    ws.sessionId = id
 
     let inner = null
     let buffered = []
@@ -246,6 +265,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       }
 
       const child = registry.ensure(id, place.cwd)
+      ws.sessionCwd = child.cwd
       const sock = await connectChild(child.socketPath)
       if (closed) { sock.close(); return }
       inner = sock

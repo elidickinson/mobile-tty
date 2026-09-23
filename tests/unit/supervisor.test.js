@@ -150,9 +150,58 @@ test('GET /places lists every session and which ones are running', async () => {
     const { sessions } = await fetch(`${page}/places`).then(r => r.json())
     const byId = Object.fromEntries(sessions.map(s => [s.id, s]))
     assert.equal(byId.a.running, true, 'the session that was joined is running')
+    assert.equal(byId.a.viewers, 1, 'the open join is counted')
     assert.equal(byId.b.running, false, 'the one nobody joined is not')
+    assert.equal(byId.b.viewers, 0, 'an unjoined session has no viewers')
   } finally {
     a.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('/places scopes viewers to the exact folder when an id is listed twice', async () => {
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a', { cwd: store.at('two') })
+  try {
+    await viewer.opened
+    await until(() => viewer.output.includes('two'), 'the selected folder to be served')
+
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    const byCwd = Object.fromEntries(sessions.map(s => [s.cwd, s]))
+    assert.equal(byCwd[store.at('one')].viewers, 0)
+    assert.equal(byCwd[store.at('two')].viewers, 1)
+    assert.equal(byCwd[store.at('two')].running, true)
+  } finally {
+    viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('DELETE ends one running session and closes its viewer', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  try {
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the joined session to be up')
+    await until(async () => {
+      const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+      return sessions.find(s => s.id === 'a')?.viewers === 1
+    }, 'the viewer to appear in the list')
+
+    const ended = await fetch(`${page}/session?id=a`, { method: 'DELETE' })
+    assert.equal(ended.status, 200)
+    assert.deepEqual(await ended.json(), { ended: 'a' })
+    await until(() => registryRunning(supervisor) === 0, 'the child to exit')
+    assert.equal(await viewer.closed, 1001, 'the connected viewer sees the session end')
+
+    assert.equal((await fetch(`${page}/session?id=a`, { method: 'DELETE' })).status, 404)
+    assert.equal((await fetch(`${page}/session`, { method: 'DELETE' })).status, 404)
+  } finally {
+    viewer.close()
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
   }
