@@ -11,7 +11,7 @@ import { OUTPUT, SET_TITLE, SET_SIZE, FOOTER } from './protocol.js'
 export const BACKLOG_LIMIT = 4 * 1024 * 1024
 
 // 1013 Try Again Later: the viewer is not wrong, it is behind.
-const TOO_FAR_BEHIND = 1013
+export const TOO_FAR_BEHIND = 1013
 
 export class Viewer {
   constructor(ws) {
