@@ -231,7 +231,7 @@ case "$cmd" in
   new)
     [[ $# -eq 0 ]] || usage_error "new takes no arguments"
     exec env MTTY_NEW_CWD="$caller_cwd" node -e \
-      "import('./server/control.js').then(async m => { const started = await m.start('ws://$host:$port', { cwd: process.env.MTTY_NEW_CWD }); if (started) await m.attach({ url: started.wsUrl, session: started.id }) })"
+      "import('./server/control.js').then(async m => { const started = await m.start('ws://$host:$port', { cwd: process.env.MTTY_NEW_CWD }); if (started) { const { attach } = await import('./server/attach.js'); await attach({ url: started.wsUrl, session: started.id }) } })"
     ;;
   tunnel)
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"
