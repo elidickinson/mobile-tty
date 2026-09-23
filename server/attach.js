@@ -171,9 +171,13 @@ export async function attach({ url, session, match, previous = false }) {
     if (stdin.isRaw) stdin.setRawMode(false)
     stdin.pause()
   }
-  const leave = (message, code = 0) => {
+  // Restores the terminal before writing: a message printed in raw mode
+  // staircases. Diagnostics go to stderr, so the reason a terminal detached
+  // itself survives `attach > somewhere`; the two messages that are part of
+  // the session on screen ask for stdout by name.
+  const leave = (message, code = 0, stream = process.stderr) => {
     restore()
-    if (message) stdout.write(`\r\n${message}\r\n`)
+    if (message) stream.write(`\r\n${message}\r\n`)
     process.exit(code)
   }
   process.on('exit', restore)
@@ -207,7 +211,7 @@ export async function attach({ url, session, match, previous = false }) {
         'detached; the session is still running\r\n' +
         '  rejoin it   mobile-tty attach\r\n' +
         '  end it      mobile-tty end [fragment|n]\r\n' +
-        '  end all     Ctrl-C in the terminal serving it', DETACHED)
+        '  end all     Ctrl-C in the terminal serving it', DETACHED, stdout)
       // The key that dismisses the banner is spent doing so: the session has
       // not been shown yet, so it was not typed at what is about to appear.
       if (!started) return start()
