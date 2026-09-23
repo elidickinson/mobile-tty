@@ -6,7 +6,7 @@
 // that is the whole point. A cap keeps them from accumulating without bound:
 // past it, the child nobody has looked at longest is ended to make room for
 // the one just asked for.
-import { spawn } from 'node:child_process'
+import { fork } from 'node:child_process'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -52,10 +52,17 @@ export class Registry {
     this.#evictIfFull()
 
     const socketPath = join(this.#socketDir, `mtty-${id}.sock`)
-    const proc = spawn(process.execPath, [
-      this.#cliPath, '--internal-socket', socketPath, '--internal-cwd', cwd,
+    // fork(), not spawn(): it wires up an IPC channel for free, and
+    // --internal-socket's own handler listens for that channel's 'disconnect'
+    // to end itself if this process ever goes away without the chance to ask
+    // nicely first (a crash, or someone signalling the wrong pid) — otherwise
+    // an orphaned child has nothing tying its life to ours at all. `stdio`
+    // spells out 'ignore' for the three inherited streams explicitly, since
+    // fork()'s own default is to pipe them back here rather than drop them.
+    const proc = fork(this.#cliPath, [
+      '--internal-socket', socketPath, '--internal-cwd', cwd,
       '--', this.#program, ...this.#programArgs, '--session-id', id,
-    ], { stdio: 'ignore' })
+    ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
     // A child that cannot even start must not wedge the process that spawned
     // it — see the unhandled 'error' rule node-pty and node's own child_process
     // both apply here.

@@ -50,6 +50,12 @@ if (internalSocket) {
   for (const signal of ['SIGINT', 'SIGTERM']) {
     process.on(signal, () => server.close().then(() => process.exit(0)))
   }
+  // The registry spawns this over fork(), which wires up an IPC channel for
+  // nothing else but this: the channel closing is how a child notices the
+  // supervisor is gone even when it never got the chance to ask nicely first
+  // (a crash, or a signal aimed at the wrong pid) — the one case a plain
+  // SIGTERM/SIGINT handler cannot cover, since nothing sent one.
+  process.on('disconnect', () => server.close().then(() => process.exit(0)))
 } else {
   const [command, ...args] = rest()
   if (!command) {
