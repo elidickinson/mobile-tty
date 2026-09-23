@@ -1,6 +1,17 @@
 // Command line for the server, so `mobile-tty serve` can start it the way it
-// started ttyd. The server owns the session, so this process ending ends pi.
+// started ttyd.
+//
+// Two modes live here. The ordinary one launches the supervisor, which holds
+// every live session in the background. `--internal-socket` is the other:
+// server/registry.js re-invokes this same file with it to spawn one session's
+// child, a plain single-session server (server/index.js, unchanged since
+// before there was a supervisor) bound to a Unix socket instead of a port.
+// Nothing outside the supervisor's own process tree is meant to pass it.
 import { createTerminalServer } from './index.js'
+import { createSupervisor } from './supervisor.js'
+import { mkdtemp } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const arg = name => {
   const i = process.argv.indexOf(name)
@@ -24,12 +35,6 @@ const number = (name, fallback) => {
   return n
 }
 
-const [command, ...args] = rest()
-if (!command) {
-  console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME --theme NAME -- <command...>')
-  process.exit(2)
-}
-
 // A theme is a palette the client is built with; an unknown name would silently
 // serve the default, which is a typo that looks like a broken flag.
 const theme = arg('--theme') ?? 'dark'
@@ -38,22 +43,63 @@ if (!['dark', 'light'].includes(theme)) {
   process.exit(2)
 }
 
-const server = createTerminalServer({
-  port: number('--port', 7681),
-  bind: arg('--bind') ?? '127.0.0.1',
-  hostname: arg('--hostname'),
-  theme,
-  // Never a flag: a command line is readable by every process on the machine.
-  password: process.env.MTTY_PASSWORD,
-  command,
-  args,
-  onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}` +
-    (process.env.MTTY_PASSWORD ? ' (password required)' : '')),
-  // pi exiting is the session ending, and the session is what this process is
-  // for. Anything else would leave a server serving a terminal that is gone.
-  onExit: ({ exitCode }) => server.close().then(() => process.exit(exitCode ?? 0)),
-})
+const internalSocket = arg('--internal-socket')
 
-for (const signal of ['SIGINT', 'SIGTERM']) {
-  process.on(signal, () => server.close().then(() => process.exit(0)))
+/** A 0700 directory under the system temp dir, for this run's session sockets. */
+const mkdirPrivate = () => mkdtemp(join(tmpdir(), 'mtty-sock-'))
+
+if (internalSocket) {
+  // An internal child inherits the supervisor's theme, which decides the palette
+  // its own (rarely served) login page is built with.
+  const cwd = arg('--internal-cwd')
+  const [command, ...args] = rest()
+  const server = createTerminalServer({
+    socketPath: internalSocket,
+    cwd,
+    theme,
+    command,
+    args,
+    // A session this holds ending — pi exiting on its own — is the session
+    // ending, same as it always was; the supervisor learns of it when this
+    // process exits and its socket stops answering.
+    onExit: ({ exitCode }) => server.close().then(() => process.exit(exitCode ?? 0)),
+  })
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => server.close().then(() => process.exit(0)))
+  }
+  // The registry spawns this over fork(), which wires up an IPC channel for
+  // nothing else but this: the channel closing is how a child notices the
+  // supervisor is gone even when it never got the chance to ask nicely first
+  // (a crash, or a signal aimed at the wrong pid) — the one case a plain
+  // SIGTERM/SIGINT handler cannot cover, since nothing sent one.
+  process.on('disconnect', () => server.close().then(() => process.exit(0)))
+} else {
+  const [command, ...args] = rest()
+  if (!command) {
+    console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME --theme NAME -- <command...>')
+    process.exit(2)
+  }
+
+  const supervisor = createSupervisor({
+    port: number('--port', 7681),
+    bind: arg('--bind') ?? '127.0.0.1',
+    hostname: arg('--hostname'),
+    theme,
+    // Never a flag: a command line is readable by every process on the machine.
+    password: process.env.MTTY_PASSWORD,
+    command,
+    args,
+    cliPath: new URL(import.meta.url).pathname,
+    // A fresh private directory per supervisor: session sockets must not land
+    // in the shared tmpdir under a guessable name, where any local user could
+    // squat on one and answer a join in our place.
+    socketDir: await mkdirPrivate(),
+    onListen: ({ port, bind }) => console.log(`listening on http://${bind}:${port}` +
+      (process.env.MTTY_PASSWORD ? ' (password required)' : '')),
+    onExit: ({ exitCode }) => supervisor.close().then(() => process.exit(exitCode ?? 0)),
+  })
+
+  for (const signal of ['SIGINT', 'SIGTERM']) {
+    process.on(signal, () => supervisor.close().then(() => process.exit(0)))
+  }
 }

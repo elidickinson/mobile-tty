@@ -1,7 +1,7 @@
-// The folder picker. It is the one control here that ends the program you are
-// looking at, so what matters is that it never does so on a single stray tap,
-// and that when it does act it lands somewhere real.
-import { rm } from 'node:fs/promises'
+// The session picker. A row acts the moment it is tapped — joining never ends
+// anything else — so what matters is that a tap lands somewhere real, that the
+// list says where you are and what is still running, and that the first screen
+// survives a session id remembered from last time.
 import { test, expect, ready } from './helpers.js'
 
 test.use({ folders: ['alpha', 'beta'] })
@@ -13,15 +13,17 @@ const openMenu = async page => {
 
 const rows = page => page.locator('#places .place')
 
-test('the menu lists the folders pi has history in, and says which is current', async ({ page }) => {
+test('the menu lists the sessions pi has history in, and says which is current', async ({ page }) => {
   await ready(page)
   await openMenu(page)
 
+  // The store seeds one session per folder: here, alpha, beta. The cwd's own
+  // session is written last, so it is the newest and the one a fresh viewer
+  // lands on.
   await expect.poll(async () => (await page.locator('#places .place-name').allInnerTexts()).sort())
-    .toEqual(['alpha', 'beta', 'mobile-tty'])
-  // The folder the server started in is offered even with no history of its own.
-  await expect(page.locator('#places .place.here .place-name')).toHaveText('mobile-tty')
-  await expect(page.locator('#place-now')).toContainText('mobile-tty')
+    .toEqual(['alpha', 'beta', 'pr1-work'])
+  await expect(page.locator('#places .place.here .place-name')).toHaveText('pr1-work')
+  await expect(page.locator('#place-now')).toContainText('pr1-work')
 })
 
 test('the menu fits the screen, with the readout folded away', async ({ page }) => {
@@ -29,8 +31,8 @@ test('the menu fits the screen, with the readout folded away', async ({ page }) 
   await openMenu(page)
   await expect.poll(() => rows(page).count()).toBe(3)
 
-  // The folder list is as long as the number of projects you have, so the sheet
-  // has to stay inside the screen — `Done` scrolling off the top is how a menu
+  // The session list is as long as the history you have, so the sheet has to
+  // stay inside the screen — `Done` scrolling off the top is how a menu
   // becomes a trap.
   await expect(page.locator('#diag')).toBeHidden()
   const card = await page.evaluate(() => {
@@ -62,64 +64,59 @@ test('the menu fits the screen, with the readout folded away', async ({ page }) 
   await expect(page.locator('#diag')).toBeHidden()
 })
 
-test('a row asks before it acts: one tap opens the choice, it does not switch', async ({ page }) => {
+test('tapping a row joins that session: the screen follows the folder', async ({ page }) => {
   await ready(page)
   await openMenu(page)
   await expect.poll(() => rows(page).count()).toBe(3)
 
-  const alpha = rows(page).filter({ hasText: 'alpha' })
-  await expect(alpha.locator('.place-actions')).toBeHidden()
-
-  await alpha.locator('.place-head').click()
-  await expect(alpha.locator('.place-actions')).toBeVisible()
-  // fake-pi.js is not pi, so continuing is not offered for it.
-  await expect(alpha.locator('.place-actions button')).toHaveText(['Start here'])
-
-  // Nothing was ended by looking.
-  await expect(page.locator('#menu')).toBeVisible()
-  await expect(page.locator('#screen')).toContainText('fake-pi ready')
-
-  // Only one folder is ever asking to be chosen.
-  await rows(page).filter({ hasText: 'beta' }).locator('.place-head').click()
-  await expect(alpha.locator('.place-actions')).toBeHidden()
-})
-
-test('a switch that never lands leaves the menu open and says nothing came back', async ({ page, store }) => {
-  await ready(page)
-  await openMenu(page)
-  await expect.poll(() => rows(page).count()).toBe(3)
-
-  // The folder goes away after the list was built. That is the stale-list race
-  // made deterministic: the server will refuse a folder it can no longer offer,
-  // and a refusal is silent on the wire — the phone has only the absence of an
-  // acknowledgement to go on, which is the whole point of waiting for one.
-  await rm(store.at('alpha'), { recursive: true, force: true })
-
-  const alpha = rows(page).filter({ hasText: 'alpha' })
-  await alpha.locator('.place-head').click()
-  await alpha.getByText('Start here').click()
-
-  await expect(alpha).toHaveClass(/switching/)
-  await expect(alpha).toHaveClass(/failed/, { timeout: 10_000 })
-  // Still open, still the program that was already running.
-  await expect(page.locator('#menu')).toBeVisible()
-  await expect(page.locator('#screen')).toContainText('fake-pi ready')
-})
-
-test('choosing a folder starts the program there', async ({ page }) => {
-  await ready(page)
-  await openMenu(page)
-  await expect.poll(() => rows(page).count()).toBe(3)
-
-  const alpha = rows(page).filter({ hasText: 'alpha' })
-  await alpha.locator('.place-head').click()
-  await alpha.getByText('Start here').click()
-
+  // One tap: no disclose-then-act, nothing to confirm — joining ends nothing.
+  await rows(page).filter({ hasText: 'beta' }).click()
   await expect(page.locator('#menu')).toBeHidden()
-  // The title is the server's word for which folder the session is in.
-  await expect.poll(() => page.title()).toContain('/alpha')
+  // The title is the client's word for the folder it asked to join.
+  await expect.poll(() => page.title()).toContain('/beta')
   // And the program really is over there: the fixture draws its own cwd, which
   // wraps at this width, so the comparison ignores where the rows break.
   await expect.poll(async () =>
-    (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/alpha')
+    (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/beta')
+})
+
+test('a live session is marked running, and rejoining it cannot end it', async ({ page, store }) => {
+  await ready(page)
+  await openMenu(page)
+
+  // Join beta, say something memorable, and leave.
+  await rows(page).filter({ hasText: 'beta' }).click()
+  await expect.poll(async () =>
+    (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/beta')
+  const ta = page.locator('#screen textarea')
+  await ta.pressSequentially('rejoin-marker')
+  await ta.press('Enter')
+  await expect.poll(async () =>
+    (await page.locator('#screen').innerText()).includes('ok: 13 chars'), { timeout: 8_000 }).toBe(true)
+  await page.goto('about:blank')
+
+  // Back on a fresh page: the menu now marks beta running, and landing on it
+  // again shows the line still there — the same process, not a respawn.
+  await ready(page)
+  await openMenu(page)
+  await expect(rows(page).filter({ hasText: 'beta' })).toHaveClass(/running/)
+  await rows(page).filter({ hasText: 'beta' }).click()
+  await expect.poll(async () =>
+    (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('rejoin-marker')
+})
+
+test('a session who went away keeps running elsewhere: the list survives it', async ({ page }) => {
+  // A folder deleted after its session was listed must not break the picker:
+  // readPlaces drops rows whose cwd is gone, and a tap can only ever name an id
+  // the list itself offered. A tap on a row that survives is the honest check.
+  await ready(page)
+  await openMenu(page)
+  await rows(page).filter({ hasText: 'beta' }).click()
+  await expect.poll(() => page.title()).toContain('/beta')
+
+  await openMenu(page)
+  await expect.poll(() => rows(page).count()).toBe(3)
+  await rows(page).filter({ hasText: 'alpha' }).click()
+  await expect.poll(() => page.title()).toContain('/alpha')
+  await expect(page.locator('#place-now')).toContainText('alpha')
 })

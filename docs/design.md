@@ -4,14 +4,24 @@ Why the thing is shaped this way: what the parts are, what was rejected, and wha
 
 ## The server
 
-`server/` owns the PTY through node-pty and speaks a five-constant WebSocket protocol, so the client parses it in ~30 lines.
+`server/index.js` owns one PTY through node-pty and speaks a five-constant WebSocket protocol, so the client parses it in ~30 lines. `server/supervisor.js` is a second layer in front of it -- see **Background sessions** below -- that holds several of these at once; everything in this section is still true of one of them.
 
-- **One PTY, multiple viewers.** Everyone sees the same stream; ending the server ends the program.
+- **One PTY, multiple viewers.** Everyone sees the same stream; ending that session's process ends the program running in it.
 - **A new viewer gets a picture, not a redraw.** An `@xterm/headless` mirror holds the current screen, so joining costs the size of the screen no matter how long the transcript is.
 - **One document**, CSS and JS inline. Makes cache management simple. No service worker (they cannot register from `data:` URLs) -- costing offline support, which is meaningless for a terminal.
 - **No build step.** esbuild runs inside the request, not into `dist/`. A document built from disk when asked for cannot be stale, and the client can be edited without the restart that would kill pi. ~50 ms, a few times a day.
 - **Freshness is the page's job**, since iOS holds the launch document whatever the headers say. A build stamp (a hash of the document, also its ETag) is compared; the page reloads past the cache. `no-cache` rather than `no-store`, so an unchanged client costs a 304.
 - **Not dtach or tmux.** dtach drops bytes (on `EAGAIN` it abandons the unwritten tail of a 4096-byte read and never retries -- measured 9.3 MB across 55,989 gaps in a resize storm; `tests/integrity/` is the standing gate against repeating it). tmux takes the outer alternate screen unconditionally, and that screen has no scrollback -- the whole reason for a DOM renderer.
+
+## Background sessions
+
+Originally there was exactly one program at a time, and switching folders ended it and started another: every invariant above was "one PTY, N viewers, one screen" for the *whole server*. That traded away the thing running pi in a few terminals gives you for free -- coming back to one that's still going. The fix keeps that trade everywhere above true, just no longer at the scope of the whole process: it's true per session, and the server holds several sessions rather than one.
+
+- **A session is still exactly `server/index.js`**, unmodified in what it does -- one PTY, N viewers, one screen, for its whole life. What's new is that it binds a Unix socket (`socketPath`) instead of a port, and nothing reachable only over that socket needs its own login or origin check, since only the supervisor's own process tree can open it.
+- **`server/supervisor.js` is a connect-time router, not a second protocol.** The five-frame wire protocol is unchanged and the supervisor never parses it: a `/ws?session=<id>` upgrade is piped byte-for-byte into that session's socket once, and picking a *different* session is not a frame on the wire either -- the client just closes that connection and opens a new one, reusing the reconnect path every viewer already has to have. The one thing that did need inventing is `GET /places`, a plain HTTP endpoint, since listing sessions and switching between them were never really the terminal protocol's job to begin with.
+- **Sessions are identified by pi's own session id** (`header.id` in the `.jsonl` pi already writes), not by folder. pi already keys its history this way; the earlier folder-keyed design only read `cwd` out of that header and collapsed everything but the newest file per folder, which is also why a folder with several separate conversations used to show as one. `server/places.js` now lists every session, one row each, sorted by recency across every folder rather than grouped by one.
+- **A session outlives the viewer that joined it, on purpose**, and the pool is bounded (`cap`, default 4) with LRU eviction rather than left to grow forever, so an afternoon of switching around doesn't accumulate pi processes without limit. A restart of the supervisor still ends every session at once -- no adoption or reattachment across it was built, since that traded a meaningful amount of complexity (persisted socket tables, orphan detection) for a case (the server process itself restarting) that was already destructive before this existed.
+- **Starting a session that has never run before is not implemented here.** Every id a viewer can ask to join comes from `GET /places`, which only ever lists sessions pi's own store already has -- there is deliberately no "start fresh in an arbitrary folder" path yet. `./mobile-tty serve bash`, cd, and run pi once remains how a folder gets its first session, from any terminal. This is the main piece of unfinished scope: `tests/e2e/folders.spec.js` still describes the old Start-here/Continue-here menu and needs a rewrite to match the flat, tap-to-join list, and the whole e2e suite needs a real run against WebKit to confirm (unverified here — only Chromium was available).
 
 ## Renderer: wterm, DOM over canvas
 
@@ -106,4 +116,4 @@ The threat model is narrow on purpose: a page on some other site your browser vi
 
 **An expired or invalidated login leaves an open client wedged**: the socket itself keeps working (auth is handshake-only), but when it drops, the reconnects are refused and the client retries forever with the stale screen up. The fix is the menu's **Reload app**, not a redirect -- the app cannot surface a login the socket no longer lets through.
 
-**Folder switching is not a way to run programs anywhere.** A viewer can ask to respawn the program, but only in a folder the server itself listed (pi history plus the one it started in). The client never sends a path the server didn't offer first.
+**Joining is not a way to run programs anywhere.** A viewer can only ever name a session id `GET /places` itself listed -- which only ever lists sessions pi's own store already has. The client never sends an id the server didn't offer first, and there is no path from a viewer straight to an arbitrary folder.

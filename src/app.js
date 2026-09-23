@@ -83,6 +83,26 @@ if (new URLSearchParams(location.search).has('debug')) {
   screen.addEventListener('beforeinput', e => recordInput(`before type=${e.inputType} data=${JSON.stringify(e.data)}`))
 }
 
+// Which session this viewer is looking at. Chosen client-side (from a tap in
+// the menu, or remembered from last time) rather than tracked by the server:
+// there is no longer one "current" session, since a phone, a browser tab and
+// any number of `attach`ed terminals can each be looking at a different one
+// at once. Remembered in localStorage as a per-viewer convenience only — it
+// is never read back by anything else and can come back empty without harm.
+let currentId = null
+const wsBase = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`
+const sessionUrl = id => `${wsBase}?session=${encodeURIComponent(id)}`
+
+const fetchPlaces = () => fetch('/places').then(r => r.json())
+
+/** The session to land on when the page first loads: last time's, if it is
+ *  still around, otherwise whatever `/places` says is most recent. */
+async function resolveInitialSession() {
+  const { current, sessions } = await fetchPlaces()
+  const remembered = localStorage.getItem('mtty-session')
+  return sessions.some(s => s.id === remembered) ? remembered : current
+}
+
 const term = new WTerm(screen, {
   cols: state.cols,
   rows: state.rows,
@@ -95,19 +115,19 @@ const term = new WTerm(screen, {
 })
 
 const conn = new TtydConnection({
-  url: `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`,
+  // A placeholder until resolveInitialSession() picks the real one in main() —
+  // never actually dialed, since connect() is not called until it has.
+  url: wsBase,
   socketFactory: (url, protocols) => new WebSocket(url, protocols),
   schedule: (fn, ms) => setTimeout(fn, ms),
   onOutput: bytes => { lastOutput = Date.now(); deliver(bytes) },
-  // The title is only restated when the session is (a fresh admission, or a
-  // switch to another folder), and the strip belongs to whichever program was
-  // running before that. Drop it rather than leave the last one's model and
-  // thinking level sitting under a different session; the new one's own line
-  // arrives within a poll.
-  onTitle: title => { document.title = title; clearFooter(); confirmSwitch(title) },
+  // The title is only restated on a fresh admission, and the strip belongs to
+  // whichever program was running before that. Drop it rather than leave the
+  // last one's model and thinking level sitting under a different session;
+  // the new one's own line arrives within a poll.
+  onTitle: title => { document.title = title; clearFooter() },
   onSize: ({ cols, rows }) => { snapshotPending = true; applyServerSize(cols, rows) },
   onFooter: showFooter,
-  onPlaces: showPlaces,
   onState: status => {
     // 'connecting' covers reconnectNow (which closes the old socket so its
     // onclose never fires) as well as every ordinary open.
@@ -622,127 +642,65 @@ function foldDiag(open) {
 
 function openMenu() {
   dismissKeyboard()
-  // Always on the ordinary view: the menu is mostly the folder switcher now,
-  // and opening into last time's diagnostics would be a puzzle.
+  // Always on the ordinary view: the menu is mostly the session list now, and
+  // opening into last time's diagnostics would be a puzzle.
   foldDiag(false)
   // Asked for on the way in rather than held from last time: pi is used from
   // other terminals too, so the list goes stale between openings.
-  conn.askPlaces()
+  fetchPlaces().then(showPlaces).catch(() => {})
   menu.hidden = false
 }
 
-// ---------------------------------------------------------------- folders
+// ---------------------------------------------------------------- sessions
 
 /**
- * The folders pi has history in, newest first, as the server found them.
+ * Every session pi has a transcript for, newest first, as the server found
+ * them — running ones and historical ones together, since which folder they
+ * are in matters less on a phone than how recently you touched them.
  *
- * Switching ends the program that is running now — there is one PTY, and it is
- * the session. So a row does not act on its own: tapping it opens the two ways
- * to go, which is the confirmation as much as it is the choice. An accidental
- * brush against a list on a phone must not be able to kill a working agent.
+ * Joining one never ends another: sessions keep running once left, so a row
+ * acts the moment it is tapped rather than asking for a second confirming tap
+ * the way ending a program used to need.
  */
-function showPlaces({ cwd, resume, places: list }) {
-  // The folder in front of you is always in the list, so this cannot miss.
-  placeNow.textContent = list.find(place => place.cwd === cwd).path
-  clearSwitching()
+function showPlaces({ sessions, total }) {
   places.textContent = ''
 
-  const go = (place, wantResume, row) => {
-    clearSwitching()
-    row.classList.remove('failed')
-    row.classList.add('switching')
-    // The menu deliberately stays open. A tap can fail to arrive at all — a
-    // sleeping phone, a dropped tunnel — or be refused by the server for a
-    // folder that has gone since the list was built, and both look exactly
-    // like a slow switch from here. Closing now would call all three a success.
-    switching = { path: place.path, row, timer: null }
-    if (!conn.switchTo(place.cwd, wantResume)) return void fellSilent()
-    switching.timer = setTimeout(fellSilent, SWITCH_ACK_MS)
-  }
-
-  for (const place of list) {
-    const row = document.createElement('div')
-    row.className = place.cwd === cwd ? 'place here' : 'place'
+  for (const sess of sessions) {
+    const row = document.createElement('button')
+    row.className = sess.id === currentId ? 'place here' : 'place'
+    if (sess.running) row.classList.add('running')
 
     const name = document.createElement('span')
     name.className = 'place-name'
-    name.textContent = place.name
+    name.textContent = sess.name
     const path = document.createElement('span')
     path.className = 'place-path'
-    path.textContent = place.path
+    path.textContent = sess.path
 
-    const head = document.createElement('button')
-    head.className = 'place-head'
-    head.append(name, path)
-
-    const actions = document.createElement('div')
-    actions.className = 'place-actions'
-    actions.hidden = true
-    actions.append(placeAction('Start here', () => go(place, false, row)))
-    // Only where continuing means something. `--continue` is pi's flag, and the
-    // server serves whatever program it was given.
-    if (resume) actions.append(placeAction('Continue here', () => go(place, true, row)))
-
-    head.addEventListener('click', () => {
-      const opening = actions.hidden
-      closePlaces()
-      actions.hidden = !opening
-      row.classList.toggle('open', opening)
-    })
-
-    row.append(head, actions)
+    row.append(name, path)
+    row.addEventListener('click', () => joinSession(sess))
     places.append(row)
+  }
+
+  // The server caps the list rather than reading and sending every session
+  // pi has ever kept a transcript for, which on a working machine can be a
+  // lot -- said plainly here rather than the list just quietly stopping.
+  if (total > sessions.length) {
+    const more = document.createElement('div')
+    more.className = 'place-more'
+    more.textContent = `+${total - sessions.length} older, not shown`
+    places.append(more)
   }
 }
 
-// Long enough to cover a real switch — the outgoing program gets a two-second
-// grace before it is killed, and the new one has to start after that — so this
-// is not a deadline the ordinary case can trip over.
-const SWITCH_ACK_MS = 5000
-
-let switching = null
-
-/**
- * The title, restated with the new folder, is the server saying it happened.
- *
- * There is no acknowledgement frame and none is needed: a switch that worked
- * always retitles, and matching the folder we asked for distinguishes it from
- * the retitle a plain reconnection sends.
- */
-function confirmSwitch(title) {
-  if (!switching || !title.endsWith(`— ${switching.path}`)) return
-  clearSwitching()
+/** Point the connection at another session's socket and reconnect to it. */
+function joinSession(sess) {
+  currentId = sess.id
+  localStorage.setItem('mtty-session', sess.id)
+  placeNow.textContent = sess.path
+  document.title = `${sess.name} — ${sess.path}`
+  conn.join(sessionUrl(sess.id))
   menu.hidden = true
-}
-
-/**
- * Nothing came back. Not the same as knowing it failed — a switch that is
- * merely slow still lands, and is still believed when it does, because this
- * only marks the row and leaves the wait running.
- */
-function fellSilent() {
-  switching.row.classList.remove('switching')
-  switching.row.classList.add('failed')
-}
-
-function clearSwitching() {
-  if (!switching) return
-  clearTimeout(switching.timer)
-  switching.row.classList.remove('switching')
-  switching = null
-}
-
-/** Collapse every row, so only one folder is ever asking to be chosen. */
-function closePlaces() {
-  for (const el of places.querySelectorAll('.place-actions')) el.hidden = true
-  for (const el of places.querySelectorAll('.place')) el.classList.remove('open')
-}
-
-function placeAction(label, act) {
-  const button = document.createElement('button')
-  button.textContent = label
-  button.addEventListener('click', act)
-  return button
 }
 
 /**
@@ -1009,6 +967,18 @@ async function main() {
   // by the bottom inset and leaves rows permanently below the fold. Refit once
   // the real values are in.
   requestAnimationFrame(() => fitGrid(applyLayout()))
+
+  currentId = await resolveInitialSession()
+  if (currentId) {
+    conn.url = sessionUrl(currentId)
+    localStorage.setItem('mtty-session', currentId)
+    // Named before the first connect, so the header reads right even if the
+    // menu is never opened this page-load: /places is already in hand.
+    fetchPlaces().then(({ sessions }) => {
+      const place = sessions.find(s => s.id === currentId)
+      if (place) placeNow.textContent = place.path
+    }).catch(() => {})
+  }
   conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
 
   checkForNewBuild()

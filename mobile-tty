@@ -1,7 +1,8 @@
 #!/bin/bash
 # The entry point. Everything here runs in the foreground and owns what it
-# starts, and the server owns the program: ending the server ends the session,
-# so there is no state left between invocations at all.
+# starts. The server holds every session it has been asked to join, in the
+# background, until it is stopped: ending the server (Ctrl-C here) ends all
+# of them at once, but nothing in front of it does.
 set -euo pipefail
 
 # Resolve through symlinks so ~/bin/mobile-tty -> repo/mobile-tty still finds
@@ -50,14 +51,19 @@ Loopback is the default because the tunnel reaches it from this machine. Use
 --lan to reach it from a phone on the same wifi, which puts an unauthenticated
 terminal on your network.
 
-The server owns the program. Every viewer sees the same screen, and the
-narrowest one decides the size, because this is meant to be read on a phone.
-`attach` joins a server that is already running; it does not start one. To end
-the session, exit the program, or press Ctrl-C in the terminal serving it.
+Joining a session spawns it in the background if it is not already running,
+and leaves it running when you look away — the phone, a browser tab and any
+number of `attach`ed terminals can each be looking at a different one at the
+same time, the way running pi a few times in different terminals would be.
+Whichever session a viewer is looking at, the narrowest viewer of that one
+decides its size, because this is meant to be read on a phone.
+`attach [name-or-path]` joins a server that is already running; it does not
+start one, and prompts if more than one session matches. To end a session for
+good rather than just leaving it, exit the program in it; Ctrl-C in the
+terminal serving all of them ends every session at once.
 
-The menu offers every folder pi has history in. Choosing one ends the program
-and starts it there instead, which is how you reach another project from a
-phone that has no shell to cd with.
+The menu offers every session pi has a transcript for, newest first, whether
+or not it is currently running.
 
 Set $MTTY_PASSWORD for a login page and a cookie: an opt-in alternative to
 Access for a network you already trust. Not a flag, because a command line is
@@ -171,7 +177,12 @@ case "$cmd" in
     # IPv6, so a URL pinned to 127.0.0.1 would never find a server that bound by
     # name. An IPv6 literal needs brackets to go in one.
     case "$bind" in *:*) host="[$bind]" ;; *) host=$bind ;; esac
-    exec node -e "import('./server/attach.js').then(m => m.attach({ url: 'ws://$host:$port/ws' }))"
+    # An optional name or path fragment picks which of the server's sessions to
+    # join, the same way the phone's own menu lists them; bare `attach` prompts
+    # when more than one matches. Passed through the environment, not baked
+    # into the -e source below, since it is arbitrary text you typed.
+    exec env MTTY_ATTACH_MATCH="${1:-}" node -e \
+      "import('./server/attach.js').then(m => m.attach({ url: 'ws://$host:$port/ws', match: process.env.MTTY_ATTACH_MATCH || undefined }))"
     ;;
   tunnel)
     [[ -f "$config" ]] || die "no $config -- run: mobile-tty setup <hostname>"

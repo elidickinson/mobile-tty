@@ -4,14 +4,14 @@
 // bytes when a client socket filled. So there are exactly three things a slow
 // viewer may do here — catch up, or be disconnected — and skipping bytes is not
 // among them. A disconnect is visible and recoverable; a gap is neither.
-import { OUTPUT, SET_TITLE, SET_SIZE, FOOTER, PLACES } from './protocol.js'
+import { OUTPUT, SET_TITLE, SET_SIZE, FOOTER } from './protocol.js'
 
 // Enough that a phone stalling through a tunnel for a few seconds rides it out,
 // small enough that one dead socket cannot grow into the process's problem.
 export const BACKLOG_LIMIT = 4 * 1024 * 1024
 
 // 1013 Try Again Later: the viewer is not wrong, it is behind.
-const TOO_FAR_BEHIND = 1013
+export const TOO_FAR_BEHIND = 1013
 
 export class Viewer {
   constructor(ws) {
@@ -61,9 +61,6 @@ export class Viewer {
 
   /** The status-strip line, verbatim from the extension's file. */
   footer(text) { this.send(FOOTER, text) }
-
-  /** The folders that can be switched to, and which one is current. */
-  places(text) { this.send(PLACES, text) }
 
   close(code, reason) { if (this.open) this.ws.close(code, reason) }
 }

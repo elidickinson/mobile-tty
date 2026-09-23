@@ -355,9 +355,12 @@ html, body {
 }
 
 .place + .place { border-top: 1px solid var(--edge); }
-.place.open { background: var(--soft); }
 
-.place-head {
+/* A row is a session, not a folder: tapping it joins straight away, so it is
+   a plain button rather than a two-step disclose-then-act control. Joining
+   never ends anything else, so there is no confirming second tap to design
+   for the way switching used to need. */
+.place {
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -370,28 +373,22 @@ html, body {
   text-align: left;
 }
 
-/* The folder is the name; the path is what tells two `extensions` apart. */
+/* The name is pi's folder; the path is what tells two `extensions` apart. */
 .place-path { color: var(--muted); font-size: 11px; }
 
 /* Where you already are, so a list of a hundred rows still says which is this. */
 .place.here .place-name::after { content: ' ·'; color: var(--accent); }
 
-/* After `here`, so a row that is both says the more urgent thing. Waiting is
-   not failure: `failed` means no answer came, and a late one is still taken. */
-.place.switching .place-name::after { content: ' — switching…'; color: var(--muted); }
-.place.failed .place-name::after { content: ' — no answer'; color: var(--bad); }
-.place.switching .place-actions button { opacity: .5; pointer-events: none; }
+/* Still running in the background, whether or not it is the one open now. */
+.place.running .place-name::after { content: ' ● '; color: var(--ok, #5fbf7c); }
+.place.here.running .place-name::after { content: ' ● ·'; color: var(--ok, #5fbf7c); }
 
-.place-actions { display: flex; gap: 8px; padding: 0 10px 10px; }
-
-.place-actions button {
-  flex: 1;
-  padding: 9px 8px;
-  border: 1px solid var(--edge);
-  border-radius: 8px;
-  background: var(--raised);
-  color: var(--fg);
-  font: 13px var(--font);
+.place-more {
+  padding: 9px 10px;
+  color: var(--muted);
+  font: 12px var(--font);
+  text-align: center;
+}
 }
 
 #place-now { text-transform: none; color: var(--faint); }
