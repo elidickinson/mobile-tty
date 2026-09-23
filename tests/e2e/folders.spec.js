@@ -304,39 +304,12 @@ test('another viewer ending a session tells the bystander why it left', async ({
     return sessions.find(session => session.id === id)?.running ?? false
   }, endedId)
   await expect.poll(isRunning, { timeout: 8_000 }).toBe(false)
-  await expect(page.locator('#places .place.previous')).toContainText('↩ beta')
   await expect.poll(() => page.evaluate(() => window.mtty.conn.started)).toBe(false)
   for (let i = 0; i < 20; i++) {
     await page.waitForTimeout(100)
     expect(await isRunning()).toBe(false)
     expect(await page.title()).toBe('mobile-tty')
   }
-})
-
-test('the previous-session pin returns to the last joined session', async ({ page }) => {
-  await ready(page)
-  const first = await page.evaluate(async () => {
-    const { sessions } = await fetch('/places').then(res => res.json())
-    return sessions.find(session => session.label === 'beta')
-  })
-  expect(first).toBeTruthy()
-
-  await openMenu(page)
-  await rows(page).filter({ hasText: '+ New session…' }).click()
-  await page.locator('#places .place.dir').filter({ hasText: 'beta' }).click()
-  await expect.poll(() => page.title()).toContain('/beta')
-  await expect.poll(() => storedPlace(page, 'mtty-prev'))
-    .toMatchObject({ id: first.id, cwd: first.cwd, processId: first.processId })
-
-  await openMenu(page)
-  const pin = page.locator('#places .place.previous')
-  await expect(pin).toContainText('↩ beta')
-  await pin.click()
-  await expect(page.locator('#menu')).toBeHidden()
-  await expect.poll(() => storedPlace(page, 'mtty-place'))
-    .toMatchObject({ id: first.id, cwd: first.cwd, processId: first.processId })
-  await expect.poll(() => page.title()).toContain('/beta')
-  await expect(page.locator('#screen')).toContainText('fake-pi ready')
 })
 
 test('a shared session row shows its viewer count', async ({ page, context }) => {

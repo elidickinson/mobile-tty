@@ -145,10 +145,8 @@ async function resolveInitialPlace() {
  * naming a session the screen is not showing.
  */
 function commitPlace(next) {
-  const previous = currentPlace
   currentPlace = next
   pendingPlace = null
-  if (previous && !samePlace(previous, currentPlace)) writePlace('mtty-prev', previous)
   writePlace('mtty-place', currentPlace)
   placeNow.textContent = currentPlace.path
   document.title = `${currentPlace.name} — ${currentPlace.path}`
@@ -213,7 +211,6 @@ const conn = new TtydConnection({
       const endedByThisViewer = endingIds.has(currentPlace?.processId)
       if (currentPlace) {
         const conversation = { id: currentPlace.id, cwd: currentPlace.cwd }
-        writePlace('mtty-prev', conversation)
         writePlace('mtty-place', conversation)
       }
       if (endedByThisViewer) clearMenuNotice()
@@ -759,8 +756,8 @@ function openMenu({ preserveNotice = false } = {}) {
 // ---------------------------------------------------------------- sessions
 
 /**
- * Every session pi has a transcript for, newest first, as the server found
- * them — running ones and historical ones together, since which folder they
+ * Every session pi has a transcript for, as the server found them: running
+ * ones first and then newest first, since which folder they
  * are in matters less on a phone than how recently you touched them.
  *
  * Joining one never ends another: sessions keep running once left, so a row
@@ -805,19 +802,6 @@ function showPlaces({ sessions, hidden, here }) {
   start.append(startName, startPath)
   start.addEventListener('click', () => showDirs({ sessions, here }))
   places.append(start)
-
-  const previous = sessions.find(sess => samePlace(sess, readPlace('mtty-prev')))
-  if (previous && !samePlace(previous, currentPlace)) {
-    const pin = document.createElement('button')
-    pin.className = previous.running ? 'place previous running' : 'place previous'
-    pin.dataset.sessionId = previous.id
-    const name = document.createElement('span')
-    name.className = 'place-name'
-    name.textContent = `↩ ${previous.label}`
-    pin.append(name, placePath(previous))
-    pin.addEventListener('click', () => joinSession(previous))
-    places.append(pin)
-  }
 
   for (const sess of sessions) {
     const wrap = document.createElement('div')

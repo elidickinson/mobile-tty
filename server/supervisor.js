@@ -94,7 +94,9 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         }
         row.processId = child.processId
       }
-      const sessions = rows.sort((a, b) => b.at - a.at).map(place => ({
+      // Live sessions lead the list -- what is alive is what is worth finding
+      // first -- and each group falls back to recency.
+      const sessions = rows.sort((a, b) => Boolean(b.processId) - Boolean(a.processId) || b.at - a.at).map(place => ({
         ...place,
         running: Boolean(place.processId),
         viewers: place.processId ? [...wss.clients].filter(c => c.readyState === c.OPEN && c.processId === place.processId).length : 0,

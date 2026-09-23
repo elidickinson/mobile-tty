@@ -167,6 +167,9 @@ test('GET /places lists every session and which ones are running', async () => {
     await until(() => a.output.length > 0, 'the joined session to be up')
 
     const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    // beta holds the newer transcript, so only a running-first list puts the
+    // joined alpha on top.
+    assert.equal(sessions[0].id, 'a', 'the running session is listed first')
     const byId = Object.fromEntries(sessions.map(s => [s.id, s]))
     assert.equal(byId.a.running, true, 'the session that was joined is running')
     assert.equal(byId.a.viewers, 1, 'the open join is counted')
