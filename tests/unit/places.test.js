@@ -1,8 +1,10 @@
 // The session list is read out of pi's store, which this does not own: the
 // files are pi's, the slugs are lossy, and half the directories on a working
 // machine name folders that no longer exist. So the questions are what counts
-// as a session at all, whether the path it reports is the real one, and
-// whether a folder with several sessions in it offers all of them.
+// as a session at all, whether the path it reports is the real one, whether a
+// folder with several sessions in it offers all of them, and whether a store
+// with far more history than a phone list can show is capped rather than read
+// in full every time.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
@@ -43,11 +45,12 @@ test('a folder with pi history is a session, named by the path in the file', asy
   const project = join(root, 'my-project')
   await withSession(sessionDir, project)
   try {
-    const sessions = await readPlaces({ sessionDir })
+    const { sessions, total } = await readPlaces({ sessionDir })
     assert.equal(sessions.length, 1)
     assert.equal(sessions[0].cwd, project, 'the cwd comes from the header, not the slug')
     assert.equal(sessions[0].name, 'my-project')
     assert.equal(sessions[0].id, 'x')
+    assert.equal(total, 1)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -58,7 +61,7 @@ test('a folder with a dash in its name survives the round trip the slug cannot',
   const project = join(root, 'pi-my-stuff')
   await withSession(sessionDir, project)
   try {
-    const [session] = await readPlaces({ sessionDir })
+    const { sessions: [session] } = await readPlaces({ sessionDir })
     assert.equal(session.cwd, project)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
@@ -67,7 +70,8 @@ test('a folder that no longer exists is not offered', async () => {
   const { root, sessionDir } = await store(async () => {})
   await withSession(sessionDir, join(root, 'deleted-long-ago'))
   try {
-    assert.deepEqual(await readPlaces({ sessionDir }), [], 'spawning there would only fail')
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions, [], 'spawning there would only fail')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -77,7 +81,7 @@ test('a folder with several sessions offers all of them, newest first', async ()
   await withSession(sessionDir, project, { id: 'old', at: Date.UTC(2026, 0, 1) })
   await withSession(sessionDir, project, { id: 'new', at: Date.UTC(2026, 5, 1) })
   try {
-    const sessions = await readPlaces({ sessionDir })
+    const { sessions } = await readPlaces({ sessionDir })
     assert.deepEqual(sessions.map(s => s.id), ['new', 'old'])
     assert.ok(sessions.every(s => s.cwd === project), 'both sessions are in the same folder')
   } finally { await rm(root, { recursive: true, force: true }) }
@@ -91,7 +95,23 @@ test('newest first, across every folder', async () => {
   await withSession(sessionDir, join(root, 'old'), { id: 'a', at: Date.UTC(2026, 0, 1) })
   await withSession(sessionDir, join(root, 'new'), { id: 'b', at: Date.UTC(2026, 5, 1) })
   try {
-    assert.deepEqual((await readPlaces({ sessionDir })).map(session => session.name), ['new', 'old'])
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions.map(session => session.name), ['new', 'old'])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('past `limit`, only the most recent sessions are read at all', async () => {
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  // The oldest one's body is unparseable JSON: if it were read at all, this
+  // would throw from inside readHeader rather than just being left out.
+  await withSession(sessionDir, project, { id: 'oldest', at: Date.UTC(2020, 0, 1), body: 'not json\n' })
+  await withSession(sessionDir, project, { id: 'middle', at: Date.UTC(2024, 0, 1) })
+  await withSession(sessionDir, project, { id: 'newest', at: Date.UTC(2026, 0, 1) })
+  try {
+    const { sessions, total } = await readPlaces({ sessionDir, limit: 2 })
+    assert.deepEqual(sessions.map(s => s.id), ['newest', 'middle'], 'the cap keeps the most recent, not an arbitrary subset')
+    assert.equal(total, 3, 'total still counts every candidate found, capped or not')
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -104,7 +124,8 @@ test('directories that name no folder are skipped, not fatal', async () => {
   await withSession(sessionDir, join(root, 'garbled'), { body: 'not json at all\n' })
   await withSession(sessionDir, join(root, 'other-shape'), { body: `${JSON.stringify({ type: 'message' })}\n` })
   try {
-    assert.deepEqual((await readPlaces({ sessionDir })).map(session => session.name), ['real'])
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions.map(session => session.name), ['real'])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -114,7 +135,8 @@ test('a session whose header has no id is skipped, not fatal', async () => {
     body: `${JSON.stringify({ type: 'session', version: 3, cwd: join(root, 'real') })}\n`,
   })
   try {
-    assert.deepEqual(await readPlaces({ sessionDir }), [])
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions, [])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -127,13 +149,13 @@ test('two paths to one folder report the one everything else uses', async () => 
   })
   await withSession(sessionDir, join(root, 'link-to-work'), { id: 'x' })
   try {
-    const [session] = await readPlaces({ sessionDir })
+    const { sessions: [session] } = await readPlaces({ sessionDir })
     assert.equal(session.cwd, join(root, 'work'))
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
 test('no store at all is an empty list, not an error', async () => {
-  assert.deepEqual(await readPlaces({ sessionDir: join(tmpdir(), 'mtty-nothing-here') }), [])
+  assert.deepEqual(await readPlaces({ sessionDir: join(tmpdir(), 'mtty-nothing-here') }), { sessions: [], total: 0 })
 })
 
 test('paths are shortened for a phone-width row', () => {

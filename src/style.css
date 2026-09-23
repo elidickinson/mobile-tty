@@ -313,6 +313,13 @@ html, body {
 .place.running .place-name::after { content: ' ● '; color: #5fbf7c; }
 .place.here.running .place-name::after { content: ' ● ·'; color: #5fbf7c; }
 
+.place-more {
+  padding: 9px 10px;
+  color: #6f6f7a;
+  font: 12px var(--font);
+  text-align: center;
+}
+
 #place-now { text-transform: none; color: #6f6f7a; }
 
 #diag {

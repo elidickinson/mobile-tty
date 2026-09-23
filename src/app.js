@@ -661,7 +661,7 @@ function openMenu() {
  * acts the moment it is tapped rather than asking for a second confirming tap
  * the way ending a program used to need.
  */
-function showPlaces({ sessions }) {
+function showPlaces({ sessions, total }) {
   places.textContent = ''
 
   for (const sess of sessions) {
@@ -679,6 +679,16 @@ function showPlaces({ sessions }) {
     row.append(name, path)
     row.addEventListener('click', () => joinSession(sess))
     places.append(row)
+  }
+
+  // The server caps the list rather than reading and sending every session
+  // pi has ever kept a transcript for, which on a working machine can be a
+  // lot -- said plainly here rather than the list just quietly stopping.
+  if (total > sessions.length) {
+    const more = document.createElement('div')
+    more.className = 'place-more'
+    more.textContent = `+${total - sessions.length} older, not shown`
+    places.append(more)
   }
 }
 

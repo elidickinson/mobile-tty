@@ -57,8 +57,9 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     if (path === '/places' && req.method === 'GET') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
-      const sessions = (await readPlaces({ sessionDir })).map(place => ({ ...place, running: registry.has(place.id) }))
-      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions })
+      const { sessions: found, total } = await readPlaces({ sessionDir })
+      const sessions = found.map(place => ({ ...place, running: registry.has(place.id) }))
+      const body = JSON.stringify({ current: sessions[0]?.id ?? null, sessions, total })
       return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     }
 
@@ -126,8 +127,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     ws.on('close', () => { closed = true; inner?.close() })
     ws.on('error', () => { closed = true; inner?.close() })
 
-    readPlaces({ sessionDir }).then(async places => {
-      const place = places.find(p => p.id === id)
+    readPlaces({ sessionDir }).then(async ({ sessions }) => {
+      const place = sessions.find(p => p.id === id)
       if (closed) return
       if (!id || !place) {
         ws.close(4004, 'no such session')

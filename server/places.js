@@ -23,6 +23,11 @@ export const PI_SESSIONS = process.env.PI_CODING_AGENT_SESSION_DIR ||
 // field, and there are a hundred of these to sweep.
 const HEADER_BYTES = 4096
 
+// A machine with months of history can have thousands of session files
+// across every folder pi has ever run in. Nothing needs to read all of them
+// to answer "what are the 50 most recent" -- see readPlaces below.
+const DEFAULT_LIMIT = 50
+
 /** `~/projects/x` rather than `/Users/you/projects/x`: phone-width matters. */
 export const shorten = path => {
   const home = homedir()
@@ -77,42 +82,64 @@ const canonical = async path => {
   return (await stat(real)).isDirectory() ? real : null
 }
 
-/** Every session recorded in one folder's directory under the store. */
-const readFolder = async dir => {
+/**
+ * Every `.jsonl` path in one folder, with its mtime and nothing else read.
+ *
+ * A stat is metadata only — no open, no content — which is what lets every
+ * candidate across the whole store be ranked before anything pays to parse
+ * one. Ranking first and reading second is the whole point of the split.
+ */
+const listFolder = async dir => {
   const files = (await readdir(dir)).filter(name => name.endsWith('.jsonl'))
-  const rows = await Promise.all(files.map(async name => {
+  return Promise.all(files.map(async name => {
     const file = join(dir, name)
-    const [header, stats] = await Promise.all([readHeader(file), stat(file)])
-    if (!header) return null
-    // pi keeps a slug for ever, so the store accumulates folders that no
-    // longer exist — mostly temp directories from benchmark runs. Spawning
-    // into one would fail, so it is not a session that can be offered.
-    const cwd = await canonical(header.cwd)
-    if (!cwd) return null
-    return { id: header.id, cwd, name: basename(cwd), path: shorten(cwd), at: stats.mtimeMs }
+    return { file, at: (await stat(file)).mtimeMs }
   }))
-  return rows.filter(Boolean)
+}
+
+/** A ranked candidate resolved into a session row, or null if it turns out
+ *  not to be one — pi's store accumulates files this does not recognise and
+ *  folders that no longer exist, same as before, just discovered later now. */
+const resolve = async ({ file, at }) => {
+  const header = await readHeader(file)
+  if (!header) return null
+  const cwd = await canonical(header.cwd)
+  if (!cwd) return null
+  return { id: header.id, cwd, name: basename(cwd), path: shorten(cwd), at }
 }
 
 /**
- * Every session pi has a transcript for, newest first.
+ * Every session pi has a transcript for, newest first, capped at `limit`.
+ *
+ * `total` counts every candidate file found, whether or not it made the cut
+ * (or turned out, once read, not to be a real session) — the caller's
+ * honest answer to "is this everything, or is more being held back."
  *
  * Sorted by recency because that is the only ordering a phone list can be
- * scrolled by usefully: what you want is nearly always in the first few rows.
+ * scrolled by usefully: what you want is nearly always in the first few rows,
+ * and past `limit` nothing on a real machine's worth of history is going to
+ * be — a stat of every file gets that ranking, and only the ones that make
+ * the cut are ever actually opened and parsed.
  */
-export async function readPlaces({ sessionDir = PI_SESSIONS } = {}) {
+export async function readPlaces({ sessionDir = PI_SESSIONS, limit = DEFAULT_LIMIT } = {}) {
   let entries
   try {
     entries = await readdir(sessionDir, { withFileTypes: true })
   } catch (err) {
     // No store is an answer rather than a fault: pi may simply never have run.
-    if (err.code === 'ENOENT') return []
+    if (err.code === 'ENOENT') return { sessions: [], total: 0 }
     throw err
   }
 
   const found = await Promise.all(entries
     .filter(entry => entry.isDirectory())
-    .map(entry => readFolder(join(sessionDir, entry.name))))
+    .map(entry => listFolder(join(sessionDir, entry.name))))
+  const candidates = found.flat().sort((a, b) => b.at - a.at)
 
-  return found.flat().sort((a, b) => b.at - a.at)
+  const sessions = []
+  for (const candidate of candidates.slice(0, limit)) {
+    const row = await resolve(candidate)
+    if (row) sessions.push(row)
+  }
+  return { sessions, total: candidates.length }
 }

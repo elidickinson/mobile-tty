@@ -100,6 +100,7 @@ Desktop can join too (same URL, or `./mobile-tty attach [name-or-path]` for a se
 - The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME` (and `$MTTY_PASSWORD`, above).
 - The session menu is built from pi's history under `~/.pi/agent/sessions`; `$PI_CODING_AGENT_SESSION_DIR` points it elsewhere.
 - A folder used for several separate pi conversations offers all of them in the list, not just the newest -- there's no more need to `/resume` inside pi to reach an older one in the same folder.
+- **The list itself is capped at the 50 most recent sessions**, not everything pi has ever kept a transcript for -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." The menu says how many older ones are being left out when there are any. This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
 - Up to 4 sessions run in the background at once by default; joining a fifth ends whichever one was looked at longest ago to make room.
 - Restarting the server ends every session; `./mobile-tty pi --session-id whatever` pins one to come back to.
 
