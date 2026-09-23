@@ -3,7 +3,7 @@
 import { test as base, expect } from '@playwright/test'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -41,12 +41,17 @@ export const test = base.extend({
     // more — a viewer only ever joins a session /places already lists — so
     // every test needs somewhere to land by default, seeded first (oldest)
     // so a spec that also asks for `folders` still lands on the newest of
-    // those unless it says otherwise.
+    // those. Each seed gets its own mtime, in the order seeded: the folder
+    // session (cwd) oldest, then the named folders, so the last folder named
+    // in `folders` is what a fresh viewer lands on.
+    const stamp = Date.UTC(2026, 0, 1)
     await seed(process.cwd())
-    for (const name of folders) {
+    for (const [i, name] of folders.entries()) {
       const cwd = join(root, name)
       await mkdir(cwd)
       await seed(cwd)
+      await utimes(join(sessionDir, `-${cwd.replaceAll('/', '-')}-`, 'a.jsonl'),
+        new Date(stamp + i + 1), new Date(stamp + i + 1))
     }
     await use({ root, sessionDir, at: name => join(root, name) })
     await rm(root, { recursive: true, force: true })

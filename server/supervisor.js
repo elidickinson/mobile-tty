@@ -15,6 +15,7 @@ import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
 import { PI_SESSIONS, readPlaces } from './places.js'
+import { BACKLOG_LIMIT, TOO_FAR_BEHIND } from './viewer.js'
 import { Registry } from './registry.js'
 
 const MAX_FRAME = 1024 * 1024
@@ -39,9 +40,9 @@ const connectChild = socketPath => new Promise((resolveConn, rejectConn) => {
   attempt()
 })
 
-export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, onListen, onExit }) {
+export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', onListen, onExit }) {
   const auth = new Auth(password)
-  const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap })
+  const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme })
 
   const loginHeaders = { 'content-type': 'text/html', 'cache-control': 'no-store' }
 
@@ -68,7 +69,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     let client
     try {
-      client = await buildClient()
+      client = await buildClient({ theme })
     } catch (err) {
       return void res.writeHead(500, { 'content-type': 'text/plain' }).end(String(err.message ?? err))
     }
@@ -109,6 +110,12 @@ export function createSupervisor({ port, bind, hostname, password, command, args
   // "start a new one" here — a viewer only ever names an id it learned from
   // `GET /places`, which only ever lists sessions pi's own store already has.
   wss.on('connection', (ws, req) => {
+    // Cleared before each ping and set by the pong that answers it.
+    alive.add(ws)
+    ws.on('pong', () => alive.add(ws))
+    ws.on('close', () => alive.delete(ws))
+    ws.on('error', () => alive.delete(ws))
+
     const url = new URL(req.url, 'http://internal')
     const id = url.searchParams.get('session')
 
@@ -141,7 +148,21 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       inner = sock
       for (const data of buffered) inner.send(data)
       buffered = null
-      inner.on('message', data => { if (ws.readyState === ws.OPEN) ws.send(data) })
+      // Same rule the session itself applies to its viewers (server/viewer.js):
+      // catch up, or be disconnected — never fall behind without bound. The
+      // check is before the write, so a socket that cannot take this chunk is
+      // cut loose instead of being sent part of it; the client's own reconnect
+      // picks the stream back up at a fresh snapshot. Cutting only this hop
+      // also stops the drain here from hiding a stalled phone from the child's
+      // own backlog limit, which is what would otherwise grow without bound.
+      inner.on('message', data => {
+        if (ws.readyState !== ws.OPEN) return
+        if (ws.bufferedAmount + data.length > BACKLOG_LIMIT) {
+          ws.close(TOO_FAR_BEHIND, 'too far behind')
+          return
+        }
+        ws.send(data)
+      })
       inner.on('close', () => ws.close(1001, 'session ended'))
       inner.on('error', () => ws.close(1011, 'lost the session'))
     }).catch(err => {
@@ -150,9 +171,17 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     })
   })
 
+  // Sockets we have pinged and are waiting on. Terminated on the second
+  // unanswered ping, exactly as one session's server does its viewers.
+  const alive = new WeakSet()
+
   const ping = setInterval(() => {
     for (const ws of wss.clients) {
       if (ws.readyState !== ws.OPEN) continue
+      // Unanswered from last round: a phone asleep behind a dead tunnel is gone
+      // for good, and holding its relay open holds memory on this side too.
+      if (!alive.has(ws)) { ws.terminate(); continue }
+      alive.add(ws)
       ws.ping()
     }
   }, 30_000)

@@ -8,9 +8,14 @@
 // the one just asked for.
 import { fork } from 'node:child_process'
 import { rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 const KILL_GRACE_MS = 2_000
+
+// pi's own flag for resuming by id, and the test for whether naming one means
+// anything: `bash --session-id x` is an invalid option, not a session.
+const SESSION_FLAG = '--session-id'
+const takesSessionId = command => basename(command) === 'pi'
 
 export class Registry {
   #children = new Map() // id -> { proc, socketPath, cwd, joinedAt, gone }
@@ -19,13 +24,15 @@ export class Registry {
   #programArgs
   #socketDir
   #cap
+  #theme
 
-  constructor({ cliPath, program, programArgs = [], socketDir, cap = 4 }) {
+  constructor({ cliPath, program, programArgs = [], socketDir, cap = 4, theme = 'dark' }) {
     this.#cliPath = cliPath
     this.#program = program
     this.#programArgs = programArgs
     this.#socketDir = socketDir
     this.#cap = cap
+    this.#theme = theme
   }
 
   has(id) { return this.#children.has(id) }
@@ -49,9 +56,15 @@ export class Registry {
       return existing
     }
 
-    this.#evictIfFull()
+    this.#evictIfFull(id)
 
     const socketPath = join(this.#socketDir, `mtty-${id}.sock`)
+    // The session id goes to pi alone: it is pi's own flag, and appending it to
+    // any other program's command line breaks it (bash exits on the unknown
+    // option before printing a prompt). The child learns its id from the socket
+    // path either way.
+    const program = this.#program
+    const runtimeArgs = takesSessionId(program) ? [...this.#programArgs, SESSION_FLAG, id] : [...this.#programArgs]
     // fork(), not spawn(): it wires up an IPC channel for free, and
     // --internal-socket's own handler listens for that channel's 'disconnect'
     // to end itself if this process ever goes away without the chance to ask
@@ -61,7 +74,7 @@ export class Registry {
     // fork()'s own default is to pipe them back here rather than drop them.
     const proc = fork(this.#cliPath, [
       '--internal-socket', socketPath, '--internal-cwd', cwd,
-      '--', this.#program, ...this.#programArgs, '--session-id', id,
+      '--theme', this.#theme, '--', program, ...runtimeArgs,
     ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] })
     // A child that cannot even start must not wedge the process that spawned
     // it — see the unhandled 'error' rule node-pty and node's own child_process
@@ -95,9 +108,12 @@ export class Registry {
     await Promise.all(this.running().map(id => this.end(id)))
   }
 
-  #evictIfFull() {
+  #evictIfFull(spawning) {
     if (this.#children.size < this.#cap) return
-    const [oldest] = this.running()
+    // The child being spawned right now is never the eviction candidate, even
+    // though it is not in the map yet: rejoining a session joined long ago is
+    // exactly the case an LRU exists to serve, not to refuse.
+    const [oldest] = this.running().filter(id => id !== spawning)
     // Not awaited: the new session can start spawning immediately, and the
     // evicted one's socket file is cleaned up by its own exit handler above.
     this.end(oldest).catch(err => console.error(`server: could not end session ${oldest}`, err))

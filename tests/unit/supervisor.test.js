@@ -29,9 +29,9 @@ const storeFor = async entries => {
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
 
-const start = async ({ sessionDir, cap = 4, socketDir }) => {
+const start = async ({ sessionDir, cap = 4, socketDir, command = fakePi, args = [] }) => {
   const supervisor = createSupervisor({
-    port: 0, bind: '127.0.0.1', command: fakePi, args: [], cliPath, sessionDir, cap,
+    port: 0, bind: '127.0.0.1', command, args, cliPath, sessionDir, cap,
     socketDir: socketDir ?? await mkdtemp(pathJoin(tmpdir(), 'mtty-sock-')),
   })
   await new Promise(r => supervisor.http.on('listening', r))
@@ -186,6 +186,57 @@ test('past the cap, the least recently joined session is ended to make room', as
       return byId.a === false && byId.b === true && byId.c === true
     }, 'the oldest session evicted and the rest still running', 8_000)
     c.close()
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+test('a program that is not pi gets no pi-only flags on its command line', async () => {
+  // bash exits on an unknown `--session-id` option, so if the flag reached it,
+  // the child would be gone before its socket answered and this join would
+  // land nowhere at all. sh with a marker program proves the pipe end to end:
+  // the program ran, and therefore its arguments were valid ones.
+  const store = await storeFor([{ name: 'plain', id: 'a' }])
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir, command: 'sh', args: ['-c', 'printf flagged-ready; sleep 30'] })
+  const viewer = join(base, 'a')
+  try {
+    await viewer.opened
+    await until(() => viewer.output.includes('flagged-ready'), 'the program having run')
+  } finally {
+    viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('rejoining a still-running session at a full cap evicts nothing', async () => {
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 2 })
+  const a = join(base, 'a')
+  try {
+    await a.opened
+    await until(() => a.output.includes('one'), 'the first session up')
+    a.send('hello\r')
+    await until(() => a.output.includes('ok: 5 chars'), 'the line landing')
+    a.close()
+    await a.closed
+
+    const b = join(base, 'b')
+    await b.opened
+    await until(() => b.output.includes('two'), 'the second session up')
+    b.close()
+    await b.closed
+
+    // Cap two, two sessions up, and the older one (`a`) is the LRU candidate.
+    // Rejoining it must serve the process already running — its in-memory
+    // history is the proof — and end nothing to make room.
+    const again = join(base, 'a')
+    await again.opened
+    await until(() => again.output.includes('ok: 5 chars'), 'the earlier line, still there')
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    const running = Object.fromEntries(sessions.map(s => [s.id, s.running]))
+    assert.deepEqual(running, { a: true, b: true })
+    again.close()
   } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })

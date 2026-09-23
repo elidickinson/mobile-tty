@@ -972,6 +972,12 @@ async function main() {
   if (currentId) {
     conn.url = sessionUrl(currentId)
     localStorage.setItem('mtty-session', currentId)
+    // Named before the first connect, so the header reads right even if the
+    // menu is never opened this page-load: /places is already in hand.
+    fetchPlaces().then(({ sessions }) => {
+      const place = sessions.find(s => s.id === currentId)
+      if (place) placeNow.textContent = place.path
+    }).catch(() => {})
   }
   conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
 
