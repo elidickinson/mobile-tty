@@ -49,7 +49,14 @@ const readHeader = async file => {
   let line
   try {
     const { buffer, bytesRead } = await handle.read(Buffer.alloc(HEADER_BYTES), 0, HEADER_BYTES, 0)
-    ;[line] = buffer.subarray(0, bytesRead).toString().split('\n')
+    // The newline is found in the raw bytes first, and only what's before it
+    // is ever decoded to a string — the header line is ~150 bytes, and the
+    // rest of this read window is usually the start of the transcript, which
+    // a UTF-8 decode of the whole buffer would pay to turn into a string for
+    // no reason: split() on a decoded copy throws that work away instead of
+    // skipping it.
+    const end = buffer.subarray(0, bytesRead).indexOf(0x0a)
+    line = buffer.toString('utf8', 0, end === -1 ? bytesRead : end)
   } finally {
     await handle.close()
   }
