@@ -22,6 +22,24 @@ export const test = base.extend({
   // Folders the picker should offer, named by a spec with test.use({ folders }).
   folders: [[], { option: true }],
   /**
+   * One browser process per test, rather than Playwright's worker-scoped one.
+   *
+   * WebKit leaks a thread in the driver's UI process for every page it creates,
+   * and none is reclaimed while that process lives. Past libdispatch's soft
+   * limit of 80 threads it stops serving synchronous work and a navigation
+   * stops committing: the page still boots and answers `evaluate`, but `goto`
+   * never returns — a failure that looks like a wedged app and is not one. This
+   * suite is long enough to cross it, and a per-page browser is where the leak
+   * dies.
+   */
+  context: async ({ playwright, browserName, _combinedContextOptions }, use) => {
+    const browser = await playwright[browserName].launch()
+    const context = await browser.newContext(_combinedContextOptions)
+    await use(context)
+    await context.close()
+    await browser.close()
+  },
+  /**
    * A session store shaped like pi's, holding history for folders made here.
    *
    * Every test gets one, empty by default. The point is as much what it keeps
