@@ -14,7 +14,7 @@
 // usefully be sorted one way -- by how recently each one was touched.
 // A session pi forked off another (a subagent's run) is no place of its own;
 // its writes still count as work for the session that spawned it, which is
-// what `activeSince` below knows to follow.
+// what `lastWrite` below knows to follow.
 import { createInterface } from 'node:readline'
 import { createReadStream } from 'node:fs'
 import { open, readdir, realpath, stat } from 'node:fs/promises'
@@ -306,31 +306,33 @@ const descendedFrom = async (candidate, root) => {
 }
 
 /**
- * Whether this session's world has been written at or after `since`: its own
- * transcript, or any session forked from it. pi records a subagent's run as a
- * session file naming its parent, so a session that looks parked may be doing
- * all its work through subagents -- and ending it would orphan that work.
+ * When anything in this session's world was last written: its own transcript,
+ * or any session forked from it. pi records a subagent's run as a session
+ * file naming its parent, so a session that looks parked may be doing all its
+ * work through subagents -- and ending it would orphan that work. Zero when
+ * there is nothing to read, as for a program that keeps no store.
  *
- * Only a file modified since `since` can say yes, so a settled folder costs
- * one readdir and nothing else. Forks nest -- a subagent's subagent names the
- * subagent's file -- so each recent file is followed up its parent chain
- * rather than assumed related, the folder holding sessions this one has
- * nothing to do with.
+ * Forks nest -- a subagent's subagent names the subagent's file -- so each
+ * file is followed up its parent chain rather than assumed related, the
+ * folder holding sessions this one has nothing to do with. A file that
+ * cannot beat the newest related one already seen is no look at all.
  */
-export async function activeSince(file, since) {
+export async function lastWrite(file) {
   const dir = dirname(file)
   let names
   try {
     names = await readdir(dir)
   } catch (err) {
-    if (err.code === 'ENOENT') return false
+    if (err.code === 'ENOENT') return 0
     throw err
   }
+  let last = 0
   for (const name of names) {
     if (!name.endsWith('.jsonl')) continue
     const candidate = join(dir, name)
-    if ((await stat(candidate)).mtimeMs < since) continue
-    if (await descendedFrom(candidate, file)) return true
+    const at = (await stat(candidate)).mtimeMs
+    if (at <= last) continue
+    if (await descendedFrom(candidate, file)) last = at
   }
-  return false
+  return last
 }

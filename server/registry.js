@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { activeSince } from './places.js'
+import { lastWrite } from './places.js'
 
 const KILL_GRACE_MS = 2_000
 // How long a session must be left alone before it can be ended to free a slot
@@ -149,8 +149,8 @@ export class Registry {
    * Free a slot for one more, or report that nothing may be ended. A session
    * is only a victim when nobody is watching it and nothing has touched it for
    * `idleMs` -- pi's own writes count, so a session that handed work to a
-   * subagent stays busy even while it sits at its prompt. Of those, the least
-   * recently touched one goes.
+   * subagent stays busy even while it sits at its prompt. Of those, the one
+   * written longest ago goes: what is in a session beats when it was opened.
    */
   async #makeRoom() {
     if (this.#children.size - this.#evicting.size < this.#cap) return true
@@ -161,10 +161,13 @@ export class Registry {
       if (child.sockets.length > 0) continue
       if (touchedAt(child) > since) continue
       const { file } = this.current(child)
-      if (file && await activeSince(file, since)) continue
-      victims.push(child)
+      // Writes to the transcript and to any fork of it, and the PTY where
+      // nothing is written down, as for a program that keeps no store.
+      const written = Math.max(child.lastOutputAt ?? 0, file ? await lastWrite(file) : 0)
+      if (written > since) continue
+      victims.push({ child, written })
     }
-    const victim = victims.sort((a, b) => touchedAt(a) - touchedAt(b))[0]
+    const victim = victims.sort((a, b) => a.written - b.written)[0]?.child
     if (!victim) return false
     this.#evicting.add(victim.processId)
     this.end(victim.processId, 'evicted to make room')

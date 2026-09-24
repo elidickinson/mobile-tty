@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readPlaces, shorten, activeSince } from '../../server/places.js'
+import { readPlaces, shorten, lastWrite } from '../../server/places.js'
 
 /** A session file the way pi writes one: a header line, then the conversation. */
 const sessionFile = (cwd, id) => [
@@ -172,11 +172,11 @@ test('a fork still writing keeps its parent busy, however deep it runs', async (
     // Somebody else's session in the same folder being written right now is
     // not this session's work.
     await withSession(sessionDir, project, { id: 'other', name: 'other.jsonl' })
-    assert.equal(await activeSince(parent, Date.now() - 60_000), false)
+    assert.ok(await lastWrite(parent) < Date.now() - 60_000, "somebody else's session writing is not this one's work")
 
     // A subagent's subagent, two links up the chain from the parent, is.
     await withSession(sessionDir, project, { id: 'deep', body: forkFile(project, 'deep', fork) })
-    assert.equal(await activeSince(parent, Date.now() - 60_000), true)
+    assert.ok(await lastWrite(parent) > Date.now() - 60_000, "a subagent's subagent counts as its parent's work")
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

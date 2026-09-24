@@ -1,0 +1,1 @@
+- A session row's `at` counts only its own transcript's writes -- its subagents' forked writes should count too.

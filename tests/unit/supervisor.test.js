@@ -256,7 +256,7 @@ test('pi exiting on its own reports a neutral close reason', async () => {
   }
 })
 
-test('past the cap, the least recently joined session is ended to make room', async () => {
+test('past the cap, the one written longest ago is ended to make room', async () => {
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }, { name: 'three', id: 'c' }])
   // Everything counts as idle here; which one goes is what is under test.
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 2, idleMs: 0 })
