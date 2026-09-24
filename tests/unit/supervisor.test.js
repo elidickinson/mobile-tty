@@ -97,6 +97,72 @@ test('joining an id the server never listed is refused', async () => {
   }
 })
 
+/** The /migrate route: the extension's door into this server. */
+const migrate = (page, body) =>
+  fetch(new URL('/migrate', page), { method: 'POST', body: JSON.stringify(body) })
+
+test('migrating a conversation spawns it, and the child serves its screen', async () => {
+  const store = await storeFor([{ name: 'target-project', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  try {
+    const res = await migrate(page, { id: 'a', cwd: store.at('target-project') })
+    assert.equal(res.status, 200)
+    const { processId } = await res.json()
+
+    // The spawn is the same one a tap on a saved conversation makes, so the
+    // child answers like any other: joined by its process id, it draws.
+    const viewer = join(base, 'a', { processId })
+    await viewer.opened
+    await until(() => viewer.output.includes('target-project'), 'the migrated screen')
+    viewer.close()
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('migrating a conversation the server does not list is refused', async () => {
+  const store = await storeFor([{ name: 'known', id: 'a' }])
+  const { supervisor, page } = await start({ sessionDir: store.sessionDir })
+  try {
+    // A conversation whose transcript is not under the store: pi without a
+    // saved session, or one from another store. Nothing to open, so say no.
+    const res = await migrate(page, { id: 'other', cwd: store.at('known') })
+    assert.equal(res.status, 404)
+    // And a cwd that does not resolve at all.
+    const missing = await migrate(page, { id: 'a', cwd: '/no/such/folder' })
+    assert.equal(missing.status, 422)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('migrating a conversation that is already running returns the live child', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  try {
+    const first = join(base, 'a')
+    await first.opened
+
+    const res = await migrate(page, { id: 'a', cwd: store.at('work') })
+    assert.equal(res.status, 200)
+    const { processId } = await res.json()
+
+    // One child, already running: the migration adopted it rather than
+    // spawning a second writer on the same transcript.
+    const second = join(base, 'a', { processId })
+    await second.opened
+    second.send('hello\r')
+    await until(() => first.output.includes('ok: 5 chars'), 'the living child hearing input')
+    second.close()
+    first.close()
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
 test('a session that cannot be reached is refused with its own code', async () => {
   const store = await storeFor([{ name: 'known', id: 'a' }])
   // A child that dies before it can listen: the join waits for it, gives up,

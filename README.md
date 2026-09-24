@@ -48,6 +48,16 @@ Optional: install the pi extension to show a `mobile-tty` indicator in pi's foot
 pi install "$PWD/pi-extensions/mtty-footer.ts"
 ```
 
+Optional second extension: `/mtty-migrate` moves the conversation a desktop pi is running to mobile-tty.
+```
+pi install "$PWD/pi-extensions/mtty-migrate.ts"
+```
+Type `/mtty-migrate` in a pi that you started directly in a terminal (not through mobile-tty). If a turn is running it waits for it to finish, then hands the conversation to a running mobile-tty server -- a supervised pi resumes the same transcript -- and pi exits, printing the line to follow it here:
+
+    To follow on this machine:  mobile-tty attach 1a2b3c4d
+
+The phone can join what it left running from that moment. If anything stands in the way (server not started, login refused, session pool full) pi stays open and says so. The extension is inert inside pi that already runs under mobile-tty, and needs the server's address (`$MTTY_PORT`, default 7681) and password (`$MTTY_PASSWORD`) as they were exported when `mobile-tty serve` ran.
+
 **Other ways to run it:**
 
 ```

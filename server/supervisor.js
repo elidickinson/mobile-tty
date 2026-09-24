@@ -146,6 +146,24 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted, processId: child.processId }))
     }
 
+    // Adopt a conversation a pi outside this server is running: the caller
+    // (the mtty-migrate extension) names the session and its folder, the
+    // transcript must be one this server lists, and the child that resumes it
+    // is the same spawn a tap on a saved conversation makes.
+    if (path === '/migrate' && req.method === 'POST') {
+      if (!auth.admits(req)) return void res.writeHead(401).end()
+      if (!originAllowedReq(req)) return void res.writeHead(403).end()
+      const body = await readBody(req, 2048).catch(() => null)
+      const wanted = body ? await canonical(body.cwd?.trim()) : null
+      if (!wanted) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such directory to start a session in')
+      const { sessions } = await readPlaces({ sessionDir })
+      const place = sessions.find(p => p.id === body.id && p.cwd === wanted)
+      if (!place) return void res.writeHead(404, { 'content-type': 'text/plain' }).end('no such conversation on this machine')
+      const child = await registry.ensure(place.id, place.cwd)
+      if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
+      return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: place.id, cwd: place.cwd, processId: child.processId }))
+    }
+
     if (path !== '/') return void res.writeHead(404).end()
     if (!auth.admits(req)) return void res.writeHead(200, loginHeaders).end(loginPage())
 
