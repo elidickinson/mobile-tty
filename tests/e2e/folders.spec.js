@@ -4,7 +4,7 @@
 // no transcript yet can be begun from the same list.
 import { test, expect, ready } from './helpers.js'
 import { readFile, unlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 test.use({ folders: ['alpha', 'beta'] })
 
@@ -20,9 +20,11 @@ const storedPlace = (page, key) => page.evaluate(key => {
   try { return JSON.parse(localStorage.getItem(key)) } catch { return null }
 }, key)
 
-// The cwd the test server starts in: this checkout's root, seeded oldest so a
-// spec that also asks for folders lands on the newest of those instead.
-const HERE = 'mobile-tty'
+// The cwd the test server starts in: the runner's own, seeded oldest so a
+// spec that also asks for folders lands on the newest of those instead. Taken
+// from the same value helpers seeds it with, so the checkout can be named
+// anything.
+const HERE = basename(process.cwd())
 
 test('the menu lists every session plus the row that starts one', async ({ page }) => {
   await ready(page)

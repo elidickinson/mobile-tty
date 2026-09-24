@@ -24,12 +24,12 @@ test('key bar sends the right bytes, and a sticky modifier applies once', async 
   await ready(page)
   await spySocket(page)
 
-  await page.getByRole('button', { name: 'Up', exact: true }).tap()
+  await page.getByRole('button', { name: 'Enter', exact: true }).tap()
   await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
   await page.getByRole('button', { name: 'Escape', exact: true }).tap()
 
   const log = await sentFrames(page)
-  expect(log).toContain('0\x1b[A')
+  expect(log).toContain('0\r')
   expect(log.at(-1)).toBe('0\x1b')            // ctrl+Escape is just Escape
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
 })
@@ -39,13 +39,69 @@ test('option sends the real alt-modified sequence, not esc plus the key', async 
   await spySocket(page)
 
   // alt+Up is one CSI sequence with a modifier parameter, not reproducible by
-  // sending Escape and Up as two separate presses.
+  // sending Escape and Up as two separate presses. The arrows are on the pad
+  // now, and arming alt on the bar leaves the pad open for exactly this.
+  await page.getByRole('button', { name: 'arrow pad', exact: true }).tap()
   await page.getByRole('button', { name: 'alt', exact: true }).tap()
   await page.getByRole('button', { name: 'Up', exact: true }).tap()
 
   const log = await sentFrames(page)
   expect(log.at(-1)).toBe('0\x1b[1;3A')
   await expect(page.getByRole('button', { name: 'alt', exact: true })).not.toHaveClass(/sticky/)
+})
+
+/** What opening the pad must not move: the grid, the terminal box, the bar. */
+const gridLayout = page => page.evaluate(() => {
+  const s = document.getElementById('screen').getBoundingClientRect()
+  const b = document.getElementById('bar').getBoundingClientRect()
+  return {
+    cols: window.mtty.state.cols,
+    rows: window.mtty.state.rows,
+    screen: [s.top, s.height],
+    bar: [b.top, b.height],
+  }
+})
+
+test('the arrow pad pops over the terminal and taps out of the way', async ({ page }) => {
+  await ready(page)
+  await spySocket(page)
+
+  const pad = page.locator('#pad')
+  await expect(pad).toBeHidden()
+  const before = await gridLayout(page)
+
+  await page.getByRole('button', { name: 'arrow pad', exact: true }).tap()
+  await expect(pad).toBeVisible()
+
+  // It floats over the terminal rather than taking room from it: the grid and
+  // everything around it are exactly where they were.
+  expect(await gridLayout(page)).toEqual(before)
+
+  await page.getByRole('button', { name: 'Down', exact: true }).tap()
+  expect((await sentFrames(page)).at(-1)).toBe('0\x1b[B')
+
+  // It stays open across presses, and a tap on the terminal dismisses it.
+  await expect(pad).toBeVisible()
+  await page.locator('#screen').tap()
+  await expect(pad).toBeHidden()
+})
+
+test('holding a pad arrow repeats it', async ({ page }) => {
+  await ready(page)
+  await spySocket(page)
+  await page.getByRole('button', { name: 'arrow pad', exact: true }).tap()
+
+  // The pad's arrows carry the bar's repeat, and only a held press shows it: a
+  // repeat regression would otherwise pass on the tap alone.
+  const arrow = page.getByRole('button', { name: 'Right', exact: true })
+  const box = await arrow.boundingBox()
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.waitForTimeout(900)
+  await page.mouse.up()
+
+  const held = (await sentFrames(page)).filter(f => f === '0\x1b[C')
+  expect(held.length).toBeGreaterThan(1)
 })
 
 test('pasted text is sent to the terminal', async ({ page }) => {
@@ -65,11 +121,12 @@ test('pasted text is sent to the terminal', async ({ page }) => {
 test('the key bar keys are big enough to hit', async ({ page }) => {
   await ready(page)
   const widths = await page.evaluate(() =>
-    [...document.querySelectorAll('#bar button')].map(b => b.getBoundingClientRect().width))
-  expect(widths.length).toBe(12)
-  // 12 equal-width buttons cannot all clear 34px in a 402px-wide phone (12 * 34
-  // > 402 even with zero gap or padding) — the floor moved down with the count.
-  expect(Math.min(...widths)).toBeGreaterThan(30)
+    [...document.querySelectorAll('#keys button')].map(b => b.getBoundingClientRect().width))
+  expect(widths.length).toBe(10)
+  // The arrows moved to the pad and Enter took their room. 12 equal-width
+  // buttons could not clear 34px in a 402px-wide phone (12 * 34 > 402 even
+  // with zero gap or padding); the 10 left clear 36px.
+  expect(Math.min(...widths)).toBeGreaterThan(36)
 })
 
 test('the keyboard key summons and dismisses the input', async ({ page }) => {
@@ -98,7 +155,7 @@ test('a sticky modifier reaches keys typed on the software keyboard', async ({ p
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).not.toHaveClass(/sticky/)
 })
 
-test('a bar tap never moves focus off the terminal input', async ({ page }) => {
+test('a bar or pad tap never moves focus off the terminal input', async ({ page }) => {
   await ready(page)
   const focused = () => page.evaluate(() => document.activeElement === document.querySelector('#screen textarea'))
   await page.evaluate(() => document.querySelector('#screen textarea').focus())
@@ -108,9 +165,14 @@ test('a bar tap never moves focus off the terminal input', async ({ page }) => {
   // (that blur is what ends editing). Every button drops out of tab order and
   // its default press is cancelled, so a tap leaves the textarea as the active
   // element and no blur reaches it.
-  const barButtons = page.locator('#bar button')
-  expect(await barButtons.evaluateAll(bs => bs.every(b => b.tabIndex === -1))).toBe(true)
+  const keyButtons = page.locator('#keys button, #pad button')
+  expect(await keyButtons.evaluateAll(bs => bs.every(b => b.tabIndex === -1))).toBe(true)
 
+  await page.getByRole('button', { name: 'Enter', exact: true }).tap()
+  await expect.poll(() => focused()).toBe(true)
+
+  // The pad's arrows have to hold the keyboard the same way.
+  await page.getByRole('button', { name: 'arrow pad', exact: true }).tap()
   await page.getByRole('button', { name: 'Up', exact: true }).tap()
   await expect.poll(() => focused()).toBe(true)
   // The deferred iOS blur, when it happens at all, lands ~40ms after the tap —
@@ -125,12 +187,13 @@ test('using a modifier leaves the rest of the bar alone', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'ctrl', exact: true })).toHaveClass(/sticky/)
 
   await page.locator('#screen textarea').pressSequentially('c')
-  expect(await page.locator('#bar button.sticky').count()).toBe(0)
+  expect(await page.locator('#keys button.sticky').count()).toBe(0)
 })
 
 test('a modified arrow is swallowed whole by the terminal app', async ({ page }) => {
   await ready(page)
   // ctrl+Right is \x1b[1;5C — six bytes, not the three of a bare arrow.
+  await page.getByRole('button', { name: 'arrow pad', exact: true }).tap()
   await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
   await page.getByRole('button', { name: 'Right', exact: true }).tap()
   await page.waitForTimeout(400)
@@ -146,12 +209,12 @@ test('a lone shift does not stay armed after a letter', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'shift', exact: true })).toHaveClass(/sticky/)
 
   await page.locator('#screen textarea').pressSequentially('a')
-  expect(await page.locator('#bar button.sticky').count()).toBe(0)
+  expect(await page.locator('#keys button.sticky').count()).toBe(0)
 })
 
 test('tapping a key before the core loads does not fault', async ({ page }) => {
   await page.goto('/')
-  await page.getByRole('button', { name: 'Up', exact: true }).tap()   // before init resolves
+  await page.getByRole('button', { name: 'Enter', exact: true }).tap()   // before init resolves
   await expect(page.locator('#screen')).toContainText('fake-pi ready')
   await expect(page.locator('#diag-overlay')).toBeHidden()
 })

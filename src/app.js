@@ -13,6 +13,7 @@ const stage = $('stage')
 const screen = $('screen')
 const bar = $('bar')
 const keys = $('keys')
+const pad = $('pad')
 const strip = $('strip')
 const toBottom = $('to-bottom')
 const menu = $('menu')
@@ -704,12 +705,22 @@ const BAR = [
   // already services -- the bar is for when the field is empty or the
   // keyboard's repeat has run out of line.
   { label: '⌫', key: 'Backspace', repeat: true },
+  { label: '⏎', key: 'Enter' },
+  { label: '↑↓', name: 'arrow pad', cls: 'wide', act: togglePad },
+  { label: '⌨', name: 'keyboard', cls: 'wide', act: () => toggleKeyboard() },
+  { label: '≡', name: 'menu', act: openMenu },
+]
+
+// The arrows live in a pad that pops over the terminal rather than on the bar:
+// four more keys squeeze every button under a thumb's width, and Enter needs
+// the room more. The pad stays open across presses -- walking a pi menu is an
+// arrow per step -- and an armed ⌃/⇧/⌥ on the bar reaches its keys like any
+// other.
+const PAD = [
   { label: '←', key: 'Left', repeat: true },
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
   { label: '→', key: 'Right', repeat: true },
-  { label: '⌨', name: 'keyboard', cls: 'wide', act: () => toggleKeyboard() },
-  { label: '≡', name: 'menu', act: openMenu },
 ]
 
 const terminalInput = () => term.input.textarea
@@ -734,6 +745,23 @@ function toggleKeyboard() {
   else term.focus()
 }
 
+/** Pop the arrow pad over the terminal, or away again. */
+function showPad(open) {
+  pad.hidden = !open
+  const toggle = keys.querySelector('button[name="arrow pad"]')
+  toggle.classList.toggle('sticky', open)
+  toggle.setAttribute('aria-expanded', String(open))
+}
+
+function togglePad() { showPad(pad.hidden) }
+
+// A tap outside the pad and the bar dismisses it. A bar press does not: an
+// armed ⌃/⇧/⌥ on the bar is how a modified arrow gets sent, so the pad stays
+// up while the modifier is armed.
+document.addEventListener('pointerdown', e => {
+  if (!pad.hidden && !e.target.closest('#pad, #keys')) showPad(false)
+})
+
 /** The keyboard would cover most of the menu, so it goes away first. */
 /** Show the readout instead of the menu, or the menu instead of the readout. */
 function foldDiag(open) {
@@ -744,6 +772,8 @@ function foldDiag(open) {
 
 function openMenu({ preserveNotice = false } = {}) {
   dismissKeyboard()
+  // The pad would cover the sheet the same way the keyboard does.
+  showPad(false)
   // Always on the ordinary view: the menu is mostly the session list now, and
   // opening into last time's diagnostics would be a puzzle.
   foldDiag(false)
@@ -1017,33 +1047,43 @@ function clearMods() {
   for (const b of keys.children) if (b.dataset.mod) b.classList.remove('sticky')
 }
 
-function buildBar() {
-  for (const item of BAR) {
-    const b = document.createElement('button')
-    b.textContent = item.label
-    b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
-    if (item.label.length > 1) b.classList.add('word')
-    if (item.cls) b.classList.add(item.cls)
-    // Keeps the terminal's textarea focused. A tap's default activation would
-    // move DOM focus to this (focusable) button, and iOS ends editing whenever
-    // focus leaves the editable input — that blur is what dismisses the
-    // keyboard. So the button drops out of tab order (tabindex=-1) and its
-    // default press/click is cancelled, which leaves the textarea focused
-    // through the whole gesture.
-    b.tabIndex = -1
-    b.addEventListener('pointerdown', e => e.preventDefault())
-    b.addEventListener('touchstart', e => e.preventDefault(), { passive: false })
-    if (item.mod) {
-      b.dataset.mod = item.mod
-      b.addEventListener('pointerdown', () => {
-        state.mods[item.mod] = !state.mods[item.mod]
-        b.classList.toggle('sticky', state.mods[item.mod])
-      })
-    } else {
-      bindRepeat(b, item.act ?? (() => sendKey(item.key)), item.repeat)
-    }
-    keys.appendChild(b)
+/** One bar or pad key, with the press plumbing that keeps the keyboard up. */
+function keyButton(item) {
+  const b = document.createElement('button')
+  b.textContent = item.label
+  b.setAttribute('aria-label', item.name ?? item.key ?? item.mod)
+  if (item.name) b.name = item.name
+  if (item.act === togglePad) {
+    // The pad's toggle also reports its state to screen readers.
+    b.setAttribute('aria-controls', 'pad')
+    b.setAttribute('aria-expanded', 'false')
   }
+  if (item.label.length > 1) b.classList.add('word')
+  if (item.cls) b.classList.add(item.cls)
+  // Keeps the terminal's textarea focused. A tap's default activation would
+  // move DOM focus to this (focusable) button, and iOS ends editing whenever
+  // focus leaves the editable input — that blur is what dismisses the
+  // keyboard. So the button drops out of tab order (tabindex=-1) and its
+  // default press/click is cancelled, which leaves the textarea focused
+  // through the whole gesture.
+  b.tabIndex = -1
+  b.addEventListener('pointerdown', e => e.preventDefault())
+  b.addEventListener('touchstart', e => e.preventDefault(), { passive: false })
+  if (item.mod) {
+    b.dataset.mod = item.mod
+    b.addEventListener('pointerdown', () => {
+      state.mods[item.mod] = !state.mods[item.mod]
+      b.classList.toggle('sticky', state.mods[item.mod])
+    })
+  } else {
+    bindRepeat(b, item.act ?? (() => sendKey(item.key)), item.repeat)
+  }
+  return b
+}
+
+function buildKeys() {
+  for (const item of BAR) keys.appendChild(keyButton(item))
+  for (const item of PAD) pad.appendChild(keyButton(item))
 }
 
 /** Fire on press, and for navigation keys keep firing while held. */
@@ -1221,7 +1261,7 @@ async function main() {
 
   document.documentElement.style.setProperty('--bar-h', `${KEY_BAR_H}px`)
   strip.style.flexBasis = `${state.cell.height}px`
-  buildBar()
+  buildKeys()
   buildMenu()
   $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })
   setScale(1)

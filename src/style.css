@@ -164,7 +164,10 @@ html, body {
   box-shadow: none;
 }
 
+/* `relative` so the pad can hang off the bar's top edge wherever the insets
+   and the strip leave it. */
 #bar {
+  position: relative;
   height: var(--bar-h);
   flex: 0 0 var(--bar-h);
   display: flex;
@@ -185,7 +188,37 @@ html, body {
   gap: 1px;
 }
 
-#bar button {
+/* The arrow pad: a floating cluster over the terminal, anchored to the bar's
+   top edge. Out of flow, so opening it never reflows the grid the way a second
+   bar row would. Above the way-back button, which it would otherwise sit
+   under. */
+#pad {
+  position: absolute;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  z-index: 6;
+  display: flex;
+  gap: 1px;
+  padding: 4px;
+  background: var(--edge);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgb(0 0 0 / .5);
+}
+
+#pad button {
+  width: 52px;
+  height: 52px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--chrome);
+  color: var(--fg);
+  font: 22px/1 var(--font);
+  touch-action: none;
+}
+
+#pad button:active { background: var(--pressed); }
+
+#keys button {
   flex: 1 1 0;
   min-width: 0;
   padding: 0;
@@ -196,10 +229,10 @@ html, body {
   touch-action: none;
 }
 
-#bar button:active { background: var(--pressed); }
-#bar button.word { font-size: 14px; }
-#bar button.wide { font-size: 22px; }
-#bar button.sticky { background: var(--accent); color: var(--on-accent); }
+#keys button:active { background: var(--pressed); }
+#keys button.word { font-size: 14px; }
+#keys button.wide { font-size: 22px; }
+#keys button.sticky { background: var(--accent); color: var(--on-accent); }
 
 /* The status strip: one grid row tall, under the keys. In standalone the
    home-indicator band absorbs it, so the terminal keeps every row; where there
