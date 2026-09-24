@@ -70,7 +70,9 @@ export async function start(url, { cwd }) {
   if (!res) return noServer(url)
   if (!res.ok) return console.error(res.status === 422
     ? `new: no such directory: ${cwd}`
-    : `new: could not start a session (HTTP ${res.status})`)
+    : res.status === 409
+      ? `new: ${await res.text()}`
+      : `new: could not start a session (HTTP ${res.status})`)
   const { processId } = await res.json()
   // attach() logs in again itself: the HttpOnly cookie reach got cannot cross
   // to the ws handshake, and a second login mints its own valid token.

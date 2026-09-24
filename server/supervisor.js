@@ -28,6 +28,9 @@ const MAX_FRAME = 1024 * 1024
 const CHILD_READY_MS = 8_000
 const CHILD_RETRY_MS = 75
 
+// Said the same way whether /start answers it or a socket closes on it.
+const POOL_FULL = 'every session is busy or watched; end one first'
+
 const connectChild = (socketPath, readyMs) => new Promise((resolveConn, rejectConn) => {
   const deadline = Date.now() + readyMs
   const attempt = () => {
@@ -42,9 +45,9 @@ const connectChild = (socketPath, readyMs) => new Promise((resolveConn, rejectCo
   attempt()
 })
 
-export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, onListen, onExit }) {
+export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, idleMs, onListen, onExit }) {
   const auth = new Auth(password)
-  const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme })
+  const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme, idleMs })
   // Where a brand-new session starts: given, or the folder this run was
   // launched from (see cli.js, which pins it before anything can chdir away).
   const defaultDir = newDir ?? process.cwd()
@@ -136,7 +139,10 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const wanted = body ? await canonical(body.cwd?.trim()) : null
       if (!wanted) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such directory to start a session in')
       const id = randomUUID()
-      const child = registry.start(id, wanted)
+      // Past the cap, starting one means ending one -- and the registry ends
+      // nothing busy or watched, so ask it first and refuse when it cannot.
+      const child = await registry.start(id, wanted)
+      if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted, processId: child.processId }))
     }
 
@@ -234,7 +240,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         const { sessions } = await readPlaces({ sessionDir })
         const place = cwd ? sessions.find(p => p.id === id && p.cwd === cwd) : sessions.find(p => p.id === id)
         if (!id || !place) { ws.close(4004, 'no such conversation'); return }
-        child = registry.ensure(id, place.cwd)
+        child = await registry.ensure(id, place.cwd)
+        if (!child) { ws.close(4006, POOL_FULL); return }
       }
       if (closed) return
       ws.processId = child.processId

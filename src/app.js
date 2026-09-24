@@ -950,7 +950,7 @@ async function startSession(dir) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ cwd: dir }),
   })
-  if (!res.ok) return
+  if (!res.ok) return showMenuNotice(await res.text().catch(() => 'could not start a session'))
   const { id, cwd, processId } = await res.json()
   // Name and path come from the PROCESS frame that follows, which is the one
   // formatting of a folder the header and the menu agree on.

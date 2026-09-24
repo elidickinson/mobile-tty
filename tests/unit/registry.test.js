@@ -18,7 +18,7 @@ test('a terminal that dies before it can listen is dropped, identity file and al
     // A cli that cannot be loaded: node starts and dies before listening, so
     // there is no session socket to talk to and no process left in the map.
     const registry = new Registry({ cliPath: join(socketDir, 'missing-cli.js'), program: 'nothing', socketDir })
-    const child = registry.start('some-conversation', socketDir)
+    const child = await registry.start('some-conversation', socketDir)
     await child.gone
     assert.equal(registry.child(child.processId), undefined)
     assert.deepEqual(registry.running(), [])

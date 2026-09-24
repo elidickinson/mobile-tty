@@ -37,6 +37,9 @@ const RESIZE_COALESCE_MS = 100
 // viewer could hand the PTY a hundred megabytes in one frame.
 const MAX_FRAME = 1024 * 1024
 const DEFAULT_SCROLLBACK = 1000
+// How often the PTY's movement is told to the supervisor at most. Ending idle
+// sessions is what it is for, so a word a second is all that needs.
+const ACTIVITY_MS = 1_000
 
 /**
  * `scrollback` is how much history a reconnecting viewer gets back. pi does not
@@ -137,7 +140,15 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
       }
     }
 
+    let announcedActivity = 0
     session.onData = data => {
+      // With no viewer attached, this PTY is the only sign the session is
+      // still being worked, and the supervisor checks before it ends one.
+      const now = Date.now()
+      if (process.send && now - announcedActivity >= ACTIVITY_MS) {
+        announcedActivity = now
+        process.send({ mtty: 'activity', at: now })
+      }
       // Viewers first: the mirror is a convenience, and a failure in it must not
       // cost anyone bytes it was about to be sent.
       for (const viewer of viewers) {

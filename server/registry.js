@@ -6,10 +6,18 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { activeSince } from './places.js'
 
 const KILL_GRACE_MS = 2_000
+// How long a session must be left alone before it can be ended to free a slot
+// for a new one. Generous on purpose: the question is whether anyone is
+// coming back to this in the next few minutes, not whether the model is done.
+const IDLE_MS = 10 * 60_000
 const SESSION_EXTENSION = fileURLToPath(new URL('../pi-extensions/mtty-session.ts', import.meta.url))
 const takesSessionId = command => basename(command) === 'pi'
+
+/** When this PTY was last seen doing anything at all. */
+const touchedAt = child => Math.max(child.joinedAt, child.lastOutputAt ?? 0)
 
 export class Registry {
   #children = new Map() // processId -> child
@@ -21,14 +29,16 @@ export class Registry {
   #theme
   #nextSocket = 0
   #evicting = new Set()
+  #idleMs
 
-  constructor({ cliPath, program, programArgs = [], socketDir, cap = 4, theme = 'dark' }) {
+  constructor({ cliPath, program, programArgs = [], socketDir, cap = 4, theme = 'dark', idleMs = IDLE_MS }) {
     this.#cliPath = cliPath
     this.#program = program
     this.#programArgs = programArgs
     this.#socketDir = socketDir
     this.#cap = cap
     this.#theme = theme
+    this.#idleMs = idleMs
   }
 
   child(processId) { return this.#children.get(processId) }
@@ -59,8 +69,9 @@ export class Registry {
     return [...this.#children.values()].sort((a, b) => a.joinedAt - b.joinedAt)
   }
 
-  /** Join a current conversation if it is live, otherwise start another PTY. */
-  ensure(sessionId, cwd) {
+  /** Join a current conversation if it is live, otherwise start another PTY.
+   *  Null when the pool is full and nothing in it may be ended to make room. */
+  async ensure(sessionId, cwd) {
     const existing = this.owner(sessionId, cwd)
     if (existing) {
       existing.joinedAt = Date.now()
@@ -69,8 +80,8 @@ export class Registry {
     return this.start(sessionId, cwd)
   }
 
-  start(sessionId, cwd) {
-    this.#evictIfFull()
+  async start(sessionId, cwd) {
+    if (!(await this.#makeRoom())) return null
     const processId = randomUUID()
     // Short, unique names within this supervisor's private directory. Neither
     // transport nor runtime identity is derived from a Pi conversation ID.
@@ -105,6 +116,9 @@ export class Registry {
         .finally(resolveGone)
     }
     proc.on('exit', settle)
+    // The child says when its PTY last moved. At zero viewers it is the only
+    // sign that somebody is still working through this session.
+    proc.on('message', msg => { if (msg?.mtty === 'activity') child.lastOutputAt = msg.at })
     proc.on('error', err => {
       // No pid means the fork itself failed and there is no exit to come.
       // Anything else is a live child reporting a signal or IPC problem, which
@@ -131,12 +145,31 @@ export class Registry {
     await Promise.all(this.running().map(child => this.end(child.processId, 'server stopped')))
   }
 
-  #evictIfFull() {
-    if (this.#children.size - this.#evicting.size < this.#cap) return
-    const oldest = this.running().find(child => !this.#evicting.has(child.processId))
-    this.#evicting.add(oldest.processId)
-    this.end(oldest.processId, 'evicted to make room')
-      .catch(err => console.error(`server: could not end terminal ${oldest.processId}`, err))
-      .finally(() => this.#evicting.delete(oldest.processId))
+  /**
+   * Free a slot for one more, or report that nothing may be ended. A session
+   * is only a victim when nobody is watching it and nothing has touched it for
+   * `idleMs` -- pi's own writes count, so a session that handed work to a
+   * subagent stays busy even while it sits at its prompt. Of those, the least
+   * recently touched one goes.
+   */
+  async #makeRoom() {
+    if (this.#children.size - this.#evicting.size < this.#cap) return true
+    const since = Date.now() - this.#idleMs
+    const victims = []
+    for (const child of this.running()) {
+      if (this.#evicting.has(child.processId)) continue
+      if (child.sockets.length > 0) continue
+      if (touchedAt(child) > since) continue
+      const { file } = this.current(child)
+      if (file && await activeSince(file, since)) continue
+      victims.push(child)
+    }
+    const victim = victims.sort((a, b) => touchedAt(a) - touchedAt(b))[0]
+    if (!victim) return false
+    this.#evicting.add(victim.processId)
+    this.end(victim.processId, 'evicted to make room')
+      .catch(err => console.error(`server: could not end terminal ${victim.processId}`, err))
+      .finally(() => this.#evicting.delete(victim.processId))
+    return true
   }
 }

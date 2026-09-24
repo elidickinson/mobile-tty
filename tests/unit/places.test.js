@@ -10,13 +10,18 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readPlaces, shorten } from '../../server/places.js'
+import { readPlaces, shorten, activeSince } from '../../server/places.js'
 
 /** A session file the way pi writes one: a header line, then the conversation. */
 const sessionFile = (cwd, id) => [
   JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-08-13T02:43:46.562Z', cwd }),
   JSON.stringify({ type: 'message', message: { role: 'user' } }),
 ].join('\n')
+
+/** A session pi forked off another: the same header, naming the file it came
+ *  from. That is how a subagent's run is filed. */
+const forkFile = (cwd, id, parent) => JSON.stringify(
+  { type: 'session', version: 3, id, timestamp: '2026-08-13T02:43:46.562Z', cwd, parentSession: parent })
 
 const store = async build => {
   // Resolved up front: on macOS the temp root is reached through a symlink, and
@@ -141,6 +146,61 @@ test('a session whose header has no id is skipped, not fatal', async () => {
     const { sessions } = await readPlaces({ sessionDir })
     assert.deepEqual(sessions, [])
   } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a session forked from another is not a place of its own', async () => {
+  // A subagent's run is filed as its own session naming its parent; the list
+  // shows the session that spawned it, not the machinery behind it.
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  try {
+    const parent = await withSession(sessionDir, project, { id: 'mine' })
+    await withSession(sessionDir, project, { id: 'sub', body: forkFile(project, 'sub', parent) })
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions.map(s => s.id), ['mine'])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a fork still writing keeps its parent busy, however deep it runs', async () => {
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  const long = Date.now() - 600_000
+  try {
+    const parent = await withSession(sessionDir, project, { id: 'mine', at: long })
+    const fork = await withSession(sessionDir, project,
+      { id: 'sub', body: forkFile(project, 'sub', parent), at: long })
+    // Somebody else's session in the same folder being written right now is
+    // not this session's work.
+    await withSession(sessionDir, project, { id: 'other', name: 'other.jsonl' })
+    assert.equal(await activeSince(parent, Date.now() - 60_000), false)
+
+    // A subagent's subagent, two links up the chain from the parent, is.
+    await withSession(sessionDir, project, { id: 'deep', body: forkFile(project, 'deep', fork) })
+    assert.equal(await activeSince(parent, Date.now() - 60_000), true)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a session file in a format this reader does not know is reported, once', async () => {
+  // pi moving its store to a new header shape must not fail silently: the
+  // list would empty and eviction would stop seeing subagent work at all.
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  const future = JSON.stringify(
+    { v: 4, kind: 'header', id: 'mine', storageVersion: 1, createdAt: Date.now(), cwd: project })
+  await withSession(sessionDir, project, { id: 'mine', body: future })
+  await withSession(sessionDir, project, { id: 'also', name: 'also.jsonl', body: future })
+  const said = []
+  const was = console.error
+  console.error = (...args) => said.push(args.join(' '))
+  try {
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions, [], 'a header it cannot read is no session it can list')
+  } finally {
+    console.error = was
+    await rm(root, { recursive: true, force: true })
+  }
+  assert.equal(said.length, 1, 'reported once, not once per file')
+  assert.match(said[0], /kind=header v=4/)
 })
 
 test('two paths to one folder report the one everything else uses', async () => {

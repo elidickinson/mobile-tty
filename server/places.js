@@ -12,11 +12,14 @@
 // One row per session, not per folder: a folder used for several concurrent
 // or historical conversations offers all of them, since a phone list can only
 // usefully be sorted one way -- by how recently each one was touched.
+// A session pi forked off another (a subagent's run) is no place of its own;
+// its writes still count as work for the session that spawned it, which is
+// what `activeSince` below knows to follow.
 import { createInterface } from 'node:readline'
 import { createReadStream } from 'node:fs'
 import { open, readdir, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 // pi's own variable for moving its store, so a machine that has moved it is
 // still described correctly here rather than by where it usually lives.
@@ -67,6 +70,17 @@ export const shorten = path => {
  */
 export const placeNames = cwd => ({ name: basename(cwd), path: shorten(cwd) })
 
+/** Formats already reported, so a store that has moved on says so once rather
+ *  than once per row of every listing. */
+const unknownFormats = new Set()
+
+const noteUnknownFormat = (file, header) => {
+  const shape = `kind=${header.kind ?? header.type ?? '?'} v=${header.v ?? header.version ?? '?'}`
+  if (unknownFormats.has(shape)) return
+  unknownFormats.add(shape)
+  console.error(`server: ${file} is a session file this reader does not understand (${shape})`)
+}
+
 /**
  * A session file's header, or null if it does not look like one.
  *
@@ -74,7 +88,10 @@ export const placeNames = cwd => ({ name: basename(cwd), path: shorten(cwd) })
  * about. A line that does not parse, or lacks an id, is a different thing:
  * the directory holds something this does not recognise, which is a fact
  * about the file rather than a fault, and the answer is simply that there is
- * no session here.
+ * no session here. A header that does say whose session it is, but in a shape
+ * this reader does not know, is different again: pi has moved its store on,
+ * and answering "no session here" quietly would empty the menu and leave
+ * eviction blind to subagent work, so it is reported instead.
  */
 const readHeader = async file => {
   const handle = await open(file, 'r')
@@ -91,9 +108,15 @@ const readHeader = async file => {
   } catch {
     return null
   }
-  return header?.type === 'session' && typeof header.cwd === 'string' && typeof header.id === 'string'
-    ? header
-    : null
+  if (header?.type === 'session' && typeof header.cwd === 'string' && typeof header.id === 'string') {
+    return header
+  }
+  // pi's next session format lands here first: a header that identifies its
+  // session, but not in any shape above.
+  if (header?.kind === 'header' || (typeof header?.id === 'string' && typeof header?.cwd === 'string')) {
+    noteUnknownFormat(file, header)
+  }
+  return null
 }
 
 /**
@@ -216,6 +239,9 @@ const listFolder = async dir => {
 const resolve = async ({ file, at }) => {
   const header = await readHeader(file)
   if (!header || !ID_SHAPE.test(header.id)) return null
+  // A subagent's run is filed as a session of its own naming its parent, and
+  // belongs to the session that spawned it rather than to the phone list.
+  if (header.parentSession) return null
   const cwd = await canonical(header.cwd)
   if (!cwd) return null
   const size = (await stat(file)).size
@@ -267,4 +293,44 @@ export async function readPlaces({ sessionDir = PI_SESSIONS, limit = DEFAULT_LIM
     if (row) sessions.push(row)
   }
   return { sessions, total: candidates.length }
+}
+
+/** Whether `candidate` is `root`, or was forked from something that was. */
+const descendedFrom = async (candidate, root) => {
+  // Fork chains are subagent-deep; anything longer is not one of ours.
+  for (let at = candidate, up = 0; at && up < 16; up++) {
+    if (at === root) return true
+    at = (await readHeader(at))?.parentSession
+  }
+  return false
+}
+
+/**
+ * Whether this session's world has been written at or after `since`: its own
+ * transcript, or any session forked from it. pi records a subagent's run as a
+ * session file naming its parent, so a session that looks parked may be doing
+ * all its work through subagents -- and ending it would orphan that work.
+ *
+ * Only a file modified since `since` can say yes, so a settled folder costs
+ * one readdir and nothing else. Forks nest -- a subagent's subagent names the
+ * subagent's file -- so each recent file is followed up its parent chain
+ * rather than assumed related, the folder holding sessions this one has
+ * nothing to do with.
+ */
+export async function activeSince(file, since) {
+  const dir = dirname(file)
+  let names
+  try {
+    names = await readdir(dir)
+  } catch (err) {
+    if (err.code === 'ENOENT') return false
+    throw err
+  }
+  for (const name of names) {
+    if (!name.endsWith('.jsonl')) continue
+    const candidate = join(dir, name)
+    if ((await stat(candidate)).mtimeMs < since) continue
+    if (await descendedFrom(candidate, file)) return true
+  }
+  return false
 }

@@ -29,9 +29,9 @@ const storeFor = async entries => {
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
 
-const start = async ({ sessionDir, cap = 4, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath }) => {
+const start = async ({ sessionDir, cap = 4, idleMs, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath }) => {
   const supervisor = createSupervisor({
-    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, pingMs, childReadyMs,
+    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, idleMs, pingMs, childReadyMs,
     socketDir: socketDir ?? await mkdtemp(pathJoin(tmpdir(), 'mtty-sock-')),
   })
   await new Promise(r => supervisor.http.on('listening', r))
@@ -258,7 +258,8 @@ test('pi exiting on its own reports a neutral close reason', async () => {
 
 test('past the cap, the least recently joined session is ended to make room', async () => {
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }, { name: 'three', id: 'c' }])
-  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 2 })
+  // Everything counts as idle here; which one goes is what is under test.
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 2, idleMs: 0 })
   const a = join(base, 'a')
   try {
     await a.opened
@@ -290,31 +291,49 @@ test('past the cap, the least recently joined session is ended to make room', as
   }
 })
 
-test('evicting a session pulls the relay out from under its viewer at once', async () => {
+test('a watched session is never ended to make room', async () => {
+  // Cap one, one session up and still on somebody's screen: the join that
+  // would need the room is refused instead, and the viewer keeps what it has.
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
-  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cap: 1 })
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 1 })
   const a = join(base, 'a')
   try {
     await a.opened
     await until(() => a.output.includes('one'), 'the first session up')
 
-    // The next join evicts `a` while this viewer is still attached to it.
-    // Whatever the child does on the way down — a graceful close, or a socket
-    // that simply stops speaking — the browser side must hear an ending within
-    // a beat, not hang on a dead pipe until the OS gives up on it.
-    const closing = a.closed
     const b = join(base, 'b')
-    await b.opened
-    // The losing arm's timeout must be cleared, or node --test sits on it for
-    // the full 8s after the test itself has passed.
-    let cutoff
-    const why = await Promise.race([
-      closing.then(code => (clearTimeout(cutoff), code)),
-      new Promise((_, bad) => { cutoff = setTimeout(() => bad(new Error('viewer never told')), 8_000) }),
-    ])
-    assert.equal(why, 1001, `expected a clean end, got ${why}`)
-    assert.equal((await a.closeDetails).reason, 'evicted to make room')
-    b.close()
+    const { code, reason } = await b.closeDetails
+    assert.equal(code, 4006, 'the join is refused rather than anything being ended')
+    assert.equal(reason, 'every session is busy or watched; end one first')
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    assert.equal(sessions.find(s => s.id === 'a').running, true, 'the watched session is untouched')
+    a.send('hello\r')
+    await until(() => a.output.includes('ok: 5 chars'), 'the viewer still has its terminal')
+  } finally {
+    a.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a session nobody is watching is kept while it is still busy', async () => {
+  // The viewer is gone, but the session was worked on moments ago: pi may be
+  // mid-reply, and work it handed to a subagent lives in a forked session of
+  // its own. Only something quiet for idleMs is a victim, so this is refused
+  // too -- a fresh idleMs, and nothing about timing has to be guessed.
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cap: 1, idleMs: 60_000 })
+  const a = join(base, 'a')
+  try {
+    await a.opened
+    await until(() => a.output.includes('one'), 'the first session up')
+    a.send('hello\r')
+    await until(() => a.output.includes('ok: 5 chars'), 'the line landing')
+    a.close()
+    await a.closed
+
+    const b = join(base, 'b')
+    assert.equal((await b.closeDetails).code, 4006)
   } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
