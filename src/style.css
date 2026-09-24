@@ -191,7 +191,8 @@ html, body {
 /* The arrow pad: a floating cluster over the terminal, anchored to the bar's
    top edge. Out of flow, so opening it never reflows the grid the way a second
    bar row would. Above the way-back button, which it would otherwise sit
-   under. */
+   under. Translucent and frosted: it hangs over live output, which stays
+   readable through it without competing with the arrows. */
 #pad {
   position: absolute;
   right: 8px;
@@ -200,9 +201,11 @@ html, body {
   display: flex;
   gap: 1px;
   padding: 4px;
-  background: var(--edge);
+  background: color-mix(in srgb, var(--edge) 65%, transparent);
   border-radius: 10px;
   box-shadow: 0 4px 14px rgb(0 0 0 / .5);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
 }
 
 #pad button {
@@ -210,13 +213,13 @@ html, body {
   height: 52px;
   border: 0;
   border-radius: 6px;
-  background: var(--chrome);
+  background: color-mix(in srgb, var(--chrome) 65%, transparent);
   color: var(--fg);
   font: 22px/1 var(--font);
   touch-action: none;
 }
 
-#pad button:active { background: var(--pressed); }
+#pad button:active { background: color-mix(in srgb, var(--pressed) 65%, transparent); }
 
 #keys button {
   flex: 1 1 0;
