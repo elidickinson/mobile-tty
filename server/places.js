@@ -295,12 +295,21 @@ export async function readPlaces({ sessionDir = PI_SESSIONS, limit = DEFAULT_LIM
   return { sessions, total: candidates.length }
 }
 
-/** Whether `candidate` is `root`, or was forked from something that was. */
+/** Whether `candidate` is `root`, or was forked from something that was.
+ *  Paths are resolved before they are compared: pi writes `parentSession` the
+ *  way it spells the path, and an alias of one folder is that folder. A file
+ *  gone mid-walk ends the chain -- nothing to prove either way, and not worth
+ *  failing a listing over. */
 const descendedFrom = async (candidate, root) => {
-  // Fork chains are subagent-deep; anything longer is not one of ours.
-  for (let at = candidate, up = 0; at && up < 16; up++) {
-    if (at === root) return true
-    at = (await readHeader(at))?.parentSession
+  try {
+    const wanted = await realpath(root)
+    // Fork chains are subagent-deep; anything longer is not one of ours.
+    for (let at = candidate, up = 0; at && up < 16; up++) {
+      if ((await realpath(at)) === wanted) return true
+      at = (await readHeader(at))?.parentSession
+    }
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
   }
   return false
 }

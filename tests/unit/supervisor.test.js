@@ -4,7 +4,7 @@
 // used to live in server.test.js's switching section.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -284,6 +284,57 @@ test('past the cap, the one written longest ago is ended to make room', async ()
       const byId = Object.fromEntries(sessions.map(s => [s.id, s.running]))
       return byId.a === false && byId.b === true && byId.c === true
     }, 'the oldest session evicted and the rest still running', 8_000)
+    c.close()
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+/** Point a child at a fixture transcript, the way the pi extension points a
+ *  real one at its own. */
+const writesTo = async (supervisor, sessionId, file) => {
+  await until(() => supervisor.registry.running().some(c => c.sessionId === sessionId), `session ${sessionId} up`)
+  const child = supervisor.registry.running().find(c => c.sessionId === sessionId)
+  await writeFile(child.identityPath, JSON.stringify({ id: sessionId, cwd: child.cwd, at: Date.now(), file }))
+}
+
+test('a victim goes by when it was written, not when it was opened', async () => {
+  // A program that writes nothing to its PTY, so transcript mtimes are the
+  // only recency there is: the one written longest ago must go even though it
+  // is the one opened most recently.
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }, { name: 'three', id: 'c' }])
+  const { supervisor, base, page } = await start({
+    sessionDir: store.sessionDir, cap: 2, idleMs: 0, command: 'sleep', args: ['30'],
+  })
+  const transcripts = pathJoin(store.root, 'written')
+  await mkdir(transcripts)
+  const long = pathJoin(transcripts, 'long-ago.jsonl')
+  const lately = pathJoin(transcripts, 'lately.jsonl')
+  await writeFile(long, 'fixture')
+  await writeFile(lately, 'fixture')
+  const ago = new Date(Date.now() - 60_000)
+  await utimes(long, ago, ago)
+  const a = join(base, 'a')
+  try {
+    await a.opened
+    a.close()
+    await a.closed
+    const b = join(base, 'b')
+    await b.opened
+    b.close()
+    await b.closed
+
+    await writesTo(supervisor, 'a', lately)  // opened first, written last
+    await writesTo(supervisor, 'b', long)    // opened last, written longest ago
+
+    const c = join(base, 'c')
+    await c.opened
+    await until(async () => {
+      const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+      const running = Object.fromEntries(sessions.map(s => [s.id, s.running]))
+      return running.a === true && running.b === false && running.c === true
+    }, 'the one written longest ago evicted and the freshly written one kept', 8_000)
     c.close()
   } finally {
     await supervisor.close()
