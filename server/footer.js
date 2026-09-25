@@ -1,52 +1,48 @@
-// The status-strip relay. The mtty-footer pi extension writes its snapshot to
-// $MTTY_FOOTER; this watches the file and hands each new line to the server
-// for broadcast. Polled rather than fs.watch because the file exists only when
-// the served program is pi — most programs never create it — and watching the
-// directory for a file that may never appear means noise from every other tmp
-// file on the machine. Two tiny reads a second is nothing. Identity files
-// belong to the supervisor, so their watcher leaves them for it to remove.
-import { rmSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+// The status strip's channel. The mtty-footer pi extension connects to the
+// socket named by $MTTY_FOOTER and sends one JSON object -- the active model
+// and its thinking level -- per change, closing the connection behind it.
+//
+// A connection is a message, so there is nothing to frame and nothing to clean
+// up: the state is read once the extension is done sending it, which is the
+// whole reason this is not a file being written and watched. The extension
+// decides when something has changed, so whatever arrives here is worth
+// relaying.
+import { createServer } from 'node:net'
 
-const POLL_MS = 500
+// A report is a couple of hundred bytes. Anything longer is not one, and taking
+// it whole would be a way for whoever can reach this socket to spend this
+// process's memory.
+const MAX_REPORT = 1024
 
-export function removeFooterFiles(path) {
-  rmSync(path, { force: true })
-  rmSync(`${path}.tmp`, { force: true })
-}
-
-export function watchFooter(path, onChange, { removeOnStop = true } = {}) {
+/**
+ * Listen on `path`, handing each reported state to `onState`. Returns what
+ * closes the listener and everything it accepted; the socket file goes with
+ * it, since node unlinks a closed Unix socket.
+ */
+export function openFooter(path, onState) {
   let stopped = false
-  let last = null
-
-  const tick = async () => {
-    if (stopped) return
-    let text
-    try {
-      text = await readFile(path, 'utf8')
-    } catch (err) {
-      if (err.code === 'ENOENT') return // not there yet, or the program never writes one
-      throw err
-    }
-    if (stopped) return
-    if (text === last) return
-    last = text
-    onChange(text)
-  }
-
-  const timer = setInterval(() => {
-    tick().catch(err => {
-      // A file that appeared and then could not be read is retried on the next
-      // poll. It is not worth taking down the server — and the pi it owns —
-      // over a status line.
-      console.error('server: could not read the footer file', err)
+  const senders = new Set()
+  const server = createServer(sock => {
+    senders.add(sock)
+    let body = ''
+    sock.setEncoding('utf8')
+    sock.on('data', chunk => {
+      body += chunk
+      if (body.length > MAX_REPORT) sock.destroy()
     })
-  }, POLL_MS)
-  timer.unref()
-
+    // A sender that goes away mid-report is one missed status line, which is
+    // all it is: the program in the PTY is what this server exists for.
+    sock.on('error', () => {})
+    sock.on('close', () => senders.delete(sock))
+    sock.on('end', () => { if (!stopped) onState(body) })
+  })
+  server.on('error', err => console.error(`server: the status strip is off (${err.message})`))
+  server.listen(path)
   return () => {
     stopped = true
-    clearInterval(timer)
-    if (removeOnStop) removeFooterFiles(path)
+    server.close()
+    // A sender still connected here never finished its report, and nothing is
+    // going to read it now.
+    for (const sock of senders) sock.destroy()
   }
 }

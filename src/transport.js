@@ -124,7 +124,7 @@ export class TtydConnection {
       if (f.cmd === OUTPUT) this.onOutput(f.payload)
       else if (f.cmd === SET_TITLE) this.onTitle?.(f.text)
       else if (f.cmd === SET_SIZE) this.onSize?.({ cols: f.json.columns, rows: f.json.rows })
-      else if (f.cmd === FOOTER) this.onFooter?.(f.text)
+      else if (f.cmd === FOOTER) this.onFooter?.(f.json)
       else if (f.cmd === PROCESS) this.onProcess?.(f.json)
     }
 

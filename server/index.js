@@ -18,13 +18,14 @@ import { basename, join, resolve } from 'node:path'
 import { WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
-import { removeFooterFiles, watchFooter } from './footer.js'
+import { openFooter } from './footer.js'
+import { watchIdentity } from './identity.js'
 import { isAddress, originAllowed } from './origin.js'
 import { placeNames } from './places.js'
 import { Session } from './session.js'
 import { Viewer } from './viewer.js'
 import { Mirror } from './mirror.js'
-import { INPUT, RESIZE, PROCESS, decodeHandshake, decodeSize } from './protocol.js'
+import { INPUT, RESIZE, PROCESS, decodeHandshake, decodeSize, decodeFooter } from './protocol.js'
 
 // Cloudflare drops idle sockets and the phone sleeps, so the socket has to be
 // spoken to even when pi is silent. ttyd did this and it is why `up` survived a
@@ -40,6 +41,12 @@ const DEFAULT_SCROLLBACK = 1000
 // How often the PTY's movement is told to the supervisor at most. Ending idle
 // sessions is what it is for, so a word a second is all that needs.
 const ACTIVITY_MS = 1_000
+// Where the status strip's socket goes, for a server that was not told. A Unix
+// socket path is capped at 104 bytes on macOS and the temp directory is nearly
+// half of that, so the name is a short one -- and a random one, since a name a
+// local user can guess is a name one can squat on, and these reports would then
+// go to the squatter.
+const footerSocketPath = () => join(tmpdir(), `mtty-${randomUUID().slice(0, 8)}-footer.sock`)
 
 /**
  * `scrollback` is how much history a reconnecting viewer gets back. pi does not
@@ -56,7 +63,8 @@ const ACTIVITY_MS = 1_000
  * desktop history ever matters, the answer is a deeper snapshot for `attach`
  * alone.
  */
-export function createTerminalServer({ port, bind, socketPath, hostname, password, command, args = [], cwd = process.cwd(), scrollback = DEFAULT_SCROLLBACK, theme = 'dark', footerPath = join(tmpdir(), `mtty-${process.pid}-${randomUUID()}-footer.json`), onListen, onExit }) {
+
+export function createTerminalServer({ port, bind, socketPath, hostname, password, command, args = [], cwd = process.cwd(), scrollback = DEFAULT_SCROLLBACK, theme = 'dark', footerSocket = footerSocketPath(), onListen, onExit }) {
   const auth = new Auth(password)
 
   // A program named by path means that program, not whatever happens to sit at
@@ -66,6 +74,16 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
   // directory the supervisor itself was launched from.
   const program = command.includes('/') ? resolve(process.cwd(), command) : command
   const viewers = new Set()
+  // The status strip's channel, up before the program is: the extension reports
+  // the model and thinking level of whatever this PTY runs, and the last report
+  // is what a viewer joining mid-session is given after its screen.
+  let lastFooter = null
+  const stopFooter = openFooter(footerSocket, text => {
+    const state = decodeFooter(text)
+    if (!state) return
+    lastFooter = state
+    for (const viewer of viewers) viewer.footer(state)
+  })
   // Set for a background child: the supervisor seeds it before forking and the
   // mtty-session extension rewrites it as pi switches conversations. The
   // program may not be pi at all, so this is the only thing that knows what
@@ -96,16 +114,11 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
 
   /** Start the program and make it the session. Called exactly once. */
   const start = () => {
-    const session = new Session({ command: program, args, cwd, env: { ...process.env, MTTY_FOOTER: footerPath } })
-    const unit = { session, mirror: new Mirror({ ...session.size, scrollback }), lastFooter: null, retired: false }
+    const session = new Session({ command: program, args, cwd, env: { ...process.env, MTTY_FOOTER: footerSocket } })
+    const unit = { session, mirror: new Mirror({ ...session.size, scrollback }), retired: false }
     unit.gone = new Promise(resolve => { unit.resolveGone = resolve })
 
-    unit.stopFooter = watchFooter(footerPath, text => {
-      if (unit.retired) return
-      unit.lastFooter = text
-      for (const viewer of viewers) viewer.footer(text)
-    })
-    unit.stopIdentity = identityPath && watchFooter(identityPath, text => {
+    unit.stopIdentity = identityPath && watchIdentity(identityPath, text => {
       if (unit.retired) return
       const frame = processFrame(JSON.parse(text))
       for (const viewer of viewers) viewer.send(PROCESS, frame)
@@ -161,7 +174,6 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
 
     session.onExit = status => {
       unit.resolveGone()
-      unit.stopFooter()
       unit.stopIdentity?.()
       for (const viewer of viewers) viewer.close(1000, 'session ended')
       onExit?.(status)
@@ -225,10 +237,10 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
     if (identityPath) viewer.send(PROCESS, processFrame(JSON.parse(readFileSync(identityPath, 'utf8'))))
     active.session.add(viewer)
     viewer.title(title)
-    // The latest strip line after the screen: a viewer that connects mid-session
+    // The latest strip state after the screen: a viewer that connects mid-session
     // gets the current stats, not the stale screen's.
     return sendScreen(viewer).then(() => {
-      if (viewer.open && active.lastFooter !== null) viewer.footer(active.lastFooter)
+      if (viewer.open && lastFooter !== null) viewer.footer(lastFooter)
     })
   }
 
@@ -369,7 +381,7 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
     async close() {
       clearInterval(ping)
       clearTimeout(fitTimer)
-      active?.stopFooter()
+      stopFooter()
       active?.stopIdentity?.()
       active?.session.kill()
       // Terminated, not closed: a close frame waits for one back, and a phone

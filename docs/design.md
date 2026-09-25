@@ -75,9 +75,9 @@ The problem is viewport control, not resize policy. pi reflows fine at any size,
 
 pi truncates its footer to the terminal width as it renders, so at phone width the model name is never written to the PTY -- there is no wider copy to recover. The strip captures it at the source instead:
 
-- The `pi-extensions/mtty-footer.ts` extension writes the active model and thinking level to `$MTTY_FOOTER` on change; inert without the variable, so it can be installed globally.
-- The server **polls** the file (not fs.watch: the file exists only when the served program is pi, and watching a directory for a file that may never appear means tmp noise), relays it as a FOOTER frame, replays it to a latecomer, stops when the session ends.
-- The extension writes by rename, so the poller never sees half a line, and skips writes when nothing changed.
+- The `pi-extensions/mtty-footer.ts` extension reports the active model and thinking level to the socket `$MTTY_FOOTER` names; inert without the variable, so it can be installed globally.
+- A report is one connection carrying one JSON object and closing behind it: nothing to frame, nothing half-written to guard against, nothing to clean up. The extension is the one that skips a report when nothing has changed.
+- The server relays each report as a FOOTER frame and replays the latest to a latecomer. The frame names the model's provider and id and its thinking level; the line under the keys is the client's to draw.
 - The strip is one row, under the keys. The home-indicator band absorbs it when there is one (terminal keeps every row); otherwise the bar grows by the strip (terminal gives up one row). The grid never learns about it: the same rule as the keyboard.
 
 ## Reconnect and attach

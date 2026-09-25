@@ -4,7 +4,7 @@
 // pi draws its input box inline after the transcript (never pinned to the last
 // row of the grid) and redraws promptly on SIGWINCH. Do not add fidelity the
 // specs do not consume — a closer lookalike only adds false confidence.
-import { renameSync, writeFileSync } from 'node:fs'
+import { connect } from 'node:net'
 
 const home = process.env.HOME
 const where = home && process.cwd().startsWith(home)
@@ -71,13 +71,13 @@ const submit = () => {
   }
 }
 
-// The status strip, once: what the mtty-footer pi extension writes on the real
-// program, so the e2e suite can see the strip without pi. Written by rename,
-// as the extension does, so the server's poller never sees a half-written line.
+// The status strip, once: the report the mtty-footer pi extension sends the
+// real program's server, so the e2e suite can see the strip without pi. One
+// connection carrying one object and closing behind it, as the extension does.
 if (process.env.MTTY_FOOTER) {
-  writeFileSync(`${process.env.MTTY_FOOTER}.tmp`,
-    `{"ts":${Math.floor(Date.now() / 1000)},"text":"fake-pi stats"}\n`)
-  renameSync(`${process.env.MTTY_FOOTER}.tmp`, process.env.MTTY_FOOTER)
+  const sock = connect(process.env.MTTY_FOOTER)
+  sock.on('error', () => {})
+  sock.end('{"provider":"fake","id":"pi","thinking":"max"}\n')
 }
 
 let esc = 0   // 0 none, 1 after ESC, 2 inside a CSI/SS3 sequence

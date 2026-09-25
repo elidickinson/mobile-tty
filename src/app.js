@@ -179,7 +179,7 @@ const conn = new TtydConnection({
   // The title is only restated on a fresh admission, and the strip belongs to
   // whichever program was running before that. Drop it rather than leave the
   // last one's model and thinking level sitting under a different session;
-  // the new one's own line arrives within a poll.
+  // the new one's own state comes with its screen.
   onTitle: title => {
     clearFooter()
     document.title = currentPlace ? `${currentPlace.name} — ${currentPlace.path}` : title
@@ -283,18 +283,17 @@ function clearFooter() {
   setStripVisibility(false)
 }
 
-function showFooter(text) {
+function showFooter(state) {
   // Standalone only. `navigator.standalone` is a stable fact of how the page
   // was opened, so checking it here without storing it is enough. In a Safari
-  // tab the strip is never even parsed: it would cost a row for no gain.
+  // tab the strip is never even drawn: it would cost a row for no gain.
   if (!readViewport().standalone) return
-  try {
-    footerText = JSON.parse(text).text
-  } catch (err) {
-    // The extension renames the file into place, so a half-written line is a
-    // bug in this chain, not noise to swallow.
-    return reportFatal(`footer: ${err.message}`)
-  }
+  // No model is a state of its own: the strip clears rather than keeping the
+  // last session's model on screen under this one.
+  if (!state.id) return clearFooter()
+  // The line is of this client's making: pi's own footer is truncated at this
+  // width, so the model is named in full nowhere else.
+  footerText = `${state.provider}/${state.id}${state.thinking ? ` - ${state.thinking}` : ''}`
   strip.textContent = footerText
   setStripVisibility(true)
 }

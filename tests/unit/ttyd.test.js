@@ -42,11 +42,11 @@ test('decodeFrame reads title as text and the size as JSON', () => {
     { columns: 50, rows: 20 })
 })
 
-test('decodeFrame reads the status strip as text', () => {
+test('decodeFrame reads the status strip as JSON', () => {
   const enc = new TextEncoder()
-  const f = decodeFrame(enc.encode('4{"ts":1,"text":"a"}').buffer)
+  const f = decodeFrame(enc.encode('4{"provider":"a","id":"one","thinking":"max"}').buffer)
   assert.equal(f.cmd, FOOTER)
-  assert.equal(f.text, '{"ts":1,"text":"a"}')
+  assert.deepEqual(f.json, { provider: 'a', id: 'one', thinking: 'max' })
 })
 
 test('decodeFrame on an empty message is a programming error', () => {

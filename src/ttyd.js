@@ -47,6 +47,6 @@ export function decodeFrame(buffer) {
   const payload = all.subarray(1)
   if (cmd === OUTPUT) return { cmd, payload }
   const text = dec.decode(payload)
-  if (cmd === SET_SIZE || cmd === PROCESS) return { cmd, text, json: JSON.parse(text) }
+  if (cmd === SET_SIZE || cmd === PROCESS || cmd === FOOTER) return { cmd, text, json: JSON.parse(text) }
   return { cmd, text }
 }

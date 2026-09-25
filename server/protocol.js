@@ -10,7 +10,7 @@ export const RESIZE = 0x31       // '1'
 export const OUTPUT = 0x30       // '0'
 export const SET_TITLE = 0x31    // '1'
 export const SET_SIZE = 0x33     // '3'  the grid the PTY actually has
-export const FOOTER = 0x34       // '4'  the status-strip line, verbatim from the mtty-footer extension
+export const FOOTER = 0x34       // '4'  the status strip's state, as the mtty-footer extension reported it
 export const PROCESS = 0x35      // '5'  this PTY's place: on admission, and again at every conversation change
 
 // The session list and switching between sessions are no longer frames on
@@ -50,6 +50,22 @@ export const decodeHandshake = buf => {
 export const decodeSize = buf => {
   try {
     return decodeDimensions(JSON.parse(buf.toString()))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The status strip's state, as the extension sends it over its own socket. An
+ * empty id is a state of its own -- pi has no model to name -- and anything
+ * that is neither that nor a model name is dropped rather than relayed: this
+ * reaches a phone that has nothing to draw from it.
+ */
+export const decodeFooter = buf => {
+  try {
+    const { provider, id, thinking } = JSON.parse(buf.toString())
+    if (typeof provider !== 'string' || typeof id !== 'string') return null
+    return { provider, id, thinking: typeof thinking === 'string' ? thinking : null }
   } catch {
     return null
   }

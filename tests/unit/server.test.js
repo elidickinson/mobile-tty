@@ -4,6 +4,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
+import { connect } from 'node:net'
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
@@ -150,10 +151,18 @@ const viewer = (url, columns, rows) => {
 
 const settle = (ms = 500) => new Promise(resolve => setTimeout(resolve, ms))
 
-test('the status strip: relayed on change, replayed to latecomers', async () => {
+/** Report the status strip, as the extension does: one connection, one object. */
+const report = (footerSocket, state) => new Promise((resolve, reject) => {
+  const sock = connect(footerSocket)
+  sock.on('error', reject)
+  sock.on('close', resolve)
+  sock.end(`${JSON.stringify(state)}\n`)
+})
+
+test('the status strip: relayed as reported, replayed to latecomers', async () => {
   const dir = await mkdtemp(pathJoin(tmpdir(), 'mobile-tty-footer-'))
-  const footerPath = pathJoin(dir, 'footer.json')
-  const { server, url } = await start('sh', ['-c', 'sleep 60'], { footerPath })
+  const footerSocket = pathJoin(dir, 'footer.sock')
+  const { server, url } = await start('sh', ['-c', 'sleep 60'], { footerSocket })
   const frames = []
   const stripViewer = () => {
     const ws = new WebSocket(url, ['tty'])
@@ -166,32 +175,41 @@ test('the status strip: relayed on change, replayed to latecomers', async () => 
   try {
     const first = stripViewer()
     await settle()
-    assert.equal(frames.length, 0, 'nothing until the program writes one')
+    assert.equal(frames.length, 0, 'nothing until the program reports one')
 
-    await writeFile(footerPath, JSON.stringify({ ts: 1, text: 'first' }))
-    await settle(700)
-    assert.deepEqual(frames, ['{"ts":1,"text":"first"}'])
+    await report(footerSocket, { provider: 'a', id: 'one', thinking: null })
+    await settle()
+    assert.deepEqual(frames, ['{"provider":"a","id":"one","thinking":null}'])
 
-    // The same content under a new mtime is not broadcast again.
-    await writeFile(footerPath, JSON.stringify({ ts: 1, text: 'first' }))
-    await settle(700)
-    assert.equal(frames.length, 1)
+    await report(footerSocket, { provider: 'a', id: 'one', thinking: 'max' })
+    await settle()
+    assert.equal(frames.length, 2, 'a change reaches the same viewer')
 
-    await writeFile(footerPath, JSON.stringify({ ts: 3, text: 'second' }))
-    await settle(700)
-    assert.equal(frames.length, 2, 'the changed line reaches the same viewer')
+    // A report that is not a state is nothing a strip can draw.
+    await report(footerSocket, { thinking: 'max' })
+    await settle()
+    assert.equal(frames.length, 2, 'a report that names nothing is dropped')
 
-    // A viewer arriving after the fact gets the latest line after its screen.
+    // The report is one line of state, not a stream to buffer.
+    await report(footerSocket, { provider: 'x'.repeat(4096), id: 'one', thinking: null })
+    await settle()
+    assert.equal(frames.length, 2, 'a report past the size of one is dropped')
+
+    // A viewer arriving after the fact gets the latest state after its screen.
     const late = stripViewer()
-    await settle(700)
-    assert.deepEqual(frames.at(-1), '{"ts":3,"text":"second"}')
+    await settle()
+    assert.deepEqual(frames.at(-1), '{"provider":"a","id":"one","thinking":"max"}')
+
+    // No model is a state of its own, relayed like any other: a strip showing
+    // the last one clears on it.
+    await report(footerSocket, { provider: '', id: '', thinking: null })
+    await settle()
+    assert.deepEqual(frames.at(-1), '{"provider":"","id":"","thinking":null}')
     first.close()
     late.close()
-    await writeFile(`${footerPath}.tmp`, 'orphan')
   } finally {
     await server.close()
-    await assert.rejects(stat(footerPath), { code: 'ENOENT' })
-    await assert.rejects(stat(`${footerPath}.tmp`), { code: 'ENOENT' })
+    await assert.rejects(stat(footerSocket), { code: 'ENOENT' })
     await rm(dir, { recursive: true, force: true })
   }
 })

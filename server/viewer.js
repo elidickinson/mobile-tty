@@ -59,8 +59,8 @@ export class Viewer {
    *  asked for: the narrowest viewer wins and the rest render smaller. */
   sendSize({ cols, rows }) { this.send(SET_SIZE, JSON.stringify({ columns: cols, rows })) }
 
-  /** The status-strip line, verbatim from the extension's file. */
-  footer(text) { this.send(FOOTER, text) }
+  /** The status strip's state, as the extension reported it. */
+  footer(state) { this.send(FOOTER, JSON.stringify(state)) }
 
   close(code, reason) { if (this.open) this.ws.close(code, reason) }
 }
