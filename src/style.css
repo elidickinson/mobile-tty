@@ -235,6 +235,8 @@ html, body {
 #keys button:active { background: var(--pressed); }
 #keys button.word { font-size: 14px; }
 #keys button.wide { font-size: 22px; }
+/* The ↑↓ toggle reads finer than the other ~22px glyphs at the same size. */
+#keys button[name="arrow pad"] { font-size: 15px; }
 #keys button.sticky { background: var(--accent); color: var(--on-accent); }
 
 /* The status strip: one grid row tall, under the keys. In standalone the
