@@ -4,7 +4,7 @@
 // used to live in server.test.js's switching section.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join as pathJoin } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -29,9 +29,9 @@ const storeFor = async entries => {
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
 
-const start = async ({ sessionDir, cap = 4, idleMs, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath }) => {
+const start = async ({ sessionDir, cap = 4, idleMs, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath, password }) => {
   const supervisor = createSupervisor({
-    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, idleMs, pingMs, childReadyMs,
+    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, idleMs, pingMs, childReadyMs, password,
     socketDir: socketDir ?? await mkdtemp(pathJoin(tmpdir(), 'mtty-sock-')),
   })
   await new Promise(r => supervisor.http.on('listening', r))
@@ -587,6 +587,24 @@ test('a viewer that stops answering pings is dropped, not counted forever', asyn
   } finally {
     cli.close()
     web.ws.terminate()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('the home-screen icon answers without a login', async () => {
+  const store = await storeFor([])
+  const { supervisor, page } = await start({ sessionDir: store.sessionDir, password: 'hunter2' })
+  try {
+    // iOS fetches the icon with no cookie when the page is added to the Home
+    // screen, so the password must not stand in front of it.
+    const res = await fetch(`${page}/apple-touch-icon.png`)
+    assert.equal(res.status, 200)
+    assert.equal(res.headers.get('content-type'), 'image/png')
+    const served = Buffer.from(await res.arrayBuffer())
+    const icon = await readFile(fileURLToPath(new URL('../../src/apple-touch-icon.png', import.meta.url)))
+    assert.equal(served.equals(icon), true)
+  } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
   }

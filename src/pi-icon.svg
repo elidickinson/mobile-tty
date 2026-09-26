@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" width="180" height="180">
+  <!-- iOS home-screen icon for mobile-tty: the Pi mark on the app's dark background.
+       Full-bleed opaque square -- iOS applies its own corner mask, so there are no
+       rounded corners or transparency here.
+       The mark is a 4x4 grid of 24px cells, so it is 96px square and dead center with
+       42px (23%) of clear space per side -- just outside the corner mask iOS applies.
+       The cell size divides evenly into 180, 120 and 60, so the icon stays pixel-exact
+       at every size iOS renders it. -->
+  <rect width="180" height="180" fill="#0b0b0d"/>
+  <path fill="#F09082" d="M42 42H114V90H90V66H42Z"/>
+  <path fill="#4D9ABF" d="M42 66H66V90H90V114H66V138H42Z"/>
+  <path fill="#F1BE58" d="M114 90H138V138H114Z"/>
+</svg>

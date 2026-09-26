@@ -10,6 +10,7 @@
 // while `/ws?session=<id>&cwd=<path>` opens a saved conversation.
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -162,6 +163,15 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const child = await registry.ensure(place.id, place.cwd)
       if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: place.id, cwd: place.cwd, processId: child.processId }))
+    }
+
+    // The Home-screen icon, the one thing here that is not the page itself.
+    // iOS asks for it without the session cookie when the page is added to the
+    // Home screen, so it answers without auth -- a 401 there means no icon.
+    // Read per request like the page, so editing it needs no restart.
+    if (path === '/apple-touch-icon.png' && req.method === 'GET') {
+      const png = await readFile(new URL('../src/apple-touch-icon.png', import.meta.url))
+      return void res.writeHead(200, { 'content-type': 'image/png', 'cache-control': 'no-cache' }).end(png)
     }
 
     if (path !== '/') return void res.writeHead(404).end()
