@@ -111,10 +111,8 @@ test('a saturated scrollback holds output rather than swap content under a parke
 
 test('a zoomed scroller keeps the reader parked just the same', async ({ page }) => {
   await ready(page)
-  // Zoom is a CSS transform on the scroller. scrollTop, scrollHeight and a
-  // row's offsetHeight are all layout pixels that the transform does not
-  // rescale, so the park and the hold arithmetic hold as-is — this test
-  // exists to keep that honest rather than trust the units.
+  // Zoom changes the font and grid before scrolling begins; the same
+  // park-and-hold behavior must work with the new row geometry.
   await page.getByRole('button', { name: 'menu' }).tap()
   await page.locator('[data-act="zoom-out"]').tap()   // 100% -> 80%
   await page.locator('[data-act="close"]').tap()

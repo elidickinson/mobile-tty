@@ -115,10 +115,8 @@ html, body {
 #stage { position: relative; }
 
 /* The wterm mount. It owns vertical scroll, so scrollback gets native momentum
-   scrolling and selection handles. Zoom is a transform, so the PTY grid stays
-   pinned and pi never learns it is on a phone. */
+   scrolling and selection handles. */
 #screen {
-  transform-origin: 0 0;
   overflow-y: auto;
   overflow-x: hidden;
   display: flex;
@@ -209,13 +207,15 @@ html, body {
 }
 
 #pad button {
-  width: 52px;
+  /* Narrower than an arrow's 52px so six keys still fit a phone's width with
+     the pad's padding and gaps; the ⇈/⇊ doubles read fine at 19px. */
+  width: 46px;
   height: 52px;
   border: 0;
   border-radius: 6px;
   background: color-mix(in srgb, var(--chrome) 65%, transparent);
   color: var(--fg);
-  font: 22px/1 var(--font);
+  font: 19px/1 var(--font);
   touch-action: none;
 }
 

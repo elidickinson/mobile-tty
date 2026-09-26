@@ -35,6 +35,7 @@ const CURSOR_HOME = '\x1b[H'        // CUP: cursor to row 1, column 1
 const ERASE_SCREEN = '\x1b[2J'      // ED 2: erase the visible grid
 const ERASE_SAVED = '\x1b[3J'       // ED 3: erase saved lines, and here the grid too
 
+const BASE_FONT_SIZE = 13
 const MIN_SCALE = 0.4
 const MAX_SCALE = 3
 const ZOOM_STEP = 1.25
@@ -44,7 +45,7 @@ const REPEAT_EVERY_MS = 60
 const PRESETS = [[50, 30], [80, 40], [120, 40], [160, 50]]
 
 const state = {
-  fontSize: 13,
+  fontSize: BASE_FONT_SIZE,
   scale: 1,
   cols: 80,
   rows: 24,
@@ -323,8 +324,7 @@ function applyLayout() {
 
 /**
  * The wterm element is the one scroller: scrollback above, live grid below, and
- * any part of a grid taller than the box reachable by the same gesture. Zoom is
- * a transform, so the PTY grid stays pinned.
+ * any part of a grid taller than the box reachable by the same gesture.
  */
 function sizeScreen() {
   const boxH = viewport.clientHeight
@@ -335,19 +335,15 @@ function sizeScreen() {
   // with pi's input box pushed out of sight underneath.
   const fromBottom = screen.scrollHeight - screen.scrollTop - screen.clientHeight
 
-  // iOS will not drag-scroll reliably inside a transformed overflow container,
-  // and at 100% the transform buys nothing, so leave it off entirely.
-  const scaled = state.scale !== 1
   const naturalW = state.cols * state.cell.width
   // A whole number of rows. wterm scrolls to the bottom by flooring to a row
   // boundary, so a box that is not a multiple of the row height leaves it parked
   // short of the end — and once that remainder exceeds its own 5px tolerance it
   // stops following output at all. The leftover is under a row of background.
-  const rows = Math.floor(boxH / state.scale / state.cell.height)
+  const rows = Math.floor(boxH / state.cell.height)
   screen.style.width = `${naturalW}px`
   screen.style.height = `${rows * state.cell.height}px`
-  screen.style.transform = scaled ? `scale(${state.scale})` : ''
-  stage.style.width = `${naturalW * state.scale}px`
+  stage.style.width = `${naturalW}px`
   stage.style.height = `${boxH}px`
 
   screen.scrollTop = screen.scrollHeight - screen.clientHeight - Math.max(0, fromBottom)
@@ -462,9 +458,21 @@ function keepReading(share) {
 }
 
 function setScale(scale) {
-  state.scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale))
-  $('scale-val').textContent = `${Math.round(state.scale * 100)}%`
-  sizeScreen()
+  const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale))
+  if (next === state.scale) return
+  const share = readingShareNow()
+  state.scale = next
+  state.fontSize = BASE_FONT_SIZE * next
+  state.cell = measureCell(state.fontSize)
+  screen.style.setProperty('--term-font-size', `${state.fontSize}px`)
+  screen.style.setProperty('--term-row-height', `${state.cell.height}px`)
+  term.refreshCellSize()
+  strip.style.flexBasis = `${state.cell.height}px`
+  $('scale-val').textContent = `${Math.round(next * 100)}%`
+  const layout = applyLayout()
+  if (share === null) screen.scrollTop = screen.scrollHeight - screen.clientHeight
+  else keepReading(share)
+  fitGrid(layout)
 }
 
 /**
@@ -473,9 +481,7 @@ function setScale(scale) {
  * changes.
  */
 function fitGrid(l = deriveLayout(readViewport())) {
-  // Divided by the scale on purpose: at 80% zoom more grid genuinely fits the
-  // same glass, and Fit means fill what you can see.
-  const { cols, rows } = gridFor(l.terminal.width / state.scale, l.stableHeight / state.scale, state.cell)
+  const { cols, rows } = gridFor(l.terminal.width, l.stableHeight, state.cell)
   setGrid(cols, rows)
 }
 
@@ -716,6 +722,11 @@ const BAR = [
 // arrow per step -- and an armed ⌃/⇧/⌥ on the bar reaches its keys like any
 // other.
 const PAD = [
+  // Page up/down lead the pad: the terminal is a few screens tall at most on
+  // a phone, so the page step is the everyday move and the arrows finish it.
+  // Paired arrows for a page of distance, single arrows for a row.
+  { label: '⇈', key: 'PageUp', repeat: true },
+  { label: '⇊', key: 'PageDown', repeat: true },
   { label: '←', key: 'Left', repeat: true },
   { label: '↓', key: 'Down', repeat: true },
   { label: '↑', key: 'Up', repeat: true },
@@ -1262,8 +1273,8 @@ async function main() {
   strip.style.flexBasis = `${state.cell.height}px`
   buildKeys()
   buildMenu()
+  $('scale-val').textContent = '100%'
   $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })
-  setScale(1)
 
   await term.init()
   meter = await WasmBridge.load()

@@ -281,6 +281,11 @@ export class WTerm {
     if (this.onResize) this.onResize(cols, rows);
   }
 
+  /** Re-measure cell geometry after the host changes its terminal font. */
+  refreshCellSize(): void {
+    this._measureCharSize();
+  }
+
   focus(): void {
     if (this.input) {
       this.input.focus();

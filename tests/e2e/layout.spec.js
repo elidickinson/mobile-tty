@@ -21,16 +21,62 @@ test('a grid wider than the screen pans horizontally rather than reflowing', asy
   })).toBeGreaterThan(0)
 })
 
-test('zoom changes only the render scale — the PTY grid stays pinned', async ({ page }) => {
+test('zoom changes font size and refits the PTY grid in both directions', async ({ page }) => {
   await ready(page)
+  const metrics = () => page.evaluate(() => {
+    const { state } = window.mtty
+    const screen = document.getElementById('screen')
+    return {
+      cols: state.cols, rows: state.rows, font: parseFloat(getComputedStyle(screen).fontSize),
+      row: screen.querySelector('.term-row').getBoundingClientRect().height,
+      cellHeight: state.cell.height, coreRowHeight: window.mtty.term._rowHeight,
+      transform: screen.style.transform,
+    }
+  })
+  const before = await metrics()
   await page.getByRole('button', { name: 'menu' }).tap()
-  const before = await liveRows(page).count()
+  await page.locator('[data-act="zoom-in"]').tap()
+  await expect(page.locator('#scale-val')).toHaveText('125%')
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols)).toBeLessThan(before.cols)
+  const larger = await metrics()
+  expect(larger.rows).toBeLessThan(before.rows)
+  expect(larger.font).toBeGreaterThan(before.font)
+  expect(larger.row).toBe(larger.cellHeight)
+  expect(larger.coreRowHeight).toBe(larger.row)
+  expect(larger.transform).toBe('')
+  await expect(page.locator('#screen')).toContainText(`${larger.cols}x${larger.rows}`)
+
+  await page.getByRole('button', { name: '100%' }).tap()
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols)).toBe(before.cols)
   await page.getByRole('button', { name: '−' }).tap()
   await expect(page.locator('#scale-val')).toHaveText('80%')
-  expect(await liveRows(page).count()).toBe(before)
-  expect(await page.locator('#screen').evaluate(e => e.style.transform)).toBe('scale(0.8)')
-  await page.getByRole('button', { name: '100%' }).tap()
-  expect(await page.locator('#screen').evaluate(e => e.style.transform)).toBe('')
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols)).toBeGreaterThan(before.cols)
+  const smaller = await metrics()
+  expect(smaller.rows).toBeGreaterThan(before.rows)
+  expect(smaller.font).toBeLessThan(before.font)
+  expect(smaller.row).toBe(smaller.cellHeight)
+  expect(smaller.coreRowHeight).toBe(smaller.row)
+  await expect(page.locator('#screen')).toContainText(`${smaller.cols}x${smaller.rows}`)
+})
+
+test('zoom keeps a parked reader near their place in scrollback', async ({ page }) => {
+  await ready(page)
+  await fillScrollback(page)
+  await page.evaluate(() => {
+    const s = document.getElementById('screen')
+    s.scrollTop = (s.scrollHeight - s.clientHeight) * 0.4
+  })
+  const share = () => page.evaluate(() => {
+    const s = document.getElementById('screen')
+    return (s.scrollHeight - s.scrollTop - s.clientHeight) / s.scrollHeight
+  })
+  const before = await share()
+  const cols = await page.evaluate(() => window.mtty.state.cols)
+  await page.getByRole('button', { name: 'menu' }).tap()
+  await page.locator('[data-act="zoom-in"]').tap()
+  await expect.poll(() => page.evaluate(() => window.mtty.state.cols)).toBeLessThan(cols)
+  await expect.poll(async () => Math.abs(await share() - before)).toBeLessThan(0.05)
+  expect(await distanceFromBottom(page)).toBeGreaterThan(100)
 })
 
 test('the page itself never scrolls — only the terminal does', async ({ page }) => {
