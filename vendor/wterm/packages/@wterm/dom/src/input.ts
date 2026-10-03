@@ -52,6 +52,9 @@ export class InputHandler {
     rowHeight: number;
   } | null;
   private composing = false;
+  private readonly iosQuickPath =
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
   private mouseButtons = 0;
   private focused = false;
   // The field is a mirror of the PTY's input line: `sent` is what this class
@@ -69,6 +72,7 @@ export class InputHandler {
   private _onPaste: (e: ClipboardEvent) => void;
   private _onCompositionStart: () => void;
   private _onCompositionEnd: (e: CompositionEvent) => void;
+  private _onBeforeInput: (e: InputEvent) => void;
   private _onInput: (e: InputEvent) => void;
   private _onFocus: () => void;
   private _onBlur: () => void;
@@ -128,6 +132,7 @@ export class InputHandler {
     this._onPaste = this.handlePaste.bind(this);
     this._onCompositionStart = this.handleCompositionStart.bind(this);
     this._onCompositionEnd = this.handleCompositionEnd.bind(this);
+    this._onBeforeInput = this.handleBeforeInput.bind(this);
     this._onInput = this.handleInput.bind(this);
     this._onFocus = () => {
       if (this.focused) return;
@@ -163,6 +168,7 @@ export class InputHandler {
       "compositionend",
       this._onCompositionEnd as EventListener,
     );
+    this.textarea.addEventListener("beforeinput", this._onBeforeInput);
     this.textarea.addEventListener("input", this._onInput);
     this.textarea.addEventListener("focus", this._onFocus);
     this.textarea.addEventListener("blur", this._onBlur);
@@ -186,6 +192,7 @@ export class InputHandler {
       "compositionend",
       this._onCompositionEnd as EventListener,
     );
+    this.textarea.removeEventListener("beforeinput", this._onBeforeInput);
     this.textarea.removeEventListener("input", this._onInput);
     this.textarea.removeEventListener("focus", this._onFocus);
     this.textarea.removeEventListener("blur", this._onBlur);
@@ -197,10 +204,12 @@ export class InputHandler {
   }
 
   private handleKeyDown(e: KeyboardEvent): void {
-    if (this.composing) return;
+    if (e.isComposing || e.keyCode === 229) return;
+    // A non-composing event releases the latch if the IME omitted compositionend.
+    this.composing = false;
 
-    // A non-empty field means iOS is driving deletion natively: its repeat
-    // arrives as repeated deleteContentBackward input events, not keydowns,
+    // A non-empty field lets the software keyboard drive deletion natively:
+    // repeats may arrive as deleteContentBackward input events, not keydowns,
     // and preventDefault here would cancel that loop. Stand aside and let the
     // diff turn the deletion into DEL bytes. Only for an unmodified Backspace:
     // a modified one carries terminal meaning of its own -- alt+Backspace is
@@ -319,6 +328,7 @@ export class InputHandler {
    *  commits, the text is ours again and the withheld space can be spliced
    *  in before the diff transmits. */
   private separateCommittedText(): void {
+    if (!this.iosQuickPath) return;
     const value = this.textarea.value;
     let p = 0;
     while (p < this.sent.length && p < value.length && this.sent[p] === value[p]) p++;
@@ -326,7 +336,7 @@ export class InputHandler {
   }
 
   private separateSwipeInsertion(e: InputEvent): void {
-    if (e.inputType !== "insertText" || !e.data) return;
+    if (!this.iosQuickPath || e.inputType !== "insertText" || !e.data) return;
     const ta = this.textarea;
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
@@ -334,10 +344,46 @@ export class InputHandler {
     this.separateInsertedLetters(e.data, end - e.data.length, end);
   }
 
+  private handleBeforeInput(e: InputEvent): void {
+    if (e.inputType !== "deleteContentBackward" || e.isComposing) return;
+    this.composing = false;
+    if (this.textarea.value && !e.cancelable) return;
+    e.preventDefault();
+
+    if (!this.textarea.value) {
+      this.resetMirror();
+      this.sendDiff("\x7f");
+      return;
+    }
+
+    const graphemes = Array.from(
+      this.segmenter.segment(this.textarea.value),
+      (x) => x.segment,
+    );
+    this.textarea.value = graphemes.slice(0, -1).join("");
+    this.textarea.setSelectionRange(
+      this.textarea.value.length,
+      this.textarea.value.length,
+    );
+    this.flush();
+  }
+
   private handleInput(e: InputEvent): void {
-    if (this.composing) return;
+    if (e.isComposing) return;
+    // A committed event releases the latch if an IME omitted compositionend
+    // after an external key reset the field.
+    this.composing = false;
     this.separateSwipeInsertion(e);
     this.flush();
+  }
+
+  private sendDiff(data: string): void {
+    this.inFlush = true;
+    try {
+      this.onData(data);
+    } finally {
+      this.inFlush = false;
+    }
   }
 
   /**
@@ -378,12 +424,7 @@ export class InputHandler {
       .join("")
       .replace(/\n/g, "\r");
     if (deleted > 0 || inserted.length > 0) {
-      this.inFlush = true;
-      try {
-        this.onData("\x7f".repeat(deleted) + inserted);
-      } finally {
-        this.inFlush = false;
-      }
+      this.sendDiff("\x7f".repeat(deleted) + inserted);
     }
     this.sent = value;
     // Bounded buffer: past the cap, forget immediately after transmitting.
