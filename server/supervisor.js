@@ -17,7 +17,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
-import { PI_SESSIONS, placeNames, readPlaces, canonical } from './places.js'
+import { PI_SESSIONS, placeNames, readPlaces, canonical, subfolders } from './places.js'
 import { BACKLOG_LIMIT, TOO_FAR_BEHIND } from './viewer.js'
 import { Registry } from './registry.js'
 
@@ -145,6 +145,15 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const child = await registry.start(id, wanted)
       if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted, processId: child.processId }))
+    }
+
+    // Browsing folders requires the same authentication as listing sessions.
+    if (path === '/subfolders' && req.method === 'GET') {
+      if (!auth.admits(req)) return void res.writeHead(401).end()
+      const want = new URL(req.url, 'http://internal').searchParams.get('cwd') ?? defaultDir
+      const found = await subfolders(want)
+      if (!found) return void res.writeHead(404, { 'content-type': 'text/plain' }).end('no such directory')
+      return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(JSON.stringify(found))
     }
 
     // Adopt a conversation a pi outside this server is running: the caller

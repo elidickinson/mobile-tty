@@ -509,6 +509,25 @@ test('/start begins a session in any directory that exists', async () => {
   }
 })
 
+test('/subfolders lists the folders inside one and refuses one that is gone', async () => {
+  const store = await storeFor([{ name: 'listed', id: 'a' }])
+  const { supervisor, page } = await start({ sessionDir: store.sessionDir })
+  const deep = pathJoin(store.at('listed'), 'deep')
+  await mkdir(deep)
+  try {
+    const found = await fetch(`${page}/subfolders?cwd=${encodeURIComponent(store.at('listed'))}`).then(r => r.json())
+    assert.equal(found.cwd, store.at('listed'))
+    assert.deepEqual(found.dirs, [deep])
+    assert.equal(found.parent, store.root)
+
+    const missing = await fetch(`${page}/subfolders?cwd=${encodeURIComponent(pathJoin(store.root, 'gone'))}`)
+    assert.equal(missing.status, 404)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
 /** How many children the supervisor's registry is holding. */
 const registryRunning = supervisor => supervisor.registry.running().length
 

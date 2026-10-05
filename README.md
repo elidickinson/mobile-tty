@@ -111,7 +111,7 @@ The `≡` menu lists pi's saved conversations, running ones first and then newes
 
 The list is labeled: each row's title is pi's own name for that session (written once it has read your first exchange), falling back to what you first asked there, and each shows how long ago it was last active. A session with no conversation in it yet is labeled by its folder. `mobile-tty sessions` lists the server's sessions with a connected-viewer count; the `attach` and `end` pickers show the same labels and times, and a fragment matches labels too -- two conversations in one folder are told apart by those, or by their ids.
 
-**New session** at the top of the menu starts a brand-new conversation without any transcript to resume: it offers this server's own folder first (point `--new-dir` elsewhere if you would rather), then every folder a listed session runs in. The session begins immediately in the background and joins like any other; pi writes its transcript on first use and it is a normal row from then on. A session exists in the list either way, transcript or not, until the server holding it stops.
+**New session** at the top of the menu starts a brand-new conversation without any transcript to resume: it offers this server's own folder first (point `--new-dir` elsewhere if you would rather), then every folder a listed session runs in, and an **Other folder…** row for browsing to another folder. The session begins immediately in the background and joins like any other; pi writes its transcript on first use and it is a normal row from then on. A session exists in the list either way, transcript or not, until the server holding it stops.
 
 ## Reach it from anywhere
 

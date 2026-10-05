@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readPlaces, shorten, lastWrite } from '../../server/places.js'
+import { readPlaces, shorten, lastWrite, subfolders } from '../../server/places.js'
 
 /** A session file the way pi writes one: a header line, then the conversation. */
 const sessionFile = (cwd, id) => [
@@ -102,6 +102,25 @@ test('newest first, across every folder', async () => {
   try {
     const { sessions } = await readPlaces({ sessionDir })
     assert.deepEqual(sessions.map(session => session.name), ['new', 'old'])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('the folder walk offers folders only, and none that are hidden', async () => {
+  const { root } = await store(async () => {})
+  const here = join(root, 'here')
+  await mkdir(here)
+  const listed = [join(here, 'keep'), join(here, 'to-folder')]
+  await mkdir(listed[0])
+  await mkdir(join(here, '.hidden'))
+  await writeFile(join(here, 'a-file'), 'text')
+  await symlink(listed[0], listed[1])
+  await symlink(join(here, 'a-file'), join(here, 'to-file'))
+  await symlink(join(here, 'gone'), join(here, 'broken'))
+  try {
+    const found = await subfolders(here)
+    assert.equal(found.cwd, here)
+    assert.deepEqual(found.dirs, listed, 'a link to a folder stays; a link to a file or to nothing does not')
+    assert.equal(found.parent, root)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

@@ -218,6 +218,27 @@ const canonical = async path => {
 
 export { canonical }
 
+/** A folder path, or null: a link to a folder counts, a link to anything else
+ *  does not, and neither does one whose target is gone. */
+const asFolder = async (here, name) => {
+  const path = join(here, name)
+  try {
+    return (await stat(path)).isDirectory() ? path : null
+  } catch (err) {
+    if (err.code === 'ENOENT') return null
+    throw err
+  }
+}
+
+/** List non-hidden subfolders for the new-session walk. */
+export const subfolders = async dir => {
+  const here = await canonical(dir)
+  if (!here) return null
+  const names = (await readdir(here)).filter(name => !name.startsWith('.'))
+  const dirs = (await Promise.all(names.map(name => asFolder(here, name)))).filter(Boolean).sort()
+  return { cwd: here, parent: here === '/' ? null : dirname(here), dirs }
+}
+
 /**
  * Every `.jsonl` path in one folder, with its mtime and nothing else read.
  *

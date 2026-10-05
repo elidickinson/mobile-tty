@@ -829,8 +829,8 @@ function showPlaces({ sessions, hidden, here }) {
   places.textContent = ''
 
   // The one way to be somewhere with no transcript yet. Pinned where a thumb
-  // already is; the chooser it opens draws from the same list the rows below
-  // come from, so it never offers a folder this server cannot vouch for.
+  // already is; the chooser it opens lists the folders below and walks to any
+  // other folder on disk.
   const start = document.createElement('button')
   start.className = 'place start'
   const startName = document.createElement('span')
@@ -955,8 +955,8 @@ const ago = at => {
 
 /**
  * Where a brand-new session can go. The server's own folder comes first and
- * is the one chosen by just tapping through; everything else is a folder this
- * server already runs pi in, because that is the whole list it has.
+ * is the one chosen by just tapping through; the rest are the folders pi
+ * already runs in. Anything else is a walk through the folders on disk.
  */
 function showDirs({ sessions, here }) {
   places.textContent = ''
@@ -981,6 +981,56 @@ function showDirs({ sessions, here }) {
     row.addEventListener('click', () => startSession(dir))
     places.append(row)
   }
+
+  const row = document.createElement('button')
+  row.className = 'place dir'
+  const name = document.createElement('span')
+  name.className = 'place-name'
+  name.textContent = 'Other folder…'
+  row.append(name)
+  row.addEventListener('click', () => walkSession(here))
+  places.append(row)
+}
+
+/**
+ * Where a fresh session can go when none of the folders above is it: the
+ * folders inside this one, a row at a time. Tapping a name walks in, `Up`
+ * walks out, and the first row starts a session right where the walk is.
+ */
+async function walkSession(cwd) {
+  places.textContent = ''
+
+  const back = document.createElement('button')
+  back.className = 'place dir'
+  back.textContent = '‹ Back'
+  back.addEventListener('click', () => refreshPlaces().catch(() => {}))
+  places.append(back)
+
+  const res = await fetch(`/subfolders?cwd=${encodeURIComponent(cwd)}`)
+  if (!res.ok) {
+    clearMenuNotice()
+    showMenuNotice((await res.text()) || 'could not read that folder')
+    return
+  }
+  const listing = await res.json()
+
+  const row = (title, text, onOpen) => {
+    const button = document.createElement('button')
+    button.className = 'place dir'
+    const name = document.createElement('span')
+    name.className = 'place-name'
+    name.textContent = title
+    const path = document.createElement('span')
+    path.className = 'place-path'
+    path.textContent = text
+    button.append(name, path)
+    button.addEventListener('click', onOpen)
+    places.append(button)
+  }
+
+  row('Start a session here', listing.cwd, () => startSession(listing.cwd))
+  if (listing.parent) row('‹ Up', listing.parent, () => walkSession(listing.parent))
+  for (const dir of listing.dirs) row(basename(dir), '', () => walkSession(dir))
 }
 
 /** Ask the server to begin a fresh session in `dir`, then join it. */

@@ -252,10 +252,10 @@ test('new session offers the folders pi is already in, and starting one joins it
 
   await rows(page).filter({ hasText: '+ New session…' }).click()
   // The chooser lists this folder first — it is what the row itself offered —
-  // and every folder a listed session runs in.
+  // and every folder a listed session runs in, then the walk to anything else.
   const dirNames = await page.locator('#places .place .place-name').allInnerTexts()
   expect(dirNames[0]).toBe(HERE)
-  expect(dirNames.slice(1).sort()).toEqual(['alpha', 'beta'])
+  expect(dirNames.slice(1).sort()).toEqual(['Other folder…', 'alpha', 'beta'])
 
   // Starting one in beta spawns a fresh session there and lands on it: the
   // title names a session the list never had, and the fixture's own cwd line
@@ -281,6 +281,26 @@ test('new session offers the folders pi is already in, and starting one joins it
 
 /** beta's row label: the folder name — the fresh session there has no history. */
 const betaLabel = () => 'beta'
+
+test('a folder nothing lists is walked to and started in', async ({ page }) => {
+  await ready(page)
+  await openMenu(page)
+  await rows(page).filter({ hasText: '+ New session…' }).click()
+  await rows(page).filter({ hasText: 'Other folder…' }).click()
+
+  // The walk begins in this server's own folder and descends from there.
+  await rows(page).filter({ hasText: 'tests' }).click()
+  await expect(rows(page).filter({ hasText: 'fixtures' })).toBeVisible()
+  await rows(page).filter({ hasText: '‹ Up' }).click()
+  await expect(rows(page).filter({ hasText: 'tests' })).toBeVisible()
+
+  await rows(page).filter({ hasText: 'tests' }).click()
+  await rows(page).filter({ hasText: 'fixtures' }).click()
+  await rows(page).filter({ hasText: 'Start a session here' }).click()
+  await expect.poll(() => page.title()).toContain('/fixtures')
+  await expect.poll(async () =>
+    (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/fixtures')
+})
 
 test('another viewer ending a session tells the bystander why it left', async ({ page, context }) => {
   await ready(page)
