@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readPlaces, shorten, lastWrite, subfolders } from '../../server/places.js'
+import { readPlaces, shorten, lastWrite, subfolders, findPlace } from '../../server/places.js'
 
 /** A session file the way pi writes one: a header line, then the conversation. */
 const sessionFile = (cwd, id) => [
@@ -50,12 +50,12 @@ test('a folder with pi history is a session, named by the path in the file', asy
   const project = join(root, 'my-project')
   await withSession(sessionDir, project)
   try {
-    const { sessions, total } = await readPlaces({ sessionDir })
+    const { sessions, more } = await readPlaces({ sessionDir })
     assert.equal(sessions.length, 1)
     assert.equal(sessions[0].cwd, project, 'the cwd comes from the header, not the slug')
     assert.equal(sessions[0].name, 'my-project')
     assert.equal(sessions[0].id, 'x')
-    assert.equal(total, 1)
+    assert.equal(more, false)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -134,11 +134,12 @@ test('past `limit`, only the most recent sessions are read at all', async () => 
   await withSession(sessionDir, project, { id: 'middle', at: Date.UTC(2024, 0, 1) })
   await withSession(sessionDir, project, { id: 'newest', at: Date.UTC(2026, 0, 1) })
   try {
-    const { sessions, total } = await readPlaces({ sessionDir, limit: 2 })
+    const { sessions, more } = await readPlaces({ sessionDir, limit: 2 })
     assert.deepEqual(sessions.map(s => s.id), ['newest', 'middle'], 'the cap keeps the most recent, not an arbitrary subset')
-    assert.equal(total, 3, 'total still counts every candidate found, capped or not')
+    assert.equal(more, true, 'a row past the cap says there is more')
     const everything = await readPlaces({ sessionDir, limit: 99 })
     assert.equal(everything.sessions.length, 3, 'over-provisioned limit lists all three')
+    assert.equal(everything.more, false)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -164,6 +165,21 @@ test('a session whose header has no id is skipped, not fatal', async () => {
   try {
     const { sessions } = await readPlaces({ sessionDir })
     assert.deepEqual(sessions, [])
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a conversation is found by id wherever it falls in the ranking', async () => {
+  // A join and a migration name one session by id: it must not matter whether
+  // that conversation is among the newest, since a window on a long list is
+  // no place to look one thing up.
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  try {
+    await withSession(sessionDir, project, { id: 'oldest', at: Date.UTC(2020, 0, 1) })
+    await withSession(sessionDir, project, { id: 'newest', name: 'newest.jsonl', at: Date.UTC(2026, 0, 1) })
+    const found = await findPlace({ sessionDir, id: 'oldest', cwd: project })
+    assert.equal(found?.id, 'oldest')
+    assert.equal(await findPlace({ sessionDir, id: 'nope' }), null)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -196,6 +212,35 @@ test('a fork still writing keeps its parent busy, however deep it runs', async (
     // A subagent's subagent, two links up the chain from the parent, is.
     await withSession(sessionDir, project, { id: 'deep', body: forkFile(project, 'deep', fork) })
     assert.ok(await lastWrite(parent) > Date.now() - 60_000, "a subagent's subagent counts as its parent's work")
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a wall of forks does not push the real sessions out of the window', async () => {
+  // Subagent runs are written constantly and are not rows of the list, so on a
+  // working machine they sit above everything worth finding. A limit that
+  // spent itself on them would come back showing almost nothing.
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  const old = Date.UTC(2020, 0, 1)
+  try {
+    const parent = await withSession(sessionDir, project, { id: 'mine', at: old })
+    await withSession(sessionDir, project, { id: 'other', name: 'other.jsonl', at: old })
+    await withSession(sessionDir, project, { id: 'fork1', body: forkFile(project, 'fork1', parent) })
+    await withSession(sessionDir, project, { id: 'fork2', body: forkFile(project, 'fork2', parent) })
+    const { sessions, more } = await readPlaces({ sessionDir, limit: 2 })
+    assert.deepEqual(sessions.map(s => s.id).sort(), ['mine', 'other'])
+    assert.equal(more, false, 'forks past the window are not more rows')
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a session in a folder that is gone is not a row', async () => {
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
+  const project = join(root, 'proj')
+  try {
+    await withSession(sessionDir, project, { id: 'mine' })
+    await rm(project, { recursive: true })
+    const { sessions } = await readPlaces({ sessionDir })
+    assert.deepEqual(sessions, [])
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
@@ -237,7 +282,7 @@ test('two paths to one folder report the one everything else uses', async () => 
 })
 
 test('no store at all is an empty list, not an error', async () => {
-  assert.deepEqual(await readPlaces({ sessionDir: join(tmpdir(), 'mtty-nothing-here') }), { sessions: [], total: 0 })
+  assert.deepEqual(await readPlaces({ sessionDir: join(tmpdir(), 'mtty-nothing-here') }), { sessions: [], more: false })
 })
 
 test('paths are shortened for a phone-width row', () => {

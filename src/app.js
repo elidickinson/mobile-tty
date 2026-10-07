@@ -115,11 +115,20 @@ const sessionUrl = place => place.processId
   ? `${wsBase}?process=${encodeURIComponent(place.processId)}`
   : `${wsBase}?session=${encodeURIComponent(place.id)}&cwd=${encodeURIComponent(place.cwd)}`
 
-const fetchPlaces = () => fetch('/places').then(r => r.json())
+// How many rows the menu asks for at a time. Each one returned costs the
+// server a read of its transcript for the label.
+const MENU_PAGE = 200
+
+const fetchPlaces = (window = {}) => {
+  const query = new URLSearchParams()
+  if (window.offset) query.set('offset', window.offset)
+  if (window.limit) query.set('limit', window.limit)
+  return fetch(`/places${query.size ? `?${query}` : ''}`).then(r => r.json())
+}
 function refreshPlaces({ preserveNotice = false } = {}) {
   if (!preserveNotice) clearMenuNotice()
   const request = ++placesRequest
-  return fetchPlaces().then(data => {
+  return fetchPlaces({ limit: MENU_PAGE }).then(data => {
     if (request === placesRequest) showPlaces(data)
   })
 }
@@ -128,9 +137,11 @@ function refreshPlaces({ preserveNotice = false } = {}) {
 const basename = path => path.slice(path.lastIndexOf('/') + 1)
 
 /** The place to land on when the page first loads: last time's, if it is
- *  still around, otherwise whatever `/places` says is most recent. */
+ *  still around, otherwise whatever `/places` says is most recent. One page,
+ *  the same one the menu shows — this is a choice among the recent sessions,
+ *  not a scan of every conversation pi has ever kept. */
 async function resolveInitialPlace() {
-  const { current, sessions } = await fetchPlaces()
+  const { current, sessions } = await fetchPlaces({ limit: MENU_PAGE })
   const remembered = readPlace('mtty-place')
   // A remembered process that has since ended has no row; the conversation it
   // was showing does, which is why the whole place was kept rather than a key.
@@ -820,7 +831,7 @@ function placePath(sess) {
   return path
 }
 
-function showPlaces({ sessions, hidden, here }) {
+function showPlaces({ sessions, more, offset, here }) {
   const active = currentPlace?.processId && sessions.find(s => s.processId === currentPlace.processId)
   if (active) {
     currentPlace = active
@@ -843,54 +854,83 @@ function showPlaces({ sessions, hidden, here }) {
   start.addEventListener('click', () => showDirs({ sessions, here }))
   places.append(start)
 
-  for (const sess of sessions) {
-    const wrap = document.createElement('div')
-    wrap.className = 'place-row'
-    wrap.dataset.sessionId = sess.id
-    if (sess.running) wrap.classList.add('has-end')
+  for (const sess of sessions) places.append(sessionRow(sess))
+  showMore({ more, offset }, sessions)
+}
 
-    const row = document.createElement('button')
-    row.className = samePlace(sess, currentPlace) ? 'place here' : 'place'
-    if (sess.running) row.classList.add('running')
+/** One session row, for the list and for every page appended under it. */
+function sessionRow(sess) {
+  const wrap = document.createElement('div')
+  wrap.className = 'place-row'
+  wrap.dataset.sessionId = sess.id
+  if (sess.running) wrap.classList.add('has-end')
 
-    const name = document.createElement('span')
-    name.className = 'place-name'
-    // pi names a session once it has read the first exchange; before that,
-    // the label is whatever was first asked, so the row is never bare.
-    name.textContent = sess.label
-    row.append(name, placePath(sess))
-    row.addEventListener('click', () => joinSession(sess))
-    wrap.append(row)
+  const row = document.createElement('button')
+  row.className = samePlace(sess, currentPlace) ? 'place here' : 'place'
+  if (sess.running) row.classList.add('running')
 
-    // Keep the destructive action separate from the join button so it remains
-    // keyboard-accessible without nesting interactive controls.
-    if (sess.running) {
-      const end = document.createElement('button')
-      end.className = 'place-end'
-      end.dataset.processId = sess.processId
-      end.dataset.label = sess.label
-      end.addEventListener('click', () => {
-        if (armedEndId !== sess.processId) {
-          armEnd(sess.processId)
-          return
-        }
-        clearEndArm()
-        void endSession(sess)
-      })
-      updateEndControl(sess.processId, end)
-      wrap.append(end)
+  const name = document.createElement('span')
+  name.className = 'place-name'
+  // pi names a session once it has read the first exchange; before that,
+  // the label is whatever was first asked, so the row is never bare.
+  name.textContent = sess.label
+  row.append(name, placePath(sess))
+  row.addEventListener('click', () => joinSession(sess))
+  wrap.append(row)
+
+  // Keep the destructive action separate from the join button so it remains
+  // keyboard-accessible without nesting interactive controls.
+  if (sess.running) {
+    const end = document.createElement('button')
+    end.className = 'place-end'
+    end.dataset.processId = sess.processId
+    end.dataset.label = sess.label
+    end.addEventListener('click', () => {
+      if (armedEndId !== sess.processId) {
+        armEnd(sess.processId)
+        return
+      }
+      clearEndArm()
+      void endSession(sess)
+    })
+    updateEndControl(sess.processId, end)
+    wrap.append(end)
+  }
+  return wrap
+}
+
+/**
+ * Each tap extends the prefix of the ranking fetched so far. Sessions can
+ * move upward as transcripts are written; rereading the prefix includes those
+ * rows instead of skipping them between offset windows. Already shown rows
+ * are not drawn twice.
+ */
+function showMore({ more: hasMore, offset }, shown) {
+  if (!hasMore) return
+  const more = document.createElement('button')
+  more.className = 'place-more'
+  more.textContent = 'show older'
+  more.addEventListener('click', async () => {
+    more.disabled = true
+    more.textContent = 'loading…'
+    const request = placesRequest
+    let data
+    try {
+      data = await fetchPlaces({ limit: offset + MENU_PAGE })
+    } catch {
+      if (request !== placesRequest || !more.isConnected) return
+      showMenuNotice('could not load older sessions')
+      more.disabled = false
+      more.textContent = 'show older'
+      return
     }
-    places.append(wrap)
-  }
-  // The server caps the list rather than reading and sending every session
-  // pi has ever kept a transcript for, which on a working machine can be a
-  // lot -- said plainly here rather than the list just quietly stopping.
-  if (hidden > 0) {
-    const more = document.createElement('div')
-    more.className = 'place-more'
-    more.textContent = `+${hidden} older, not shown`
-    places.append(more)
-  }
+    if (request !== placesRequest || !more.isConnected) return
+    more.remove()
+    const fresh = data.sessions.filter(sess => !shown.some(old => samePlace(sess, old)))
+    for (const sess of fresh) places.append(sessionRow(sess))
+    showMore(data, [...shown, ...fresh])
+  })
+  places.append(more)
 }
 
 function updateEndControl(id, existing) {

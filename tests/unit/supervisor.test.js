@@ -268,6 +268,56 @@ test('/places scopes viewers to the exact folder when an id is listed twice', as
   }
 })
 
+test('/places pages rows and still shows an unpaged caller every running session', async () => {
+  // `mobile-tty end` reads this with no window and must never be looking at a
+  // list that omits a running one, so the window is the phone's alone.
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'b', { cwd: store.at('two') })
+  try {
+    await viewer.opened
+    await until(() => viewer.output.includes('two'), 'the session to be running')
+
+    const first = await fetch(`${page}/places?limit=1`).then(r => r.json())
+    assert.equal(first.more, true, 'one row held back from the first page')
+    const second = await fetch(`${page}/places?offset=${first.offset}&limit=1`).then(r => r.json())
+    assert.equal(second.more, false)
+    assert.deepEqual([...first.sessions, ...second.sessions].map(s => s.cwd).sort(),
+      [store.at('one'), store.at('two')], 'the two pages hold the two rows')
+
+    const everything = await fetch(`${page}/places`).then(r => r.json())
+    assert.equal(everything.more, false, 'no window means nothing is held back')
+    assert.deepEqual(everything.sessions.filter(s => s.running).map(s => s.cwd), [store.at('two')])
+  } finally {
+    viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a conversation past the newest fifty is still joined by id', async () => {
+  // A join names one conversation; which window of the list it fell in is not
+  // a question it should have to answer.
+  const store = await storeFor([{ name: 'work', id: 'old' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const dir = pathJoin(store.sessionDir, `-${store.at('work').replaceAll('/', '-')}-`)
+  const old = Date.UTC(2020, 0, 1)
+  await utimes(pathJoin(dir, 'old.jsonl'), old, old)
+  for (let i = 0; i < 52; i++) {
+    await writeFile(pathJoin(dir, `noise-${i}.jsonl`),
+      `${JSON.stringify({ type: 'session', version: 3, id: `noise-${i}`, cwd: store.at('work') })}\n`)
+  }
+  const viewer = join(base, 'old', { cwd: store.at('work') })
+  try {
+    await viewer.opened
+    await until(() => viewer.output.includes('work'), 'the old conversation to serve its screen')
+  } finally {
+    viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
 test('DELETE ends one running session and closes its viewer', async () => {
   const store = await storeFor([{ name: 'work', id: 'a' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })

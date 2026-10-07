@@ -31,11 +31,6 @@ export const PI_SESSIONS = process.env.PI_CODING_AGENT_SESSION_DIR ||
 // field, and there are a hundred of these to sweep.
 const HEADER_BYTES = 4096
 
-// A machine with months of history can have thousands of session files
-// across every folder pi has ever run in. Nothing needs to read all of them
-// to answer "what are the 50 most recent" -- see readPlaces below.
-const DEFAULT_LIMIT = 50
-
 // A session id becomes a file name (`mtty-<id>.sock`) and part of a join URL;
 // anything outside this shape would be either a path-traversal attempt or a
 // name no client could have learned from this list in the first place.
@@ -254,44 +249,49 @@ const listFolder = async dir => {
   }))
 }
 
-/** A ranked candidate resolved into a session row, or null if it turns out
- *  not to be one — pi's store accumulates files this does not recognise and
- *  folders that no longer exist, same as before, just discovered later now. */
-const resolve = async ({ file, at }) => {
+/** A ranked candidate is a row of the list or it is not: the header says whose
+ *  session it is, and the folder it names still has to exist. Checked before
+ *  anything pays for a label, because most of a real store is forks and
+ *  folders that are gone — and forks are written constantly, so they cluster
+ *  at the top of the ranking where the newest writes are. */
+const isRow = async ({ file, at }) => {
   const header = await readHeader(file)
   if (!header || !ID_SHAPE.test(header.id)) return null
   // A subagent's run is filed as a session of its own naming its parent, and
   // belongs to the session that spawned it rather than to the phone list.
   if (header.parentSession) return null
   const cwd = await canonical(header.cwd)
-  if (!cwd) return null
-  const size = (await stat(file)).size
-  // A transcript with no conversation in it yet has nothing to label it with;
-  // the folder name is the honest row then, and the only one there is.
-  const label = await readLabel(file, size) || basename(cwd)
-  return { id: header.id, cwd, ...placeNames(cwd), at, label }
+  return cwd ? { file, at, id: header.id, cwd } : null
+}
+
+/** A row with its label: a pass over the transcript plus a bounded tail, the
+ *  one expensive read here, and so paid only for the rows returned. A
+ *  transcript with no conversation in it yet has nothing to label it with;
+ *  the folder name is the honest row then, and the only one there is. */
+const labelled = async row => {
+  const { file, ...rest } = row
+  return {
+    ...rest,
+    ...placeNames(row.cwd),
+    label: await readLabel(file, (await stat(file)).size) || basename(row.cwd),
+  }
 }
 
 /**
- * Every session pi has a transcript for, newest first, capped at `limit`.
- *
- * `total` counts every candidate file found, whether or not it made the cut
- * (or turned out, once read, not to be a real session) — the caller's
- * honest answer to "is this everything, or is more being held back."
+ * Every `.jsonl` in the store, newest first, with nothing but a stat read.
  *
  * Sorted by recency because that is the only ordering a phone list can be
- * scrolled by usefully: what you want is nearly always in the first few rows,
- * and past `limit` nothing on a real machine's worth of history is going to
- * be — a stat of every file gets that ranking, and only the ones that make
- * the cut are ever actually opened and parsed.
+ * scrolled by usefully: what you want is nearly always in the first few rows.
+ * A machine with months of history has thousands of these, so callers read
+ * headers down this ranking only until they have what they came for.
  */
-export async function readPlaces({ sessionDir = PI_SESSIONS, limit = DEFAULT_LIMIT } = {}) {
+const ranked = async sessionDir => {
   let entries
   try {
     entries = await readdir(sessionDir, { withFileTypes: true })
   } catch (err) {
     // No store is an answer rather than a fault: pi may simply never have run.
-    if (err.code === 'ENOENT') return { sessions: [], total: 0 }
+    if (err.code === 'ENOENT') return []
     throw err
   }
 
@@ -306,14 +306,60 @@ export async function readPlaces({ sessionDir = PI_SESSIONS, limit = DEFAULT_LIM
     ...flat.map(async candidate => ({ ...candidate, at: (await stat(candidate.file)).mtimeMs })),
     ...folders.map(entry => listFolder(join(sessionDir, entry.name))),
   ])
-  const candidates = found.flat().sort((a, b) => b.at - a.at)
+  return found.flat().sort((a, b) => b.at - a.at)
+}
 
-  const sessions = []
-  for (const candidate of candidates.slice(0, limit)) {
-    const row = await resolve(candidate)
-    if (row) sessions.push(row)
+/** A running terminal's row, labelled from the transcript its identity names.
+ *  Pi writes that file with the first entry, so until then there is none and
+ *  the folder name is the label, as for any transcript with nothing in it. */
+const liveRow = async ({ file, ...running }) => {
+  let info
+  try {
+    info = file && await stat(file)
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err
   }
-  return { sessions, total: candidates.length }
+  if (!info) return running
+  return { ...running, at: info.mtimeMs, label: await readLabel(file, info.size) || running.label }
+}
+
+/**
+ * A window on the list: `limit` rows from `offset`, and whether any lie past it.
+ *
+ * `live` is what the running terminals have open. Those lead the list -- what
+ * is alive is what is worth finding first -- and their transcripts are skipped
+ * further down, so a running session is one row in one place.
+ *
+ * `limit` counts ROWS rather than files. A cap on files would be spent almost
+ * entirely on forks and folders that are gone — the bulk of a real store, and
+ * the files written most often — and would come back holding whatever rows
+ * happened to sit among them. Headers are read down the ranking only until the
+ * window and one row past it are found; nothing counts the rest.
+ */
+export async function readPlaces({ sessionDir = PI_SESSIONS, offset = 0, limit = Infinity, live = [] } = {}) {
+  const rows = (await Promise.all(live.map(liveRow))).sort((a, b) => b.at - a.at)
+  const end = offset + limit
+  for (const candidate of await ranked(sessionDir)) {
+    if (rows.length > end) break
+    const row = await isRow(candidate)
+    if (row && !live.some(running => running.id === row.id && running.cwd === row.cwd)) rows.push(row)
+  }
+  const sessions = []
+  for (const row of rows.slice(offset, end)) {
+    sessions.push(row.file ? await labelled(row) : row)
+  }
+  return { sessions, more: rows.length > end }
+}
+
+/** The one row for a conversation, wherever it falls in the ranking: a join or
+ *  a migration names a session by id, and no listing window is where to look
+ *  one thing up. Newest first, so the session just tapped is found at once. */
+export async function findPlace({ sessionDir = PI_SESSIONS, id, cwd }) {
+  for (const candidate of await ranked(sessionDir)) {
+    const row = await isRow(candidate)
+    if (row?.id === id && (!cwd || row.cwd === cwd)) return labelled(row)
+  }
+  return null
 }
 
 /** Whether `candidate` is `root`, or was forked from something that was.

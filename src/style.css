@@ -447,7 +447,10 @@ html, body {
 .place-end.confirm { color: var(--danger); font-weight: 600; }
 
 .place-more {
+  width: 100%;
   padding: 9px 10px;
+  border: 0;
+  background: none;
   color: var(--muted);
   font: 12px var(--font);
   text-align: center;

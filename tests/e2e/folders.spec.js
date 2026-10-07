@@ -3,7 +3,7 @@
 // list says where you are and what is still running, and that a session with
 // no transcript yet can be begun from the same list.
 import { test, expect, ready } from './helpers.js'
-import { readFile, unlink, writeFile } from 'node:fs/promises'
+import { readFile, unlink, utimes, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
 test.use({ folders: ['alpha', 'beta'] })
@@ -14,6 +14,15 @@ const openMenu = async page => {
 }
 
 const rows = page => page.locator('#places .place')
+
+const seedHistory = async store => {
+  const folder = join(store.sessionDir, `-${process.cwd().replaceAll('/', '-')}-`)
+  for (let i = 0; i < 220; i++) {
+    await writeFile(join(folder, `fill-${i}.jsonl`),
+      `${JSON.stringify({ type: 'session', version: 3, id: `fill-${i}`, cwd: process.cwd() })}\n`)
+  }
+  return folder
+}
 
 /** The place the page remembered under `key`, as the app stores it. */
 const storedPlace = (page, key) => page.evaluate(key => {
@@ -300,6 +309,67 @@ test('a folder nothing lists is walked to and started in', async ({ page }) => {
   await expect.poll(() => page.title()).toContain('/fixtures')
   await expect.poll(async () =>
     (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('/fixtures')
+})
+
+test('paging includes an older session that moves above the first page', async ({ page, store }) => {
+  // Enough history to overflow the menu's first page, which is the whole
+  // question: a list that quietly stops at a few dozen rows is the bug here.
+  const folder = await seedHistory(store)
+  await ready(page)
+  await openMenu(page)
+
+  const { sessions } = await page.evaluate(() => fetch('/places').then(r => r.json()))
+  const total = sessions.length
+  // The paging row is only drawn once the list is, so waiting for it is
+  // waiting for the first page to land.
+  const more = page.locator('.place-more')
+  await expect(more).toBeVisible()
+  const first = await rows(page).count()
+  expect(first, 'the first page is a page, not the whole list').toBeLessThan(total + 1)
+
+  const listed = await page.locator('.place-row').evaluateAll(rows => rows.map(row => row.dataset.sessionId))
+  const moved = sessions.find(sess => sess.id.startsWith('fill-') && !listed.includes(sess.id))
+  const future = new Date(Date.now() + 60_000)
+  await utimes(join(folder, `${moved.id}.jsonl`), future, future)
+
+  // The `+ New session…` row is one of `rows`, hence the + 1.
+  let shown = first
+  while (shown < total + 1) {
+    await more.click()
+    await expect.poll(() => rows(page).count()).toBeGreaterThan(shown)
+    shown = await rows(page).count()
+  }
+  await expect(more).toHaveCount(0)
+  await expect(page.locator(`[data-session-id="${moved.id}"]`)).toHaveCount(1)
+})
+
+test('an older-page response cannot append sessions to the folder picker', async ({ page, store }) => {
+  await seedHistory(store)
+  await ready(page)
+  await openMenu(page)
+  await expect(page.locator('.place-more')).toBeVisible()
+
+  let release
+  const held = new Promise(resolve => { release = resolve })
+  let intercepted
+  const pending = new Promise(resolve => { intercepted = resolve })
+  await page.route('**/places?limit=400', async route => {
+    const response = await route.fetch()
+    intercepted()
+    await held
+    await route.fulfill({ response })
+  })
+  await page.locator('.place-more').click()
+  await pending
+  await rows(page).filter({ hasText: '+ New session' }).click()
+  await expect(rows(page).filter({ hasText: 'Other folder' })).toBeVisible()
+
+  const response = page.waitForResponse('**/places?limit=400')
+  release()
+  await (await response).finished()
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await expect(page.locator('#places .place-row')).toHaveCount(0)
+  await expect(page.locator('.place-more')).toHaveCount(0)
 })
 
 test('another viewer ending a session tells the bystander why it left', async ({ page, context }) => {

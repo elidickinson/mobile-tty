@@ -138,7 +138,7 @@ Desktop can join too (same URL, or `./mobile-tty attach [name-or-path]` for a se
 - The flags also read env vars: `$MTTY_PORT`, `$MTTY_BIND`, `$MTTY_HOSTNAME`, `$MTTY_THEME`, `$MTTY_NEW_DIR` (and `$MTTY_PASSWORD`, above).
 - The session menu is built from pi's history under `~/.pi/agent/sessions`; `$PI_CODING_AGENT_SESSION_DIR` points it elsewhere.
 - A folder used for several separate pi conversations offers all of them in the list, not just the newest. `/resume` inside pi works too: the live marker follows the conversation while viewers remain attached to that pi process.
-- **The list itself is capped at the 50 most recent sessions**, not everything pi has ever kept a transcript for -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." The list says how many older ones are being left out when there are any. This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
+- **The phone's list shows 200 sessions at a time**, newest first, with a row at the bottom to show older ones -- a working machine's history can be a lot, and nothing needs to read all of it to answer "what have I touched lately." This is a separate limit from the concurrency cap below: it's about what's *listed*, not what's *running*.
 - Up to 4 sessions run in the background at once by default; joining a fifth ends whichever one was looked at longest ago to make room.
 - Restarting the server ends every session; `./mobile-tty serve pi --session-id whatever` pins one to come back to.
 - No terminal handy to seed a new folder? `./mobile-tty serve bash`, then cd and run pi once.

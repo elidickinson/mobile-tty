@@ -17,7 +17,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
-import { PI_SESSIONS, placeNames, readPlaces, canonical, subfolders } from './places.js'
+import { PI_SESSIONS, placeNames, readPlaces, findPlace, canonical, subfolders } from './places.js'
 import { BACKLOG_LIMIT, TOO_FAR_BEHIND } from './viewer.js'
 import { Registry } from './registry.js'
 
@@ -85,31 +85,45 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     if (path === '/places' && req.method === 'GET') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
+      // A caller that names no window gets every session there is, so
+      // `mobile-tty end` and `attach` can never be reading a list that quietly
+      // omits a running one. The phone menu asks for a window at a time.
+      const query = new URL(req.url, 'http://internal').searchParams
+      const limit = query.has('limit') ? Number(query.get('limit')) : Number.MAX_SAFE_INTEGER
+      const offset = query.has('offset') ? Number(query.get('offset')) : 0
+      if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0) {
+        return void res.writeHead(422, { 'content-type': 'text/plain' }).end('offset and limit must be whole numbers, limit at least 1')
+      }
+      // What the running terminals have open, as rows of the same list.
+      const live = registry.running().map(child => {
+        const current = registry.current(child)
+        return {
+          id: current.id,
+          cwd: current.cwd,
+          file: current.file,
+          ...placeNames(current.cwd),
+          at: current.at ?? child.joinedAt,
+          label: basename(current.cwd),
+          processId: child.processId,
+        }
+      })
+      const { sessions: found, more } = await readPlaces({ sessionDir, offset, limit, live })
       // How many viewers are on each live child, for the listings: "2 watching"
       // on a row says the session is shared right now, not just alive.
-      const { sessions: found, total } = await readPlaces({ sessionDir })
-      const rows = [...found]
-      for (const child of registry.running()) {
-        const current = registry.current(child)
-        let row = rows.find(p => p.id === current.id && p.cwd === current.cwd)
-        if (!row) {
-          row = { id: current.id, cwd: current.cwd, ...placeNames(current.cwd), at: current.at ?? child.joinedAt, label: basename(current.cwd) }
-          rows.push(row)
-        }
-        row.processId = child.processId
-      }
-      // Live sessions lead the list -- what is alive is what is worth finding
-      // first -- and each group falls back to recency.
-      const sessions = rows.sort((a, b) => Boolean(b.processId) - Boolean(a.processId) || b.at - a.at).map(place => ({
+      const sessions = found.map(place => ({
         ...place,
         running: Boolean(place.processId),
         viewers: place.processId ? [...wss.clients].filter(c => c.readyState === c.OPEN && c.processId === place.processId).length : 0,
       }))
-      // `total` counts store transcripts; the list also carries transcript-
-      // less live sessions, so "older, not shown" must count from what is
-      // actually shown, not from the store total alone.
-      const hidden = Math.max(0, total - found.length)
-      const body = JSON.stringify({ current: sessions.find(s => s.running)?.processId ?? null, sessions, hidden, here: defaultDir })
+      const body = JSON.stringify({
+        current: sessions.find(s => s.running)?.processId ?? null,
+        sessions,
+        more,
+        // Where the next window starts, passed back rather than counted by
+        // the caller: the rows to show are the server's to page.
+        offset: offset + found.length,
+        here: defaultDir,
+      })
       return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
     }
 
@@ -166,8 +180,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const body = await readBody(req, 2048).catch(() => null)
       const wanted = body ? await canonical(body.cwd?.trim()) : null
       if (!wanted) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such directory to start a session in')
-      const { sessions } = await readPlaces({ sessionDir })
-      const place = sessions.find(p => p.id === body.id && p.cwd === wanted)
+      const place = await findPlace({ sessionDir, id: body.id, cwd: wanted })
       if (!place) return void res.writeHead(404, { 'content-type': 'text/plain' }).end('no such conversation on this machine')
       const child = await registry.ensure(place.id, place.cwd)
       if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
@@ -274,8 +287,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         if (!child) { ws.close(4004, 'terminal is no longer running'); return }
         child.joinedAt = Date.now()
       } else {
-        const { sessions } = await readPlaces({ sessionDir })
-        const place = cwd ? sessions.find(p => p.id === id && p.cwd === cwd) : sessions.find(p => p.id === id)
+        const place = await findPlace({ sessionDir, id, cwd: cwd || undefined })
         if (!id || !place) { ws.close(4004, 'no such conversation'); return }
         child = await registry.ensure(id, place.cwd)
         if (!child) { ws.close(4006, POOL_FULL); return }
