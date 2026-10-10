@@ -26,6 +26,31 @@ const run = (args, cwd, port = '1') => new Promise(resolve => {
   child.on('close', code => resolve({ code, output }))
 })
 
+test('unknown commands are reported instead of treated as sessions arguments', async () => {
+  for (const args of [['unknown'], ['--port', '1', 'unknown'], ['--', 'unknown']]) {
+    const { code, output } = await run(args)
+    assert.equal(code, 2)
+    assert.equal(output, 'mobile-tty: unknown command: unknown\n')
+  }
+})
+
+test('resume is an alias for attach', async () => {
+  for (const args of [['resume'], ['resume', 'project'], ['--port', '1', 'resume']]) {
+    const { code, output } = await run(args)
+    assert.equal(code, 2)
+    assert.match(output, /attach: not a terminal/)
+  }
+  const { code, output } = await run(['resume', '-', 'extra'])
+  assert.equal(code, 2)
+  assert.equal(output, 'mobile-tty: attach - takes no session name\n')
+})
+
+test('explicit sessions still rejects arguments', async () => {
+  const { code, output } = await run(['sessions', 'extra'])
+  assert.equal(code, 2)
+  assert.equal(output, 'mobile-tty: sessions takes no arguments\n')
+})
+
 test('new refuses with how to start the server when none answers', async () => {
   const scratch = await mkdtemp(join(tmpdir(), 'mtty-bin-'))
   try {

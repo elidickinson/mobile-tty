@@ -44,6 +44,7 @@ Usage: mobile-tty [command] [options] [program...]
   new            start a fresh session in this folder and attach to it
   attach [fragment|n] attach this terminal to a running server
   attach -       reattach to the last session attached from this machine
+  resume         alias for attach
   tunnel         run the Cloudflare tunnel on its own
   setup <host>   create the tunnel, DNS and Access login for a hostname
 
@@ -125,9 +126,11 @@ take_options() {
         [[ "$cmd" == attach && "$attach_previous" -eq 0 ]] || usage_error "unknown option $1"
         attach_previous=1; shift ;;
       -*) usage_error "unknown option $1" ;;
-      serve|sessions|end|new|attach|tunnel|setup)
+      serve|sessions|end|new|attach|resume|tunnel|setup)
         [[ -z "$cmd" ]] || break        # a second one is the program's business
-        cmd=$1; shift ;;
+        cmd=$1
+        [[ "$cmd" != resume ]] || cmd=attach
+        shift ;;
       *)
         if [[ "$cmd" == end && -z "$end_match" ]]; then
           end_match=$1; shift
@@ -142,6 +145,9 @@ take_options() {
 REST=()
 take_options "$@"
 set -- ${REST[@]+"${REST[@]}"}
+if [[ -z "$cmd" && $# -gt 0 ]]; then
+  usage_error "unknown command: $1"
+fi
 [[ -n "$cmd" ]] || cmd=sessions
 
 # setup takes a hostname, not our options, but it should still hear the port so
