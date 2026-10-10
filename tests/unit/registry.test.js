@@ -7,10 +7,28 @@
 // and it settles through the same idempotent path exercised below anyway.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Registry } from '../../server/registry.js'
+
+test('a spawn that fails outright keeps nothing behind', async () => {
+  // Not every spawn failure is a program that dies: the fork itself can be
+  // refused -- out of file descriptors is the one that happens for real --
+  // and then nothing will ever clean up after it. The failure goes to the
+  // caller, and the identity file is gone with it.
+  const socketDir = await mkdtemp(join(tmpdir(), 'mtty-registry-'))
+  try {
+    // A command line longer than the OS will exec is refused by spawn()
+    // itself, with no process and no exit to come.
+    const registry = new Registry({ cliPath: join(socketDir, 'x'.repeat(2 * 1024 * 1024)), program: 'nothing', socketDir })
+    await assert.rejects(registry.start('some-conversation', socketDir), { syscall: 'spawn' })
+    assert.deepEqual(registry.running(), [])
+    assert.deepEqual(await readdir(socketDir), [], 'no identity file left to claim an owner')
+  } finally {
+    await rm(socketDir, { recursive: true, force: true })
+  }
+})
 
 test('a terminal that dies before it can listen is dropped, identity file and all', async () => {
   const socketDir = await mkdtemp(join(tmpdir(), 'mtty-registry-'))

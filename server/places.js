@@ -134,7 +134,8 @@ const readLabel = async (file, size) => {
   let firstUser
   let afterFirst = 0
   let stop = false
-  const rl = createInterface({ input: createReadStream(file), crlfDelay: Infinity })
+  const stream = createReadStream(file)
+  const rl = createInterface({ input: stream, crlfDelay: Infinity })
   rl.on('line', line => {
     if (stop) return
     const entry = tryParse(line)
@@ -154,6 +155,11 @@ const readLabel = async (file, size) => {
     }
   })
   await new Promise(resolve => rl.on('close', resolve))
+  // A forward pass that stopped early leaves the stream short of its end, and
+  // a stream that never ends never closes its file. Every row of a listing
+  // pays this read, so one transcript left open per row is what fills the
+  // process's descriptor table and makes every later spawn fail.
+  stream.destroy()
 
   // The tail can only hold a later name than anything the forward pass saw if
   // it stopped short of EOF, and the read must then start past it.

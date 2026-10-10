@@ -559,6 +559,28 @@ test('/start begins a session in any directory that exists', async () => {
   }
 })
 
+test('/start answers 503 when the server cannot spawn at all', async () => {
+  // spawn() refusing outright is the machine failing, not the request: it says
+  // so as a 503 to retry later, where a bare 500 would blame the request. A
+  // command line longer than the OS will exec makes the fork itself fail,
+  // which is the same path as running out of file descriptors.
+  const store = await storeFor([{ name: 'listed', id: 'a' }])
+  const { supervisor, page } = await start({ sessionDir: store.sessionDir, cli: pathJoin(tmpdir(), 'x'.repeat(2 * 1024 * 1024)) })
+  try {
+    const res = await fetch(`${page}/start`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd: store.at('listed') }),
+    })
+    assert.equal(res.status, 503)
+    assert.match(await res.text(), /cannot start a terminal/)
+    assert.equal(registryRunning(supervisor), 0)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
 test('/subfolders lists the folders inside one and refuses one that is gone', async () => {
   const store = await storeFor([{ name: 'listed', id: 'a' }])
   const { supervisor, page } = await start({ sessionDir: store.sessionDir })

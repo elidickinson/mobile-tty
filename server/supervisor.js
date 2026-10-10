@@ -211,12 +211,17 @@ export function createSupervisor({ port, bind, hostname, password, command, args
   }
 
   // A throw in here used to be the end of the supervisor and every PTY under
-  // it; a request that cannot be answered is one 500 instead.
+  // it; a request that cannot be answered is one 500 instead. One kind says
+  // more than that: spawn() itself refused -- no file descriptors left, say --
+  // which is the machine's failing rather than the request's, and a fresh 503
+  // is a retry later where a bare 500 reads like a bad request.
   const http = createServer((req, res) => {
     handle(req, res).catch(err => {
       console.error('server: could not answer a request', err)
       if (res.headersSent) return void res.end()
-      res.writeHead(500, { 'content-type': 'text/plain' }).end(String(err.message ?? err))
+      const spawnFailed = err?.syscall === 'spawn'
+      res.writeHead(spawnFailed ? 503 : 500, { 'content-type': 'text/plain' })
+        .end(spawnFailed ? 'this server cannot start a terminal right now' : String(err.message ?? err))
     })
   })
 

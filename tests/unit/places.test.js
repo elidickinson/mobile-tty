@@ -7,6 +7,7 @@
 // in full every time.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readdirSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -338,6 +339,37 @@ test('an unnamed session is labeled by its first ask, clipped to a row', async (
     const { sessions } = await readPlaces({ sessionDir })
     assert.ok(sessions[0].label.startsWith('ask about something'), 'falls back to the first user text')
     assert.ok(sessions[0].label.length <= 80, `clipped to a row, not ${sessions[0].label.length}`)
+  } finally { await rm(root, { recursive: true, force: true }) }
+})
+
+test('a listing holds no transcript file open once it is done', async () => {
+  // Every row of a listing is labelled by reading its transcript, and a
+  // forward pass that stops early used to leave that file open for good: one
+  // descriptor per row, forever, until the process ran out and could spawn
+  // nothing. The count must come back to where it started, however often the
+  // list is read.
+  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'app')) })
+  // Past the few entries the label is read from, so the forward pass stops
+  // early and leaves the rest unread -- the case that used to leak.
+  const talk = Array.from({ length: 20 }, (_, i) =>
+    JSON.stringify({ type: 'message', message: { role: i % 2 ? 'assistant' : 'user', content: 'x'.repeat(256) } })).join('\n')
+  for (const id of ['a', 'b', 'c']) {
+    await withSession(sessionDir, join(root, 'app'), {
+      id,
+      body: [
+        JSON.stringify({ type: 'session', version: 3, id, cwd: join(root, 'app') }),
+        JSON.stringify({ type: 'message', message: { role: 'user', content: 'the question' } }),
+        talk,
+      ].join('\n'),
+    })
+  }
+  // /dev/fd is this process's own open descriptors on macOS and Linux.
+  const openFiles = () => readdirSync('/dev/fd').length
+  try {
+    await readPlaces({ sessionDir })
+    const before = openFiles()
+    for (let round = 0; round < 3; round++) await readPlaces({ sessionDir })
+    assert.equal(openFiles(), before)
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 

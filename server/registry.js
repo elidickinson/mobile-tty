@@ -2,7 +2,7 @@
 // initial transcript to open; /new and /resume can change it in the same PTY.
 import { fork } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -92,10 +92,20 @@ export class Registry {
     const runtimeArgs = takesSessionId(program)
       ? [...this.#programArgs, '-e', SESSION_EXTENSION, '--session-id', sessionId]
       : [...this.#programArgs]
-    const proc = fork(this.#cliPath, [
-      '--internal-socket', socketPath, '--internal-cwd', cwd,
-      '--theme', this.#theme, '--', program, ...runtimeArgs,
-    ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: { ...process.env, MTTY_IDENTITY: identityPath, MTTY_PROCESS_ID: processId } })
+    let proc
+    try {
+      proc = fork(this.#cliPath, [
+        '--internal-socket', socketPath, '--internal-cwd', cwd,
+        '--theme', this.#theme, '--', program, ...runtimeArgs,
+      ], { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], env: { ...process.env, MTTY_IDENTITY: identityPath, MTTY_PROCESS_ID: processId } })
+    } catch (err) {
+      // spawn() itself failed -- no process, no exit to clean up after -- and
+      // the identity file written above would be the one thing left claiming
+      // this session exists. It is thrown on to the caller, which says it in
+      // as many words rather than answering as if the request were at fault.
+      rmSync(identityPath, { force: true })
+      throw err
+    }
     const child = { processId, sessionId, proc, socketPath, identityPath, cwd, joinedAt: Date.now(), sockets: [] }
     this.#children.set(processId, child)
     let settled = false
