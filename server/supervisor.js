@@ -91,7 +91,9 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const query = new URL(req.url, 'http://internal').searchParams
       const limit = query.has('limit') ? Number(query.get('limit')) : Number.MAX_SAFE_INTEGER
       const offset = query.has('offset') ? Number(query.get('offset')) : 0
-      if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0) {
+      // Window params mean nothing to an exact-id request, so they are not
+      // validated there: naming an id is not a malformed window.
+      if (!query.has('id') && (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0)) {
         return void res.writeHead(422, { 'content-type': 'text/plain' }).end('offset and limit must be whole numbers, limit at least 1')
       }
       // An exact id is answered even when the session is a fork, which the
@@ -111,11 +113,13 @@ export function createSupervisor({ port, bind, hostname, password, command, args
           processId: child.processId,
         }
       })
-      // A row answered by id is the live one when its terminal is up, so
-      // running and viewer counts read like any row of the list.
-      const single = named ? await findPlace({ sessionDir, id: named }) : null
+      // A row answered by id is the live one when its terminal is up -- a
+      // running terminal answers from the registry before the store is read
+      // at all -- so running and viewer counts read like any row of the list.
+      const liveHit = named && live.find(r => r.id === named)
+      const single = named && !liveHit ? await findPlace({ sessionDir, id: named }) : null
       const { sessions: found, more } = named
-        ? { sessions: single ? [live.find(r => r.id === single.id && r.cwd === single.cwd) ?? single] : [], more: false }
+        ? { sessions: [liveHit ?? single].filter(Boolean), more: false }
         : await readPlaces({ sessionDir, offset, limit, live })
       // How many viewers are on each live child, for the listings: "2 watching"
       // on a row says the session is shared right now, not just alive.

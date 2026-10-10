@@ -243,6 +243,11 @@ test('GET /places lists every session and which ones are running', async () => {
     assert.equal(byId.a.viewers, 1, 'the open join is counted')
     assert.equal(byId.b.running, false, 'the one nobody joined is not')
     assert.equal(byId.b.viewers, 0, 'an unjoined session has no viewers')
+
+    // The exact-id answer of a running listed session reads the same way.
+    const named = await fetch(`${page}/places?id=a`).then(r => r.json())
+    assert.equal(named.sessions[0].running, true)
+    assert.equal(named.sessions[0].viewers, 1)
   } finally {
     a.close()
     await supervisor.close()

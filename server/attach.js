@@ -104,7 +104,10 @@ export async function resolveSession(url, { session, match, headers }) {
     // A remembered session a server restart unlisted is still joinable by its
     // own id, which also covers a fork -- the list this falls back past never
     // shows one, yet `rememberSession` will happily have recorded it.
-    const previous = sessions.find(s => s.processId === session.processId)
+    // A remembered place can have no processId, and non-running rows have
+    // none either, so only compare when there is one to compare -- otherwise
+    // this matches the first listed row that happens not to be running.
+    const previous = (session.processId && sessions.find(s => s.processId === session.processId))
       ?? sessions.find(s => s.id === session.id && s.cwd === session.cwd)
       ?? (session.id && await getPlaces(url, headers, { id: session.id }))?.sessions[0]
     if (!previous) console.error('attach: previous conversation is no longer listed')
