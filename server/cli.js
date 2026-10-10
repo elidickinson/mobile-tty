@@ -14,9 +14,23 @@ import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+// Everything after `--` belongs to the program being run, so a flag of the
+// program's own (pi has its own --theme, say) must never read as one of ours.
+const argv = (() => {
+  const i = process.argv.indexOf('--')
+  return i === -1 ? process.argv : process.argv.slice(0, i)
+})()
 const arg = name => {
-  const i = process.argv.indexOf(name)
-  return i === -1 ? undefined : process.argv[i + 1]
+  const i = argv.indexOf(name)
+  if (i === -1) return undefined
+  const value = argv[i + 1]
+  // The separator after a flag is not its value, and a flag last on the line
+  // has none: either way the default would silently win.
+  if (value === undefined || value === '--') {
+    console.error(`${name} needs a value`)
+    process.exit(2)
+  }
+  return value
 }
 const rest = () => {
   const i = process.argv.indexOf('--')
@@ -86,12 +100,13 @@ if (internalSocket) {
 } else {
   const [command, ...args] = rest()
   if (!command) {
-    console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME --theme NAME -- <command...>')
+    console.error('usage: node server/cli.js --port N --bind ADDR --hostname NAME --theme NAME --cap N -- <command...>')
     process.exit(2)
   }
 
   const supervisor = createSupervisor({
     port: number('--port', 7681),
+    cap: number('--cap', undefined),
     bind: arg('--bind') ?? '127.0.0.1',
     hostname: arg('--hostname'),
     theme,

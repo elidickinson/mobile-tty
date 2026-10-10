@@ -13,6 +13,8 @@ const KILL_GRACE_MS = 2_000
 // for a new one. Generous on purpose: the question is whether anyone is
 // coming back to this in the next few minutes, not whether the model is done.
 const IDLE_MS = 10 * 60_000
+// How many sessions may run at once. The one place the pool size is decided.
+const CAP = 6
 const SESSION_EXTENSION = fileURLToPath(new URL('../pi-extensions/mtty-session.ts', import.meta.url))
 const takesSessionId = command => basename(command) === 'pi'
 
@@ -31,7 +33,7 @@ export class Registry {
   #evicting = new Set()
   #idleMs
 
-  constructor({ cliPath, program, programArgs = [], socketDir, cap = 4, theme = 'dark', idleMs = IDLE_MS }) {
+  constructor({ cliPath, program, programArgs = [], socketDir, cap = CAP, theme = 'dark', idleMs = IDLE_MS }) {
     this.#cliPath = cliPath
     this.#program = program
     this.#programArgs = programArgs

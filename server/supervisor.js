@@ -46,7 +46,7 @@ const connectChild = (socketPath, readyMs) => new Promise((resolveConn, rejectCo
   attempt()
 })
 
-export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap = 4, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, idleMs, onListen, onExit }) {
+export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, idleMs, onListen, onExit }) {
   const auth = new Auth(password)
   const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme, idleMs })
   // Where a brand-new session starts: given, or the folder this run was

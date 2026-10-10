@@ -29,7 +29,7 @@ const storeFor = async entries => {
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
 
-const start = async ({ sessionDir, cap = 4, idleMs, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath, password }) => {
+const start = async ({ sessionDir, cap, idleMs, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath, password }) => {
   const supervisor = createSupervisor({
     port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, idleMs, pingMs, childReadyMs, password,
     socketDir: socketDir ?? await mkdtemp(pathJoin(tmpdir(), 'mtty-sock-')),
