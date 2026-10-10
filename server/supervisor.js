@@ -94,6 +94,10 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(offset) || offset < 0) {
         return void res.writeHead(422, { 'content-type': 'text/plain' }).end('offset and limit must be whole numbers, limit at least 1')
       }
+      // An exact id is answered even when the session is a fork, which the
+      // windowed list never shows: a caller that already knows the id needs
+      // no menu row, and the join below serves whatever findPlace returns.
+      const named = query.get('id')
       // What the running terminals have open, as rows of the same list.
       const live = registry.running().map(child => {
         const current = registry.current(child)
@@ -107,7 +111,12 @@ export function createSupervisor({ port, bind, hostname, password, command, args
           processId: child.processId,
         }
       })
-      const { sessions: found, more } = await readPlaces({ sessionDir, offset, limit, live })
+      // A row answered by id is the live one when its terminal is up, so
+      // running and viewer counts read like any row of the list.
+      const single = named ? await findPlace({ sessionDir, id: named }) : null
+      const { sessions: found, more } = named
+        ? { sessions: single ? [live.find(r => r.id === single.id && r.cwd === single.cwd) ?? single] : [], more: false }
+        : await readPlaces({ sessionDir, offset, limit, live })
       // How many viewers are on each live child, for the listings: "2 watching"
       // on a row says the session is shared right now, not just alive.
       const sessions = found.map(place => ({
@@ -172,8 +181,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
 
     // Adopt a conversation a pi outside this server is running: the caller
     // (the mtty-migrate extension) names the session and its folder, the
-    // transcript must be one this server lists, and the child that resumes it
-    // is the same spawn a tap on a saved conversation makes.
+    // transcript must be one this server can resolve by id, and the child
+    // that resumes it is the same spawn a tap on a saved conversation makes.
     if (path === '/migrate' && req.method === 'POST') {
       if (!auth.admits(req)) return void res.writeHead(401).end()
       if (!originAllowedReq(req)) return void res.writeHead(403).end()

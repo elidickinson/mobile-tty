@@ -19,12 +19,14 @@ const storeFor = async entries => {
   const root = await realpath(await mkdtemp(pathJoin(tmpdir(), 'mtty-sup-')))
   const sessionDir = pathJoin(root, 'sessions')
   await mkdir(sessionDir)
-  for (const { name, id } of entries) {
+  for (const { name, id, parent } of entries) {
     const cwd = pathJoin(root, name)
     await mkdir(cwd, { recursive: true })
     const dir = pathJoin(sessionDir, `-${cwd.replaceAll('/', '-')}-`)
     await mkdir(dir, { recursive: true })
-    await writeFile(pathJoin(dir, `${id}.jsonl`), `${JSON.stringify({ type: 'session', version: 3, id, cwd })}\n`)
+    const header = { type: 'session', version: 3, id, cwd }
+    if (parent) header.parentSession = pathJoin(dir, `${parent}.jsonl`)
+    await writeFile(pathJoin(dir, `${id}.jsonl`), `${JSON.stringify(header)}\n`)
   }
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
@@ -243,6 +245,40 @@ test('GET /places lists every session and which ones are running', async () => {
     assert.equal(byId.b.viewers, 0, 'an unjoined session has no viewers')
   } finally {
     a.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('/places hides forks from the list but answers them by exact id', async () => {
+  const store = await storeFor([{ name: 'main', id: 'a' }, { name: 'main', id: 'b', parent: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  try {
+    const { sessions } = await fetch(`${page}/places`).then(r => r.json())
+    assert.deepEqual(sessions.map(s => s.id), ['a'], 'the fork is not a row of the list')
+
+    const exact = await fetch(`${page}/places?id=b`).then(r => r.json())
+    assert.deepEqual(exact.sessions.map(s => s.id), ['b'], 'the fork is answered by id')
+    assert.equal(exact.sessions[0].cwd, store.at('main'))
+    assert.equal(exact.more, false)
+
+    const missing = await fetch(`${page}/places?id=zzz`).then(r => r.json())
+    assert.deepEqual(missing.sessions, [], 'an unknown id is an empty answer, not an error')
+    const junk = await fetch(`${page}/places?id=..%2Fescape`).then(r => r.json())
+    assert.deepEqual(junk.sessions, [], 'an id outside the id shape is an empty answer, not an error')
+
+    // Joined, the fork reads like any row: running, and watched.
+    const viewer = join(base, 'b', { cwd: store.at('main') })
+    try {
+      await viewer.opened
+      await until(() => viewer.output.includes('main'), 'the forked session to be served')
+      const running = await fetch(`${page}/places?id=b`).then(r => r.json())
+      assert.equal(running.sessions[0].running, true)
+      assert.equal(running.sessions[0].viewers, 1)
+    } finally {
+      viewer.close()
+    }
+  } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
   }

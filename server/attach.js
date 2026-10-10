@@ -71,6 +71,23 @@ async function login(url, password) {
   return cookie.split(';')[0]
 }
 
+// `GET /places`, with optional query params. The parsed body, or null after
+// printing why a listing could not be read.
+async function getPlaces(url, headers, params = {}) {
+  const listUrl = new URL(url)
+  listUrl.protocol = listUrl.protocol === 'wss:' ? 'https:' : 'http:'
+  listUrl.pathname = '/places'
+  for (const [key, value] of Object.entries(params)) listUrl.searchParams.set(key, value)
+  const res = await fetch(listUrl, { headers })
+  if (!res.ok) {
+    // 401 is the common one: a cookie the supervisor no longer honours.
+    console.error(res.status === 401 ? 'attach: login refused — set MTTY_PASSWORD and try again'
+      : `attach: could not list sessions (HTTP ${res.status})`)
+    return null
+  }
+  return res.json()
+}
+
 /**
  * Which session to join: a running row selected by a bare number, the one a
  * substring of `match` picks out uniquely, or, failing either, a numbered prompt.
@@ -81,24 +98,19 @@ async function login(url, password) {
 export async function resolveSession(url, { session, match, headers }) {
   if (typeof session === 'string') return { processId: session }
 
-  const listUrl = new URL(url)
-  listUrl.protocol = listUrl.protocol === 'wss:' ? 'https:' : 'http:'
-  listUrl.pathname = '/places'
-  const res = await fetch(listUrl, { headers })
-  if (!res.ok) {
-    // 401 is the common one: a cookie the supervisor no longer honours.
-    console.error(res.status === 401 ? 'attach: login refused — set MTTY_PASSWORD and try again'
-      : `attach: could not list sessions (HTTP ${res.status})`)
-    return null
-  }
-  const { sessions } = await res.json()
+  const { sessions } = await getPlaces(url, headers) ?? {}
+  if (!sessions) return null
   if (session) {
+    // A remembered session a server restart unlisted is still joinable by its
+    // own id, which also covers a fork -- the list this falls back past never
+    // shows one, yet `rememberSession` will happily have recorded it.
     const previous = sessions.find(s => s.processId === session.processId)
       ?? sessions.find(s => s.id === session.id && s.cwd === session.cwd)
+      ?? (session.id && await getPlaces(url, headers, { id: session.id }))?.sessions[0]
     if (!previous) console.error('attach: previous conversation is no longer listed')
     return previous ?? null
   }
-  if (sessions.length === 0) {
+  if (sessions.length === 0 && !match) {
     console.error('attach: no sessions to join yet')
     return null
   }
@@ -116,6 +128,10 @@ export async function resolveSession(url, { session, match, headers }) {
   const candidates = match ? matching(sessions, match) : sessions
   if (candidates.length === 1) return candidates[0]
   if (candidates.length === 0) {
+    // The listing omits forked sessions, so a fragment can name a session the
+    // menu never showed; the server still answers that one, by exact id.
+    const exact = match ? (await getPlaces(url, headers, { id: match }))?.sessions[0] : null
+    if (exact) return exact
     console.error(`attach: nothing matches ${JSON.stringify(match)}`)
     return null
   }

@@ -12,9 +12,11 @@
 // One row per session, not per folder: a folder used for several concurrent
 // or historical conversations offers all of them, since a phone list can only
 // usefully be sorted one way -- by how recently each one was touched.
-// A session pi forked off another (a subagent's run) is no place of its own;
-// its writes still count as work for the session that spawned it, which is
-// what `lastWrite` below knows to follow.
+// A session pi forked off another -- a subagent's run, or a /fork or /clone,
+// which write the same header -- is no row of the list; its writes still count
+// as work for the session that spawned it, which is what `lastWrite` below
+// knows to follow. An exact id still reaches a fork: `findPlace` answers it,
+// so a caller that knows the id needs no menu row.
 import { createInterface } from 'node:readline'
 import { createReadStream } from 'node:fs'
 import { open, readdir, realpath, stat } from 'node:fs/promises'
@@ -260,12 +262,14 @@ const listFolder = async dir => {
  *  anything pays for a label, because most of a real store is forks and
  *  folders that are gone — and forks are written constantly, so they cluster
  *  at the top of the ranking where the newest writes are. */
-const isRow = async ({ file, at }) => {
+const isRow = async ({ file, at }, { forks = false } = {}) => {
   const header = await readHeader(file)
   if (!header || !ID_SHAPE.test(header.id)) return null
   // A subagent's run is filed as a session of its own naming its parent, and
   // belongs to the session that spawned it rather than to the phone list.
-  if (header.parentSession) return null
+  // A caller that names an exact id wants whatever transcript that id names,
+  // fork or not, so the filter is the listing's, not the lookup's.
+  if (!forks && header.parentSession) return null
   const cwd = await canonical(header.cwd)
   return cwd ? { file, at, id: header.id, cwd } : null
 }
@@ -361,8 +365,11 @@ export async function readPlaces({ sessionDir = PI_SESSIONS, offset = 0, limit =
  *  a migration names a session by id, and no listing window is where to look
  *  one thing up. Newest first, so the session just tapped is found at once. */
 export async function findPlace({ sessionDir = PI_SESSIONS, id, cwd }) {
+  // An id outside this shape could never have come from a listing, and the
+  // sweep below reads headers across the whole store before giving up.
+  if (!ID_SHAPE.test(id ?? '')) return null
   for (const candidate of await ranked(sessionDir)) {
-    const row = await isRow(candidate)
+    const row = await isRow(candidate, { forks: true })
     if (row?.id === id && (!cwd || row.cwd === cwd)) return labelled(row)
   }
   return null
