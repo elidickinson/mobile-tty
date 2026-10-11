@@ -104,6 +104,40 @@ html, body {
   flex-direction: column;
 }
 
+#tabs {
+  position: absolute;
+  top: 0;
+  left: env(safe-area-inset-left);
+  right: env(safe-area-inset-right);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: calc(30px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 4px 0;
+  overflow-x: auto;
+  white-space: nowrap;
+  font: 11px/1.35 var(--font);
+  background: color-mix(in srgb, var(--edge) 30%, transparent);
+}
+#tabs .tab { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 3px 8px; background: rgb(128 128 128 / .2); color: var(--fg); font: inherit; }
+#tabs .tab[aria-current="true"] { color: var(--accent); }
+#tabs .tab.unread .tab-name::before { content: '● '; color: var(--accent); }
+
+.tabs-arrow {
+  position: absolute;
+  top: 0;
+  z-index: 7;
+  height: calc(30px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) 6px 0;
+  border: 0;
+  background: color-mix(in srgb, var(--edge) 85%, transparent);
+  color: var(--fg);
+  font: 14px/1 var(--font);
+}
+#tabs-left { left: env(safe-area-inset-left); }
+#tabs-right { right: env(safe-area-inset-right); }
+
 #viewport {
   flex: 1;
   min-height: 0;

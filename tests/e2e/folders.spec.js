@@ -54,6 +54,45 @@ test('the menu lists every session plus the row that starts one', async ({ page 
   await expect(page.locator('#place-now')).toHaveText(rowPath.split(' · ')[0])
 })
 
+test('tabs switch between running sessions', async ({ page }) => {
+  await ready(page)
+  await openMenu(page)
+  await rows(page).filter({ hasText: 'alpha' }).click()
+  await expect(page.locator('#screen')).toContainText('alpha')
+  await openMenu(page)
+  await page.locator('#tabs-toggle').tap()
+
+  const tabs = page.locator('#tabs .tab')
+  await expect(tabs).toHaveCount(2)
+  await page.locator('#menu [data-act="close"]').tap()
+  const other = page.locator('#tabs .tab:not([aria-current="true"])')
+  const label = await other.locator('.tab-name').evaluate(n => n.lastChild.textContent)
+  await other.tap()
+  await expect(page.locator('#screen')).toContainText(label)
+})
+
+test("the tab bar's right arrow shows while tabs overflow and scrolls them into view", async ({ page }) => {
+  await ready(page)
+  // Six tabs in a phone-width bar: five more sessions in beta's own cwd.
+  const cwd = await page.evaluate(async () => (await (await fetch('/places')).json()).sessions.find(s => s.running).cwd)
+  await page.evaluate(async cwd => {
+    for (let i = 0; i < 5; i++) await fetch('/start', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd }),
+    })
+  }, cwd)
+  await openMenu(page)
+  await page.locator('#tabs-toggle').tap()
+  await expect(page.locator('#tabs .tab')).toHaveCount(6)
+  await page.locator('#menu [data-act="close"]').tap()
+  await expect(page.locator('#tabs-right')).toBeVisible()
+  await expect(page.locator('#tabs-left')).toBeHidden()
+  await page.locator('#tabs-right').click()
+  await expect.poll(() => page.locator('#tabs').evaluate(t => t.scrollLeft)).toBeGreaterThan(0)
+  await expect(page.locator('#tabs-left')).toBeVisible()
+  await expect(page.locator('#tabs-right')).toBeHidden()
+})
+
 test('two folders sharing a conversation id remain separate running terminals', async ({ page, store }) => {
   const file = name => join(store.sessionDir, `-${store.at(name).replaceAll('/', '-')}-`, 'a.jsonl')
   const alpha = JSON.parse(await readFile(file('alpha'), 'utf8'))
@@ -85,6 +124,74 @@ test('a remembered place whose terminal has gone finds its conversation again', 
   await expect(page.locator('#screen')).toContainText('alpha')
   await openMenu(page)
   await expect(page.locator('#places .place.here .place-name')).toHaveText('alpha')
+})
+
+test('ending the watched session during a refused start still opens the one asked for', async ({ page }) => {
+  await ready(page)
+  await expect(page.locator('#screen')).toContainText('beta')
+  const { alpha, watched } = await page.evaluate(async () => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    return {
+      alpha: sessions.find(sess => sess.label === 'alpha'),
+      watched: sessions.find(sess => sess.label === 'beta' && sess.running),
+    }
+  })
+  for (let i = 0; i < 5; i++) {
+    const status = await page.evaluate(async cwd => (await fetch('/start', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd }),
+    })).status, watched.cwd)
+    expect(status).toBe(200)
+  }
+  await openMenu(page)
+  await rows(page).filter({ hasText: '+ New session…' }).click()
+  await rows(page).filter({ hasText: 'alpha' }).click()
+  const end = page.locator(`.place-end[data-process-id="${watched.processId}"]`)
+  await expect(end).toBeVisible()
+  await end.click()
+  await end.click()
+  await expect(page.locator('#place-now')).toHaveText(alpha.cwd)
+})
+
+test('cancelling during an in-flight end drops the refused start', async ({ page }) => {
+  await ready(page)
+  await expect(page.locator('#screen')).toContainText('beta')
+  const { alpha, endable } = await page.evaluate(async () => {
+    const { sessions } = await fetch('/places').then(res => res.json())
+    const attached = new URL(window.mtty.conn.url).searchParams.get('process')
+    return {
+      alpha: sessions.find(sess => sess.label === 'alpha'),
+      endable: sessions.find(sess => sess.running && sess.processId !== attached),
+    }
+  })
+  for (let i = 0; i < 5; i++) {
+    expect(await page.evaluate(async cwd => (await fetch('/start', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cwd }),
+    })).status, endable.cwd)).toBe(200)
+  }
+  await openMenu(page)
+  await rows(page).filter({ hasText: '+ New session…' }).click()
+  await rows(page).filter({ hasText: 'alpha' }).click()
+  let release
+  const gate = new Promise(resolve => { release = resolve })
+  await page.route('**/terminal?process=*', async route => {
+    if (route.request().method() === 'DELETE') await gate
+    await route.continue()
+  })
+  const deletion = page.waitForResponse(res => res.request().method() === 'DELETE' && res.url().includes('/terminal?process='))
+  const end = page.locator(`.place-end[data-process-id="${endable.processId}"]`)
+  await end.click()
+  await end.click()
+  const cancelledList = page.waitForResponse(res => res.request().method() === 'GET' && new URL(res.url()).pathname === '/places')
+  await rows(page).filter({ hasText: 'Cancel' }).click()
+  await cancelledList
+  const refreshedList = page.waitForResponse(res => res.request().method() === 'GET' && new URL(res.url()).pathname === '/places')
+  release()
+  expect((await deletion).ok()).toBeTruthy()
+  await refreshedList
+  await page.waitForLoadState('networkidle')
+  await expect(page.locator('#place-now')).not.toHaveText(alpha.cwd)
 })
 
 test('a rejected selection keeps the last admitted terminal', async ({ page, store }) => {

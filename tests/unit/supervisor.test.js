@@ -258,6 +258,7 @@ test('GET /places?running=1 orders unwatched then quietest', async () => {
     children.b.lastOutputAt = future + 20
     children.c.lastOutputAt = future + 30
     const { sessions } = await fetch(`${page}/places?running=1`).then(r => r.json())
+    assert.equal(typeof sessions[0].startedAt, 'number')
     assert.deepEqual(sessions.map(s => s.id), ['b', 'c', 'a'])
     assert.deepEqual(sessions.map(s => s.active), [future + 20, future + 30, future + 10])
   } finally {
@@ -707,8 +708,8 @@ test('rejoining a still-running session at a full cap keeps it running', async (
     b.close()
     await b.closed
 
-    // Rejoining serves the process already running — its in-memory history is
-    // the proof — without ending anything.
+    // Rejoining serves the process already running -- its in-memory history is
+    // the proof -- without ending anything.
     const again = join(base, 'a')
     await again.opened
     await until(() => again.output.includes('ok: 5 chars'), 'the earlier line, still there')

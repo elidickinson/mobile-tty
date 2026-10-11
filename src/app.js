@@ -17,6 +17,9 @@ const pad = $('pad')
 const strip = $('strip')
 const toBottom = $('to-bottom')
 const menu = $('menu')
+const tabs = $('tabs')
+const tabsLeft = $('tabs-left')
+const tabsRight = $('tabs-right')
 const places = $('places')
 const placeNow = $('place-now')
 const menuNotice = $('menu-notice')
@@ -95,6 +98,11 @@ let armedEndId = null
 let endArmTimer = null
 const endingIds = new Set()
 let placesRequest = 0
+let poolPickerRequest = 0
+// The picker whose refused action an End may still retry. Cleared once taken, or when the menu is left by hand.
+let retryPicker = null
+let tabsRequest = 0
+let tabsEnabled = false
 // The close code the supervisor sends when the session itself is over — pi
 // exited, or someone ended it — as opposed to an ordinary dropped socket.
 const SESSION_ENDED = 1001
@@ -108,9 +116,6 @@ const POOL_FULL = 4006
 // What the menu is showing. The picker is the one case where a tap on a row
 // ends a session instead of joining it, so it is drawn apart from the list.
 let menuView = 'normal'
-// The join or start the picker is standing in place of, kept until the action
-// it names succeeds or the picker is cancelled.
-let poolRetry = null
 const samePlace = (a, b) => Boolean(a && b && a.id === b.id && a.cwd === b.cwd)
 // What the last visit was looking at, whole: a process ID that is gone means
 // nothing on its own, while the conversation it was showing is still there to
@@ -134,6 +139,49 @@ const fetchPlaces = (window = {}) => {
   if (window.limit) query.set('limit', window.limit)
   if (window.running) query.set('running', '1')
   return fetch(`/places${query.size ? `?${query}` : ''}`).then(r => r.json())
+}
+async function refreshTabs() {
+  const request = ++tabsRequest
+  const response = await fetchPlaces({ running: true }).then(r => r, err => {
+    console.error('could not refresh tabs', err)
+    return null
+  })
+  if (response === null) return
+  const { sessions } = response
+  if (!sessions) throw new Error('places response has no sessions')
+  if (request !== tabsRequest) return
+  const ordered = [...sessions].sort((a, b) => a.startedAt - b.startedAt)
+  const seen = new Map()
+  tabs.replaceChildren()
+  for (const sess of ordered) {
+    const number = (seen.get(sess.label) ?? 0) + 1
+    seen.set(sess.label, number)
+    const copies = ordered.filter(other => other.label === sess.label).length
+    const button = document.createElement('button')
+    button.className = `tab${sess.unread ? ' unread' : ''}`
+    button.dataset.processId = sess.processId
+    if (sess.processId === currentPlace?.processId) button.setAttribute('aria-current', 'true')
+    const name = document.createElement('span')
+    name.className = 'tab-name'
+    if (sess.unread) {
+      const hidden = document.createElement('span')
+      hidden.className = 'sr-only'
+      hidden.textContent = 'unread '
+      name.append(hidden)
+    }
+    name.append(document.createTextNode(`${sess.label}${copies > 1 ? ` ${number}` : ''}`))
+    button.append(name)
+    button.addEventListener('click', () => {
+      if (!conn.started || sess.processId !== currentPlace?.processId) joinSession(sess)
+    })
+    tabs.append(button)
+  }
+  tabs.hidden = !tabsEnabled || ordered.length < 2
+  updateTabArrows()
+}
+function updateTabArrows() {
+  tabsLeft.hidden = tabs.hidden || tabs.scrollLeft <= 0
+  tabsRight.hidden = tabs.hidden || tabs.scrollLeft + tabs.clientWidth >= tabs.scrollWidth - 1
 }
 function refreshPlaces({ preserveNotice = false } = {}) {
   if (!preserveNotice) clearMenuNotice()
@@ -173,6 +221,7 @@ function commitPlace(next) {
   writePlace('mtty-place', currentPlace)
   placeNow.textContent = currentPlace.path
   document.title = `${currentPlace.name} — ${currentPlace.path}`
+  if (tabsEnabled) refreshTabs()
   if (!menu.hidden) refreshPlaces().catch(() => {})
 }
 
@@ -249,6 +298,7 @@ const conn = new TtydConnection({
       currentPlace = null
       document.title = 'mobile-tty'
       openMenu({ preserveNotice: !endedByThisViewer })
+      if (tabsEnabled) refreshTabs()
       return
     }
     showConnection(status)
@@ -805,9 +855,14 @@ function foldDiag(open) {
   $('diag-caret').textContent = open ? '▾' : '▸'
 }
 
+function hideMenu() {
+  retryPicker = null
+  menu.hidden = true
+}
+
 function openMenu({ preserveNotice = false } = {}) {
+  poolPickerRequest++
   menuView = 'normal'
-  poolRetry = null
   dismissKeyboard()
   // The pad would cover the sheet the same way the keyboard does.
   showPad(false)
@@ -1018,28 +1073,31 @@ async function endSession(sess) {
  * control on a list row. Cancel goes back to the ordinary menu.
  */
 async function showPoolFull(reason, retry) {
+  const request = ++poolPickerRequest
   let running
   try {
     running = (await fetchPlaces({ running: true })).sessions
   } catch (error) {
+    if (request !== poolPickerRequest) return
     openMenu({ preserveNotice: true })
     showMenuNotice(error.message)
     return
   }
+  if (request !== poolPickerRequest) return
   clearEndArm()
   openMenu({ preserveNotice: true })
   // The ordinary list must not draw over the picker while the menu is open.
   menuView = 'pick'
-  poolRetry = retry
   places.textContent = ''
+  const picker = {}
+  retryPicker = picker
   for (const sess of running) {
     const tap = async () => {
       if (armedEndId !== sess.processId) return armEnd(sess.processId)
       clearEndArm()
-      if (await endSession(sess)) {
-        const next = poolRetry
-        poolRetry = null
-        await next()
+      if (await endSession(sess) && retryPicker === picker) {
+        retryPicker = null
+        await retry()
       }
     }
     const wrap = document.createElement('div')
@@ -1071,11 +1129,11 @@ async function showPoolFull(reason, retry) {
   cancelName.className = 'place-name'
   cancelName.textContent = running.length ? 'Cancel' : 'Nothing is running to end'
   cancel.append(cancelName)
-  cancel.addEventListener('click', () => openMenu())
+  cancel.addEventListener('click', () => { retryPicker = null; openMenu() })
   places.append(cancel)
 
   showMenuNotice(reason)
-  if (!running.length) { menuView = 'normal'; poolRetry = null }
+  if (!running.length) menuView = 'normal'
 }
 
 /** `3m`, `2h`, `5d`: file mtime is when the session was last active. */
@@ -1188,12 +1246,12 @@ async function startSession(dir) {
 
 /** Point the connection at another session's socket and reconnect to it. */
 function joinSession(sess) {
+  poolPickerRequest++
   selectionVersion++
   clearEndArm()
   clearMenuNotice()
   // Reaching a session is the end of the picker that asked for it.
   menuView = 'normal'
-  poolRetry = null
   pendingPlace = sess
   const url = sessionUrl(sess)
   if (conn.started) conn.join(url)
@@ -1201,7 +1259,7 @@ function joinSession(sess) {
     conn.url = url
     conn.connect({ cols: state.wanted.cols, rows: state.wanted.rows })
   }
-  menu.hidden = true
+  hideMenu()
 }
 
 /**
@@ -1344,6 +1402,13 @@ function showDiagnostics() { $('diag').textContent = diagnosticText() }
 
 function buildMenu() {
   const presets = $('presets')
+  tabsEnabled = localStorage.getItem('mtty-tabs') === 'on'
+  const tabsToggle = $('tabs-toggle')
+  const updateTabsToggle = () => {
+    tabsToggle.textContent = `Tabs: ${tabsEnabled ? 'on' : 'off'}`
+    tabsToggle.setAttribute('aria-pressed', String(tabsEnabled))
+  }
+  updateTabsToggle()
   for (const [c, r] of PRESETS) {
     const b = document.createElement('button')
     b.textContent = `${c}×${r}`
@@ -1387,12 +1452,19 @@ function buildMenu() {
   applyTheme(saved && THEMES[saved] ? saved : named())
 
   const acts = {
-    close: () => { menu.hidden = true },
+    close: hideMenu,
+    tabs: () => {
+      tabsEnabled = !tabsEnabled
+      localStorage.setItem('mtty-tabs', tabsEnabled ? 'on' : 'off')
+      updateTabsToggle()
+      if (tabsEnabled) refreshTabs()
+      else tabs.hidden = true
+    },
     'zoom-in': () => setScale(state.scale * ZOOM_STEP),
     'zoom-out': () => setScale(state.scale / ZOOM_STEP),
     'zoom-reset': () => setScale(1),
-    top: () => { stopReading(); screen.scrollTop = 0; menu.hidden = true },
-    bottom: () => { stopReading(); screen.scrollTop = screen.scrollHeight; menu.hidden = true },
+    top: () => { stopReading(); screen.scrollTop = 0; hideMenu() },
+    bottom: () => { stopReading(); screen.scrollTop = screen.scrollHeight; hideMenu() },
     // iOS offers its paste callout on a real, visible field; the terminal's own
     // input is hidden, so there is nothing there to long-press.
     'send-paste': () => {
@@ -1401,7 +1473,7 @@ function buildMenu() {
       conn.send(field.value)
       field.value = ''
       term.input?.resetMirror()
-      menu.hidden = true
+      hideMenu()
     },
     // A view rather than another section. The readout is a dozen lines, and
     // stacked under everything else it fills the screen — while nobody reading
@@ -1432,7 +1504,7 @@ function buildMenu() {
     }
     const target = e.target.closest('[data-act]')
     if (target) acts[target.dataset.act]()
-    else if (e.target === menu) menu.hidden = true
+    else if (e.target === menu) hideMenu()
   })
 }
 
@@ -1462,6 +1534,14 @@ async function main() {
   strip.style.flexBasis = `${state.cell.height}px`
   buildKeys()
   buildMenu()
+  if (tabsEnabled) refreshTabs()
+  document.addEventListener('visibilitychange', () => {
+    if (tabsEnabled && !document.hidden) refreshTabs()
+  })
+  setInterval(() => {
+    if (!tabsEnabled || document.hidden) return
+    refreshTabs()
+  }, 15_000)
   $('scale-val').textContent = '100%'
   $('diag-overlay').addEventListener('click', () => { $('diag-overlay').hidden = true })
 
@@ -1471,6 +1551,10 @@ async function main() {
 
   screen.addEventListener('scroll', onScroll)
   toBottom.addEventListener('click', () => { stopReading(); screen.scrollTop = screen.scrollHeight })
+  tabsLeft.addEventListener('click', () => tabs.scrollBy({ left: -tabs.clientWidth * 0.8, behavior: 'smooth' }))
+  tabsRight.addEventListener('click', () => tabs.scrollBy({ left: tabs.clientWidth * 0.8, behavior: 'smooth' }))
+  tabs.addEventListener('scroll', updateTabArrows)
+  new ResizeObserver(updateTabArrows).observe(tabs)
 
   const first = applyLayout()
   orientation = first.orientation

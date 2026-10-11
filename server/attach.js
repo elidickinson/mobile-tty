@@ -288,7 +288,7 @@ export async function attach({ url, session, match, previous = false }) {
         process.removeListener('uncaughtException', onUncaughtException)
         process.removeListener('SIGTERM', onSigterm)
         process.removeListener('SIGHUP', onSighup)
-        return attach({ url, session, match, previous })
+        return attach({ url, session: { id: place.id, cwd: place.cwd } })
       }
       return leave(null, 1)
     }

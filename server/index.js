@@ -155,8 +155,7 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
 
     let announcedActivity = 0
     session.onData = data => {
-      // With no viewer attached, this PTY is the only sign the session is
-      // still being worked, and the supervisor checks before it ends one.
+      // With no viewer attached, PTY output reports session activity.
       const now = Date.now()
       if (process.send && now - announcedActivity >= ACTIVITY_MS) {
         announcedActivity = now

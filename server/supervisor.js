@@ -78,6 +78,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       unread: watching(child.processId) === 0 && written > child.seenAt,
       label: basename(current.cwd),
       processId: child.processId,
+      startedAt: child.startedAt,
     }
   }))
 
