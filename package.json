@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "TUI-friendly mobile web terminal",
   "scripts": {
-    "test": "node --test 'tests/unit/**/*.test.js'",
+    "test": "node --test --test-timeout=20000 'tests/unit/**/*.test.js'",
     "test:integrity": "node --test 'tests/integrity/*.test.js'",
     "test:real-pi": "node --test 'tests/real-pi/*.test.js'",
     "test:e2e": "playwright test",
