@@ -66,9 +66,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
    *  for the full-pool picker, where it marks the last sign of work. */
   const runningRows = async (withActive = false) => Promise.all(registry.running().map(async child => {
     const current = registry.current(child)
-    const written = withActive
-      ? Math.max(child.lastOutputAt ?? 0, current.file ? await lastWrite(current.file) : 0)
-      : 0
+    const written = Math.max(child.lastOutputAt ?? 0, current.file ? await lastWrite(current.file) : 0)
     return {
       id: current.id,
       cwd: current.cwd,
@@ -76,6 +74,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       ...placeNames(current.cwd),
       at: current.at ?? child.joinedAt,
       ...(withActive ? { active: written || child.joinedAt } : {}),
+      // Unread when nobody is watching and a write came after the last viewer left or spawn.
+      unread: watching(child.processId) === 0 && written > child.seenAt,
       label: basename(current.cwd),
       processId: child.processId,
     }
@@ -307,9 +307,9 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     let inner = null
     let buffered = []
     let closed = false
-    // Registered with the registry once the relay is live, so the child's death
-    // can cut this browser side down here rather than
-    // waiting for the socket teardown to be noticed below.
+    // Registered with the registry once the relay is live, so the child's death can
+    // cut this browser side down here rather than waiting for the socket teardown
+    // to be noticed below.
     let registered = null
 
     // Attached before anything here awaits: the client sends its handshake the

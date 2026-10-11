@@ -884,12 +884,20 @@ function sessionRow(sess) {
   const row = document.createElement('button')
   row.className = samePlace(sess, currentPlace) ? 'place here' : 'place'
   if (sess.running) row.classList.add('running')
+  if (sess.running && sess.unread) row.classList.add('unread')
 
   const name = document.createElement('span')
   name.className = 'place-name'
   // pi names a session once it has read the first exchange; before that,
   // the label is whatever was first asked, so the row is never bare.
-  name.textContent = sess.label
+  if (sess.running && sess.unread) {
+    const hidden = document.createElement('span')
+    hidden.className = 'sr-only'
+    hidden.textContent = 'unread '
+    name.append(hidden, document.createTextNode(sess.label))
+  } else {
+    name.textContent = sess.label
+  }
   row.append(name, placePath(sess))
   row.addEventListener('click', () => joinSession(sess))
   wrap.append(row)

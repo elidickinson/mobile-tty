@@ -415,6 +415,18 @@ html, body {
   text-align: left;
 }
 
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* The name is pi's folder; the path is what tells two `extensions` apart. */
 .place-path { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 11px; }
 .place-path-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -424,6 +436,7 @@ html, body {
 .place.here .place-name::after { content: ' ·'; color: var(--accent); }
 
 /* Still running in the background, whether or not it is the one open now. */
+.place.unread .place-name::before { content: '● '; color: var(--accent); }
 .place.running .place-name::after { content: ' ● '; color: var(--ok, #5fbf7c); }
 .place.here.running .place-name::after { content: ' ● ·'; color: var(--ok, #5fbf7c); }
 

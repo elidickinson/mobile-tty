@@ -56,6 +56,7 @@ export class Registry {
     return () => {
       const at = child.sockets.indexOf(fn)
       if (at !== -1) child.sockets.splice(at, 1)
+      child.seenAt = Date.now()
     }
   }
 
@@ -101,7 +102,8 @@ export class Registry {
       rmSync(identityPath, { force: true })
       throw err
     }
-    const child = { processId, sessionId, proc, socketPath, identityPath, cwd, joinedAt: Date.now(), sockets: [] }
+    const joinedAt = Date.now()
+    const child = { processId, sessionId, proc, socketPath, identityPath, cwd, joinedAt, seenAt: joinedAt, sockets: [] }
     this.#children.set(processId, child)
     let settled = false
     let resolveGone
