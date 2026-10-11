@@ -117,11 +117,12 @@ html, body {
   padding: env(safe-area-inset-top) 4px 0;
   overflow-x: auto;
   white-space: nowrap;
-  font: 11px/1.35 var(--font);
-  background: color-mix(in srgb, var(--edge) 30%, transparent);
+  font: 600 11px/1.35 var(--font);
+  background: color-mix(in srgb, var(--chrome) 50%, transparent);
+  backdrop-filter: blur(6px);
 }
-#tabs .tab { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 3px 8px; background: rgb(128 128 128 / .3); color: var(--fg); font: inherit; }
-#tabs .tab[aria-current="true"] { color: var(--accent); }
+#tabs .tab { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 3px 8px; background: var(--raised); color: var(--fg); font: inherit; }
+#tabs .tab[aria-current="true"] { background: var(--pressed); color: var(--accent); }
 #tabs .tab.unread .tab-name::before { content: '● '; color: var(--accent); }
 
 .tabs-arrow {
