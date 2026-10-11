@@ -70,22 +70,30 @@ export default function (pi: ExtensionAPI) {
     sock.end(`${line}\n`);
   };
 
+  // Only the TUI session reports for this pi. In-process subagent sessions bind
+  // extensions too, outside the TUI; their turns reach the strip through the
+  // registry poll instead.
   pi.on("session_start", (_event, ctx) => {
-    if (ctx.mode === "tui") ctx.ui.setStatus("mobile-tty", ctx.ui.theme.fg("accent", "mobile-tty"));
+    if (ctx.mode !== "tui") return;
+    ctx.ui.setStatus("mobile-tty", ctx.ui.theme.fg("accent", "mobile-tty"));
     write(ctx);
     poll ??= setInterval(() => write(), SUBAGENT_POLL_MS);
     poll.unref();
   });
-  pi.on("model_select", (_event, ctx) => write(ctx));
-  pi.on("thinking_level_select", (_event, ctx) => write(ctx));
-  // In-process subagent sessions bind extensions too, outside the TUI; their
-  // turns are counted through the registry, not as this pi's own.
+  pi.on("model_select", (_event, ctx) => {
+    if (ctx.mode === "tui") write(ctx);
+  });
+  pi.on("thinking_level_select", (_event, ctx) => {
+    if (ctx.mode === "tui") write(ctx);
+  });
   pi.on("agent_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     turn = true;
     write(ctx);
   });
-  pi.on("agent_end", (_event, ctx) => {
+  // agent_end fires before pi retries, compacts or runs queued messages, so the
+  // turn is only over once agent_settled fires.
+  pi.on("agent_settled", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
     turn = false;
     write(ctx);
