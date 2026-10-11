@@ -120,7 +120,7 @@ html, body {
   font: 11px/1.35 var(--font);
   background: color-mix(in srgb, var(--edge) 30%, transparent);
 }
-#tabs .tab { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 3px 8px; background: rgb(128 128 128 / .2); color: var(--fg); font: inherit; }
+#tabs .tab { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 3px 8px; background: rgb(128 128 128 / .3); color: var(--fg); font: inherit; }
 #tabs .tab[aria-current="true"] { color: var(--accent); }
 #tabs .tab.unread .tab-name::before { content: '● '; color: var(--accent); }
 
