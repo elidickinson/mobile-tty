@@ -728,11 +728,15 @@ test('a viewer that stops answering pings is dropped, not counted forever', asyn
   // Ping every 200ms: the round that notices the dead socket is fast enough
   // to wait for in a test.
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, pingMs: 200 })
-  const cli = join(base, 'a', { columns: 40, rows: 12 })
   const web = join(base, 'a', { columns: 100, rows: 30 })
+  let cli
   try {
-    await Promise.all([cli.opened, web.opened])
-    await until(() => cli.output.includes('40x12'), 'the narrow grid, while both viewers count')
+    await web.opened
+    await until(() => web.output.includes('100x30'), 'the wide grid')
+    cli = join(base, 'a', { columns: 40, rows: 12 })
+    const resizeOutputStart = cli.output.length
+    await cli.opened
+    await until(() => cli.output.slice(resizeOutputStart).includes('40x12'), 'the narrow viewer to resize the session')
 
     // The web viewer is killed mid-tunnel: the TCP socket stays up and nothing
     // ever answers the pings. Its close frame never arrives either. Before the
@@ -742,9 +746,8 @@ test('a viewer that stops answering pings is dropped, not counted forever', asyn
       const { sessions } = await fetch(`${page}/places`).then(r => r.json())
       return sessions.find(s => s.id === 'a')?.viewers === 1
     }, 'the dead viewer to stop counting')
-    await until(() => cli.output.includes('40x12'), 'the remaining viewer keeps its screen')
   } finally {
-    cli.close()
+    cli?.close()
     web.ws.terminate()
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
