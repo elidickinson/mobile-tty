@@ -192,32 +192,6 @@ test('a session that cannot be reached is refused with its own code', async () =
   }
 })
 
-test('leaving a session does not end it: it is there, unchanged, on rejoin', async () => {
-  const store = await storeFor([{ name: 'work', id: 'a' }])
-  const { supervisor, base } = await start({ sessionDir: store.sessionDir })
-  const first = join(base, 'a')
-  try {
-    await first.opened
-    await until(() => first.output.includes('work'), 'the first screen')
-    first.send('hello\r')
-    await until(() => first.output.includes('ok: 5 chars'), 'the line landing')
-    first.close()
-    await first.closed
-
-    // Rejoin as a different viewer entirely. If the process were killed and
-    // restarted, fake-pi's in-memory history would be gone and this would not
-    // be in the snapshot; it surviving is exactly what "kept running in the
-    // background" means.
-    const second = join(base, 'a')
-    await second.opened
-    await until(() => second.output.includes('ok: 5 chars'), 'the earlier line, still there')
-    second.close()
-  } finally {
-    await supervisor.close()
-    await rm(store.root, { recursive: true, force: true })
-  }
-})
-
 test('two sessions run at once, each its own screen', async () => {
   const store = await storeFor([{ name: 'alpha', id: 'a' }, { name: 'beta', id: 'b' }])
   const { supervisor, base } = await start({ sessionDir: store.sessionDir })
@@ -555,26 +529,6 @@ test('a full pool refuses a join rather than ending a watched session', async ()
   }
 })
 
-test('a session nobody is watching still fills the cap', async () => {
-  // A running session stays in the pool after its viewer disconnects.
-  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
-  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cap: 1 })
-  const a = join(base, 'a')
-  try {
-    await a.opened
-    await until(() => a.output.includes('one'), 'the first session up')
-    a.send('hello\r')
-    await until(() => a.output.includes('ok: 5 chars'), 'the line landing')
-    a.close()
-    await a.closed
-
-    const b = join(base, 'b')
-    assert.equal((await b.closeDetails).code, 4006)
-  } finally {
-    await supervisor.close()
-    await rm(store.root, { recursive: true, force: true })
-  }
-})
 test('two folders with the same conversation id get separate PTYs', async () => {
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'a' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })

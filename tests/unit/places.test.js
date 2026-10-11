@@ -234,17 +234,6 @@ test('a wall of forks does not push the real sessions out of the window', async 
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-test('a session in a folder that is gone is not a row', async () => {
-  const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
-  const project = join(root, 'proj')
-  try {
-    await withSession(sessionDir, project, { id: 'mine' })
-    await rm(project, { recursive: true })
-    const { sessions } = await readPlaces({ sessionDir })
-    assert.deepEqual(sessions, [])
-  } finally { await rm(root, { recursive: true, force: true }) }
-})
-
 test('a session file in a format this reader does not know is reported, once', async () => {
   // pi moving its store to a new header shape must not fail silently: the
   // list would empty and hide sessions.

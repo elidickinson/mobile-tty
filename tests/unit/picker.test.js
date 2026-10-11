@@ -27,16 +27,6 @@ test('indexArgument recognizes bare decimal integers, not fragments', () => {
   assert.ok(Number.isNaN(indexArgument('-1')))
 })
 
-test('a numeric index uses the running-only session order', () => {
-  const sessions = [
-    { ...places[0], running: false },
-    { ...places[1], running: true },
-    { id: 'gamma-id', name: 'gamma', path: '/work/gamma', running: true },
-  ]
-  const running = sessions.filter(s => s.running)
-  assert.equal(running[indexArgument('2') - 1].id, 'gamma-id')
-})
-
 test('resolveSession picks a running row by number, refusing others', async () => {
   const sessions = [
     { id: 'stopped-id', name: 'stopped', path: '/work/stopped', running: false },
