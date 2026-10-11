@@ -26,14 +26,25 @@ const handshake = (url, options) => new Promise(resolve => {
   ws.on('error', () => resolve('refused'))
 })
 
-/** Connect, handshake, and report how much screen arrived before it settled. */
+/** Connect, handshake, and report the first screen output. */
 const join = (url, handshake = { AuthToken: '', columns: 50, rows: 20 }) => new Promise(resolve => {
   const ws = new WebSocket(url, ['tty'])
   let output = 0
+  let settled = false
+  const finish = result => {
+    if (settled) return
+    settled = true
+    resolve(result)
+  }
   ws.on('open', () => ws.send(JSON.stringify(handshake)))
-  ws.on('message', d => { if (Buffer.from(d)[0] === 0x30) output += Buffer.from(d).length - 1 })
-  ws.on('close', code => resolve({ code, output }))
-  setTimeout(() => { ws.close(); resolve({ code: null, output }) }, 1200)
+  ws.on('message', d => {
+    const buf = Buffer.from(d)
+    if (buf[0] !== 0x30) return
+    output += buf.length - 1
+    ws.close()
+    finish({ code: null, output })
+  })
+  ws.on('close', code => finish({ code, output }))
 })
 
 test('a failed admission costs one viewer, not every viewer after it', async () => {
@@ -150,6 +161,14 @@ const viewer = (url, columns, rows) => {
 }
 
 const settle = (ms = 500) => new Promise(resolve => setTimeout(resolve, ms))
+const until = async (check, what, ms = 5_000) => {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (await check()) return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  assert.fail(`timed out waiting for ${what}`)
+}
 
 /** Report the status strip, as the extension does: one connection, one object. */
 const report = (footerSocket, state) => new Promise((resolve, reject) => {
@@ -166,45 +185,59 @@ test('the status strip: relayed as reported, replayed to latecomers', async () =
   const frames = []
   const stripViewer = () => {
     const ws = new WebSocket(url, ['tty'])
+    let ready = false
     ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns: 50, rows: 20 })))
     ws.on('message', d => {
-      if (Buffer.from(d)[0] === 0x34) frames.push(Buffer.from(d).subarray(1).toString())
+      const buf = Buffer.from(d)
+      if (buf[0] === 0x33) ready = true
+      if (buf[0] === 0x34) frames.push(buf.subarray(1).toString())
     })
-    return ws
+    return { ready: () => ready, close: () => ws.close() }
   }
   try {
     const first = stripViewer()
-    await settle()
+    await until(first.ready, 'the first viewer admission')
     assert.equal(frames.length, 0, 'nothing until the program reports one')
 
-    await report(footerSocket, { provider: 'a', id: 'one', thinking: null })
-    await settle()
-    assert.deepEqual(frames, ['{"provider":"a","id":"one","thinking":null}'])
+    const initial = { provider: 'a', id: 'one', thinking: null }
+    await report(footerSocket, initial)
+    await until(() => frames.length === 1, 'the first status report')
+    assert.deepEqual(frames, [JSON.stringify(initial)])
 
-    await report(footerSocket, { provider: 'a', id: 'one', thinking: 'max' })
-    await settle()
-    assert.equal(frames.length, 2, 'a change reaches the same viewer')
+    const changed = { provider: 'a', id: 'one', thinking: 'max' }
+    await report(footerSocket, changed)
+    await until(() => frames.length === 2, 'the changed status report')
+    assert.deepEqual(frames, [JSON.stringify(initial), JSON.stringify(changed)])
 
     // A report that is not a state is nothing a strip can draw.
     await report(footerSocket, { thinking: 'max' })
-    await settle()
-    assert.equal(frames.length, 2, 'a report that names nothing is dropped')
+    const afterInvalid = { provider: 'barrier', id: 'barrier', thinking: null }
+    await report(footerSocket, afterInvalid)
+    await until(() => frames.length === 3, 'the status report after the invalid one')
+    assert.deepEqual(frames, [JSON.stringify(initial), JSON.stringify(changed), JSON.stringify(afterInvalid)])
 
     // The report is one line of state, not a stream to buffer.
     await report(footerSocket, { provider: 'x'.repeat(4096), id: 'one', thinking: null })
-    await settle()
-    assert.equal(frames.length, 2, 'a report past the size of one is dropped')
+    const afterLarge = { provider: 'barrier-2', id: 'barrier-2', thinking: null }
+    await report(footerSocket, afterLarge)
+    await until(() => frames.length === 4, 'the status report after the oversized one')
+    assert.deepEqual(frames, [
+      JSON.stringify(initial), JSON.stringify(changed), JSON.stringify(afterInvalid), JSON.stringify(afterLarge),
+    ])
 
     // A viewer arriving after the fact gets the latest state after its screen.
+    const beforeLate = frames.length
     const late = stripViewer()
-    await settle()
-    assert.deepEqual(frames.at(-1), '{"provider":"a","id":"one","thinking":"max"}')
+    await until(() => frames.length === beforeLate + 1, 'the latest status replay')
+    assert.equal(frames.at(-1), JSON.stringify(afterLarge))
 
     // No model is a state of its own, relayed like any other: a strip showing
     // the last one clears on it.
-    await report(footerSocket, { provider: '', id: '', thinking: null })
-    await settle()
-    assert.deepEqual(frames.at(-1), '{"provider":"","id":"","thinking":null}')
+    const empty = { provider: '', id: '', thinking: null }
+    const beforeEmpty = frames.length
+    await report(footerSocket, empty)
+    await until(() => frames.length === beforeEmpty + 2, 'the empty state reaching both viewers')
+    assert.deepEqual(frames.slice(beforeEmpty), [JSON.stringify(empty), JSON.stringify(empty)])
     first.close()
     late.close()
   } finally {
