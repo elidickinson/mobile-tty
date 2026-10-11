@@ -1,5 +1,5 @@
 // Geometry: grid sizing, insets, zoom, rotation, and the keyboard.
-import { test, expect, liveRows, ready, scrollTop, settled, scrollbackCount, fillScrollback, distanceFromBottom } from './helpers.js'
+import { test, expect, liveRows, ready, settled, fillScrollback, distanceFromBottom } from './helpers.js'
 
 test('a grid preset resizes the PTY and the client together', async ({ page }) => {
   await ready(page)

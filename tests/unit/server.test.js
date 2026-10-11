@@ -192,7 +192,7 @@ test('the status strip: relayed as reported, replayed to latecomers', async () =
     ws.on('open', () => ws.send(JSON.stringify({ AuthToken: '', columns: 50, rows: 20 })))
     ws.on('message', d => {
       const buf = Buffer.from(d)
-      if (buf[0] === 0x33) ready = true
+      if (buf[0] === 0x30) ready = true
       if (buf[0] === 0x34) frames.push(buf.subarray(1).toString())
     })
     return { ready: () => ready, close: () => ws.close() }

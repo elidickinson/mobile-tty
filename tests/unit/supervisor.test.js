@@ -688,13 +688,12 @@ test('a viewer that stops answering pings is dropped, not counted forever', asyn
     await web.opened
     await until(() => web.output.includes('100x30'), 'the wide grid')
     cli = join(base, 'a', { columns: 40, rows: 12 })
-    const resizeOutputStart = cli.output.length
     await cli.opened
-    await until(() => cli.output.slice(resizeOutputStart).includes('40x12'), 'the narrow viewer to resize the session')
+    await until(() => cli.output.includes('40x12'), 'the narrow viewer to resize the session')
 
     // The web viewer is killed mid-tunnel: the TCP socket stays up and nothing
-    // ever answers the pings. Its close frame never arrives either. Before the
-    // fix, the ping loop never noticed and /places counted it forever.
+    // ever answers the pings. The ping loop must notice or /places counts it
+    // forever.
     web.ws._socket.pause()
     await until(async () => {
       const { sessions } = await fetch(`${page}/places`).then(r => r.json())
