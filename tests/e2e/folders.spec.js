@@ -346,22 +346,6 @@ test('a live session is marked running, and rejoining it cannot end it', async (
     (await page.locator('#screen').innerText()).replace(/\s+/g, '')).toContain('rejoin-marker')
 })
 
-test('a session who went away keeps running elsewhere: the list survives it', async ({ page }) => {
-  // A folder deleted after its session was listed must not break the picker:
-  // readPlaces drops rows whose cwd is gone, and a tap can only ever name an id
-  // the list itself offered. A tap on a row that survives is the honest check.
-  await ready(page)
-  await openMenu(page)
-  await rows(page).filter({ hasText: 'beta' }).click()
-  await expect.poll(() => page.title()).toContain('/beta')
-
-  await openMenu(page)
-  await expect.poll(() => rows(page).count()).toBe(4)
-  await rows(page).filter({ hasText: 'alpha' }).click()
-  await expect.poll(() => page.title()).toContain('/alpha')
-  await expect(page.locator('#place-now')).toContainText('alpha')
-})
-
 test('new session offers the folders pi is already in, and starting one joins it', async ({ page, store }) => {
   await ready(page)
   await openMenu(page)

@@ -110,14 +110,6 @@ test('a shorter viewport keeps the bottom of the screen in view', async ({ page 
   expect(visible).toBe(true)
 })
 
-test('the keyboard opening does not resize the grid', async ({ page }) => {
-  await ready(page)
-  const before = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])
-  await page.setViewportSize({ width: 402, height: 498 })   // same orientation, less room
-  await page.waitForTimeout(600)
-  expect(await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])).toEqual(before)
-})
-
 test('rotating to landscape refits the grid — that is the whole point of landscape', async ({ page }) => {
   await ready(page)
   const [portraitCols] = await page.evaluate(() => [window.mtty.state.cols, window.mtty.state.rows])

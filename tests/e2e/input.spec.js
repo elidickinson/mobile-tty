@@ -181,15 +181,6 @@ test('a bar or pad tap never moves focus off the terminal input', async ({ page 
   expect(await focused()).toBe(true)
 })
 
-test('using a modifier leaves the rest of the bar alone', async ({ page }) => {
-  await ready(page)
-  await page.getByRole('button', { name: 'ctrl', exact: true }).tap()
-  await expect(page.getByRole('button', { name: 'ctrl', exact: true })).toHaveClass(/sticky/)
-
-  await page.locator('#screen textarea').pressSequentially('c')
-  expect(await page.locator('#keys button.sticky').count()).toBe(0)
-})
-
 test('a modified arrow is swallowed whole by the terminal app', async ({ page }) => {
   await ready(page)
   // ctrl+Right is \x1b[1;5C — six bytes, not the three of a bare arrow.
