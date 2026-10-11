@@ -247,7 +247,7 @@ test('a session in a folder that is gone is not a row', async () => {
 
 test('a session file in a format this reader does not know is reported, once', async () => {
   // pi moving its store to a new header shape must not fail silently: the
-  // list would empty and eviction would stop seeing subagent work at all.
+  // list would empty and hide sessions.
   const { root, sessionDir } = await store(async ({ root }) => { await mkdir(join(root, 'proj')) })
   const project = join(root, 'proj')
   const future = JSON.stringify(

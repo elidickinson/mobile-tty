@@ -31,9 +31,9 @@ const storeFor = async entries => {
   return { root, sessionDir, at: name => pathJoin(root, name) }
 }
 
-const start = async ({ sessionDir, cap, idleMs, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath, password }) => {
+const start = async ({ sessionDir, cap, socketDir, command = fakePi, args = [], pingMs, childReadyMs, cli = cliPath, password }) => {
   const supervisor = createSupervisor({
-    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, idleMs, pingMs, childReadyMs, password,
+    port: 0, bind: '127.0.0.1', command, args, cliPath: cli, sessionDir, cap, pingMs, childReadyMs, password,
     socketDir: socketDir ?? await mkdtemp(pathJoin(tmpdir(), 'mtty-sock-')),
   })
   await new Promise(r => supervisor.http.on('listening', r))
@@ -226,6 +226,37 @@ test('two sessions run at once, each its own screen', async () => {
   }
 })
 
+test('GET /places?running=1 orders unwatched then quietest', async () => {
+  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }, { name: 'three', id: 'c' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const watched = join(base, 'a')
+  try {
+    await watched.opened
+    for (const [id, name] of [['b', 'two'], ['c', 'three']]) {
+      const viewer = join(base, id)
+      await viewer.opened
+      await until(() => viewer.output.includes(name), `session ${name} to be running`)
+      viewer.close()
+      await viewer.closed
+    }
+    const children = Object.fromEntries(supervisor.registry.running().map(child => [child.sessionId, child]))
+    const future = Date.now() + 60_000
+    children.a.joinedAt = future + 30
+    children.b.joinedAt = future + 20
+    children.c.joinedAt = future + 10
+    children.a.lastOutputAt = future + 10
+    children.b.lastOutputAt = future + 20
+    children.c.lastOutputAt = future + 30
+    const { sessions } = await fetch(`${page}/places?running=1`).then(r => r.json())
+    assert.deepEqual(sessions.map(s => s.id), ['b', 'c', 'a'])
+    assert.deepEqual(sessions.map(s => s.active), [future + 20, future + 30, future + 10])
+  } finally {
+    watched.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
 test('GET /places lists every session and which ones are running', async () => {
   const store = await storeFor([{ name: 'alpha', id: 'a' }, { name: 'beta', id: 'b' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
@@ -413,93 +444,7 @@ test('pi exiting on its own reports a neutral close reason', async () => {
   }
 })
 
-test('past the cap, the one written longest ago is ended to make room', async () => {
-  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }, { name: 'three', id: 'c' }])
-  // Everything counts as idle here; which one goes is what is under test.
-  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 2, idleMs: 0 })
-  const a = join(base, 'a')
-  try {
-    await a.opened
-    await until(() => a.output.includes('one'), 'the first session up')
-    a.close()
-    await a.closed
-
-    const b = join(base, 'b')
-    await b.opened
-    await until(() => b.output.includes('two'), 'the second session up')
-    b.close()
-    await b.closed
-
-    // A third join past the cap of two evicts the oldest (`a`), which is not
-    // running any more even though nothing ever asked to end it outright.
-    const c = join(base, 'c')
-    await c.opened
-    await until(() => c.output.includes('three'), 'the third session up')
-
-    await until(async () => {
-      const { sessions } = await fetch(`${page}/places`).then(r => r.json())
-      const byId = Object.fromEntries(sessions.map(s => [s.id, s.running]))
-      return byId.a === false && byId.b === true && byId.c === true
-    }, 'the oldest session evicted and the rest still running', 8_000)
-    c.close()
-  } finally {
-    await supervisor.close()
-    await rm(store.root, { recursive: true, force: true })
-  }
-})
-
-/** Point a child at a fixture transcript, the way the pi extension points a
- *  real one at its own. */
-const writesTo = async (supervisor, sessionId, file) => {
-  await until(() => supervisor.registry.running().some(c => c.sessionId === sessionId), `session ${sessionId} up`)
-  const child = supervisor.registry.running().find(c => c.sessionId === sessionId)
-  await writeFile(child.identityPath, JSON.stringify({ id: sessionId, cwd: child.cwd, at: Date.now(), file }))
-}
-
-test('a victim goes by when it was written, not when it was opened', async () => {
-  // A program that writes nothing to its PTY, so transcript mtimes are the
-  // only recency there is: the one written longest ago must go even though it
-  // is the one opened most recently.
-  const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }, { name: 'three', id: 'c' }])
-  const { supervisor, base, page } = await start({
-    sessionDir: store.sessionDir, cap: 2, idleMs: 0, command: 'sleep', args: ['30'],
-  })
-  const transcripts = pathJoin(store.root, 'written')
-  await mkdir(transcripts)
-  const long = pathJoin(transcripts, 'long-ago.jsonl')
-  const lately = pathJoin(transcripts, 'lately.jsonl')
-  await writeFile(long, 'fixture')
-  await writeFile(lately, 'fixture')
-  const ago = new Date(Date.now() - 60_000)
-  await utimes(long, ago, ago)
-  const a = join(base, 'a')
-  try {
-    await a.opened
-    a.close()
-    await a.closed
-    const b = join(base, 'b')
-    await b.opened
-    b.close()
-    await b.closed
-
-    await writesTo(supervisor, 'a', lately)  // opened first, written last
-    await writesTo(supervisor, 'b', long)    // opened last, written longest ago
-
-    const c = join(base, 'c')
-    await c.opened
-    await until(async () => {
-      const { sessions } = await fetch(`${page}/places`).then(r => r.json())
-      const running = Object.fromEntries(sessions.map(s => [s.id, s.running]))
-      return running.a === true && running.b === false && running.c === true
-    }, 'the one written longest ago evicted and the freshly written one kept', 8_000)
-    c.close()
-  } finally {
-    await supervisor.close()
-    await rm(store.root, { recursive: true, force: true })
-  }
-})
-
-test('a watched session is never ended to make room', async () => {
+test('a full pool refuses a join rather than ending a watched session', async () => {
   // Cap one, one session up and still on somebody's screen: the join that
   // would need the room is refused instead, and the viewer keeps what it has.
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
@@ -512,7 +457,7 @@ test('a watched session is never ended to make room', async () => {
     const b = join(base, 'b')
     const { code, reason } = await b.closeDetails
     assert.equal(code, 4006, 'the join is refused rather than anything being ended')
-    assert.equal(reason, 'every session is busy or watched; end one first')
+    assert.equal(reason, '1 sessions are running (the limit); end one first')
     const { sessions } = await fetch(`${page}/places`).then(r => r.json())
     assert.equal(sessions.find(s => s.id === 'a').running, true, 'the watched session is untouched')
     a.send('hello\r')
@@ -524,13 +469,10 @@ test('a watched session is never ended to make room', async () => {
   }
 })
 
-test('a session nobody is watching is kept while it is still busy', async () => {
-  // The viewer is gone, but the session was worked on moments ago: pi may be
-  // mid-reply, and work it handed to a subagent lives in a forked session of
-  // its own. Only something quiet for idleMs is a victim, so this is refused
-  // too -- a fresh idleMs, and nothing about timing has to be guessed.
+test('a session nobody is watching still fills the cap', async () => {
+  // A running session stays in the pool after its viewer disconnects.
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
-  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cap: 1, idleMs: 60_000 })
+  const { supervisor, base } = await start({ sessionDir: store.sessionDir, cap: 1 })
   const a = join(base, 'a')
   try {
     await a.opened
@@ -662,7 +604,7 @@ test('a program that is not pi gets no pi-only flags on its command line', async
   }
 })
 
-test('rejoining a still-running session at a full cap evicts nothing', async () => {
+test('rejoining a still-running session at a full cap keeps it running', async () => {
   const store = await storeFor([{ name: 'one', id: 'a' }, { name: 'two', id: 'b' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir, cap: 2 })
   const a = join(base, 'a')
@@ -680,9 +622,8 @@ test('rejoining a still-running session at a full cap evicts nothing', async () 
     b.close()
     await b.closed
 
-    // Cap two, two sessions up, and the older one (`a`) is the LRU candidate.
-    // Rejoining it must serve the process already running — its in-memory
-    // history is the proof — and end nothing to make room.
+    // Rejoining serves the process already running — its in-memory history is
+    // the proof — without ending anything.
     const again = join(base, 'a')
     await again.opened
     await until(() => again.output.includes('ok: 5 chars'), 'the earlier line, still there')

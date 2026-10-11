@@ -37,6 +37,38 @@ test('start posts the caller folder and returns what attach needs', async () => 
     if (realPassword !== undefined) process.env.MTTY_PASSWORD = realPassword
   }
 })
+test('start ends a picked session and retries once when the pool is full', async () => {
+  const calls = []
+  const realFetch = globalThis.fetch
+  const realPassword = process.env.MTTY_PASSWORD
+  delete process.env.MTTY_PASSWORD
+  globalThis.fetch = async (input, init = {}) => {
+    const url = String(input instanceof URL ? input : input.url ?? input)
+    calls.push({ url, method: init.method ?? 'GET' })
+    if (url.endsWith('/places')) return { ok: true, status: 200, json: async () => ({ sessions: [] }) }
+    if (url.endsWith('/places?running=1')) return {
+      ok: true, status: 200,
+      json: async () => ({ sessions: [{ processId: 'old', label: 'old', running: true }] }),
+    }
+    if (url.endsWith('/start')) return calls.filter(c => c.url.endsWith('/start')).length === 1
+      ? { ok: false, status: 409, text: async () => 'full' }
+      : { ok: true, status: 200, json: async () => ({ processId: 'fresh' }) }
+    if (url.includes('/terminal?process=old')) return { ok: true, status: 204 }
+    throw new Error(`unexpected fetch ${url}`)
+  }
+  try {
+    const result = await start('ws://127.0.0.1:7681', { cwd: '/work/here', confirm: async () => 'y' })
+    assert.equal(result.processId, 'fresh')
+    assert.deepEqual(calls.map(c => [c.url.split('/').at(-1), c.method]), [
+      ['places', 'GET'], ['start', 'POST'], ['places?running=1', 'GET'],
+      ['terminal?process=old', 'DELETE'], ['start', 'POST'],
+    ])
+  } finally {
+    globalThis.fetch = realFetch
+    if (realPassword !== undefined) process.env.MTTY_PASSWORD = realPassword
+  }
+})
+
 test('start says plainly that the folder does not exist', async () => {
   const realFetch = globalThis.fetch
   const realPassword = process.env.MTTY_PASSWORD

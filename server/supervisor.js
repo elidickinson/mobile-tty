@@ -17,7 +17,7 @@ import { WebSocket, WebSocketServer } from 'ws'
 import { Auth, loginPage, submittedPassword } from './auth.js'
 import { buildClient } from './client.js'
 import { isAddress, originAllowed } from './origin.js'
-import { PI_SESSIONS, placeNames, readPlaces, findPlace, canonical, subfolders } from './places.js'
+import { PI_SESSIONS, placeNames, readPlaces, findPlace, canonical, subfolders, lastWrite } from './places.js'
 import { BACKLOG_LIMIT, TOO_FAR_BEHIND } from './viewer.js'
 import { Registry } from './registry.js'
 
@@ -29,8 +29,13 @@ const MAX_FRAME = 1024 * 1024
 const CHILD_READY_MS = 8_000
 const CHILD_RETRY_MS = 75
 
-// Said the same way whether /start answers it or a socket closes on it.
-const POOL_FULL = 'every session is busy or watched; end one first'
+// Said the same way whether /start answers it or a socket closes on it. The
+// registry decides the number, so nothing here repeats the default.
+const poolFull = cap => `${cap} sessions are running (the limit); end one first`
+
+/** The order a full pool is picked over: a session nobody is watching goes
+ *  before one with viewers on it, and within each the quietest goes first. */
+const pickOrder = (a, b) => (a.viewers ? 1 : 0) - (b.viewers ? 1 : 0) || a.active - b.active
 
 const connectChild = (socketPath, readyMs) => new Promise((resolveConn, rejectConn) => {
   const deadline = Date.now() + readyMs
@@ -46,12 +51,35 @@ const connectChild = (socketPath, readyMs) => new Promise((resolveConn, rejectCo
   attempt()
 })
 
-export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, idleMs, onListen, onExit }) {
+export function createSupervisor({ port, bind, hostname, password, command, args = [], cliPath, sessionDir = PI_SESSIONS, socketDir = tmpdir(), cap, theme = 'dark', newDir, pingMs = 30_000, childReadyMs = CHILD_READY_MS, onListen, onExit }) {
   const auth = new Auth(password)
-  const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme, idleMs })
+  const registry = new Registry({ cliPath, program: command, programArgs: args, socketDir, cap, theme })
   // Where a brand-new session starts: given, or the folder this run was
   // launched from (see cli.js, which pins it before anything can chdir away).
   const defaultDir = newDir ?? process.cwd()
+
+  // How many viewers are on a live child: "2 watching" on a row says the
+  // session is shared right now, not just alive.
+  const watching = processId => [...wss.clients].filter(c => c.readyState === c.OPEN && c.processId === processId).length
+
+  /** Every running terminal, as rows of the list. `active` is only needed
+   *  for the full-pool picker, where it marks the last sign of work. */
+  const runningRows = async (withActive = false) => Promise.all(registry.running().map(async child => {
+    const current = registry.current(child)
+    const written = withActive
+      ? Math.max(child.lastOutputAt ?? 0, current.file ? await lastWrite(current.file) : 0)
+      : 0
+    return {
+      id: current.id,
+      cwd: current.cwd,
+      file: current.file,
+      ...placeNames(current.cwd),
+      at: current.at ?? child.joinedAt,
+      ...(withActive ? { active: written || child.joinedAt } : {}),
+      label: basename(current.cwd),
+      processId: child.processId,
+    }
+  }))
 
   const loginHeaders = { 'content-type': 'text/html', 'cache-control': 'no-store' }
   const originAllowedReq = req => originAllowed({
@@ -100,19 +128,17 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       // windowed list never shows: a caller that already knows the id needs
       // no menu row, and the join below serves whatever findPlace returns.
       const named = query.get('id')
+      // Past the cap, the picker asks which running session to end: the rows
+      // it shows are the same ones, first the ones a viewer would give up
+      // least -- nothing watching it, nothing it has written lately.
+      if (query.get('running') === '1') {
+        const rows = (await runningRows(true)).map(s => ({ ...s, running: true, viewers: watching(s.processId) }))
+        const sessions = rows.sort(pickOrder)
+        const body = JSON.stringify({ current: sessions[0]?.processId ?? null, sessions, more: false, offset: 0, here: defaultDir })
+        return void res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' }).end(body)
+      }
       // What the running terminals have open, as rows of the same list.
-      const live = registry.running().map(child => {
-        const current = registry.current(child)
-        return {
-          id: current.id,
-          cwd: current.cwd,
-          file: current.file,
-          ...placeNames(current.cwd),
-          at: current.at ?? child.joinedAt,
-          label: basename(current.cwd),
-          processId: child.processId,
-        }
-      })
+      const live = await runningRows()
       // A row answered by id is the live one when its terminal is up -- a
       // running terminal answers from the registry before the store is read
       // at all -- so running and viewer counts read like any row of the list.
@@ -121,12 +147,11 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const { sessions: found, more } = named
         ? { sessions: [liveHit ?? single].filter(Boolean), more: false }
         : await readPlaces({ sessionDir, offset, limit, live })
-      // How many viewers are on each live child, for the listings: "2 watching"
-      // on a row says the session is shared right now, not just alive.
+      // How many viewers are on each live child, for the listings.
       const sessions = found.map(place => ({
         ...place,
         running: Boolean(place.processId),
-        viewers: place.processId ? [...wss.clients].filter(c => c.readyState === c.OPEN && c.processId === place.processId).length : 0,
+        viewers: place.processId ? watching(place.processId) : 0,
       }))
       const body = JSON.stringify({
         current: sessions.find(s => s.running)?.processId ?? null,
@@ -167,10 +192,10 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const wanted = body ? await canonical(body.cwd?.trim()) : null
       if (!wanted) return void res.writeHead(422, { 'content-type': 'text/plain' }).end('no such directory to start a session in')
       const id = randomUUID()
-      // Past the cap, starting one means ending one -- and the registry ends
-      // nothing busy or watched, so ask it first and refuse when it cannot.
+      // Past the cap nothing is ended behind the caller's back: the refusal is
+      // the pick list, and the caller ends the one it chooses.
       const child = await registry.start(id, wanted)
-      if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
+      if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(poolFull(registry.cap))
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id, cwd: wanted, processId: child.processId }))
     }
 
@@ -196,7 +221,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       const place = await findPlace({ sessionDir, id: body.id, cwd: wanted })
       if (!place) return void res.writeHead(404, { 'content-type': 'text/plain' }).end('no such conversation on this machine')
       const child = await registry.ensure(place.id, place.cwd)
-      if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(POOL_FULL)
+      if (!child) return void res.writeHead(409, { 'content-type': 'text/plain' }).end(poolFull(registry.cap))
       return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ id: place.id, cwd: place.cwd, processId: child.processId }))
     }
 
@@ -282,8 +307,8 @@ export function createSupervisor({ port, bind, hostname, password, command, args
     let inner = null
     let buffered = []
     let closed = false
-    // Registered with the registry once the relay is live, so an eviction or
-    // death of the child can cut this browser side down here rather than
+    // Registered with the registry once the relay is live, so the child's death
+    // can cut this browser side down here rather than
     // waiting for the socket teardown to be noticed below.
     let registered = null
 
@@ -308,7 +333,7 @@ export function createSupervisor({ port, bind, hostname, password, command, args
         const place = await findPlace({ sessionDir, id, cwd: cwd || undefined })
         if (!id || !place) { ws.close(4004, 'no such conversation'); return }
         child = await registry.ensure(id, place.cwd)
-        if (!child) { ws.close(4006, POOL_FULL); return }
+        if (!child) { ws.close(4006, poolFull(registry.cap)); return }
       }
       if (closed) return
       ws.processId = child.processId

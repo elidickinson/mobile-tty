@@ -11,7 +11,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { WebSocket } from 'ws'
 import { INPUT, RESIZE, OUTPUT, SET_TITLE, SET_SIZE, PROCESS } from './protocol.js'
-import { ask, indexArgument, matching, pickFrom } from './picker.js'
+import { ask, endOne, indexArgument, matching, pickFrom } from './picker.js'
 
 // Ctrl-] detaches, the way telnet and ssh do it. Not Ctrl-\, which pi wants,
 // and not Ctrl-C or Ctrl-Z, which are the whole point of passing through.
@@ -174,6 +174,7 @@ export async function attach({ url, session, match, previous = false }) {
 
   const ws = new WebSocket(target, ['tty'], { headers })
   let restored = false
+  let inputHandler, resizeHandler, timer
 
   // The snapshot's preamble leaves the terminal in the kitty keyboard protocol
   // and bracketed paste, and pi's own frames leave the cursor hidden and may
@@ -199,11 +200,15 @@ export async function attach({ url, session, match, previous = false }) {
     if (message) stream.write(`\r\n${message}\r\n`)
     process.exit(code)
   }
-  process.on('exit', restore)
-  process.on('uncaughtException', err => { restore(); throw err })
+  const onExit = restore
+  const onUncaughtException = err => { restore(); throw err }
   // Killed from outside, the terminal still gets restored.
-  process.on('SIGTERM', () => leave())
-  process.on('SIGHUP', () => leave())
+  const onSigterm = () => leave()
+  const onSighup = () => leave()
+  process.on('exit', onExit)
+  process.on('uncaughtException', onUncaughtException)
+  process.on('SIGTERM', onSigterm)
+  process.on('SIGHUP', onSighup)
 
   const size = () => ({ columns: stdout.columns || 80, rows: stdout.rows || 24 })
 
@@ -221,11 +226,12 @@ export async function attach({ url, session, match, previous = false }) {
       started = true
       clearTimeout(timer)
       ws.send(JSON.stringify({ AuthToken: '', client: 'attach', ...size() }))
-      stdout.on('resize', () => ws.send(frame(RESIZE, JSON.stringify(size()))))
+      resizeHandler = () => ws.send(frame(RESIZE, JSON.stringify(size())))
+      stdout.on('resize', resizeHandler)
     }
-    const timer = setTimeout(start, BANNER_MS)
+    timer = setTimeout(start, BANNER_MS)
 
-    stdin.on('data', chunk => {
+    inputHandler = chunk => {
       if (isDetach(chunk)) leave(
         'detached; the session is still running\r\n' +
         '  rejoin it   mobile-tty attach\r\n' +
@@ -235,10 +241,12 @@ export async function attach({ url, session, match, previous = false }) {
       // not been shown yet, so it was not typed at what is about to appear.
       if (!started) return start()
       ws.send(frame(INPUT, chunk))
-    })
+    }
+    stdin.on('data', inputHandler)
   })
 
   let announced = null
+  let receivedProcess = false
 
   ws.on('message', data => {
     const buf = Buffer.from(data)
@@ -251,6 +259,7 @@ export async function attach({ url, session, match, previous = false }) {
       }
     }
     else if (buf[0] === PROCESS) {
+      receivedProcess = true
       place = { ...place, ...JSON.parse(buf.subarray(1).toString()) }
       rememberSession(place)
     }
@@ -268,8 +277,24 @@ export async function attach({ url, session, match, previous = false }) {
     }
   })
 
-  ws.on('close', (code, reason) => leave(
-    code === 1013 ? 'disconnected: this terminal fell too far behind' : `disconnected (${code}) ${reason}`,
-    code === SESSION_ENDED ? 0 : 1))
+  ws.on('close', async (code, reason) => {
+    if (code === 4006 && !receivedProcess) {
+      clearTimeout(timer)
+      if (inputHandler) stdin.removeListener('data', inputHandler)
+      if (resizeHandler) stdout.removeListener('resize', resizeHandler)
+      restore()
+      if (await endOne(url, headers)) {
+        process.removeListener('exit', onExit)
+        process.removeListener('uncaughtException', onUncaughtException)
+        process.removeListener('SIGTERM', onSigterm)
+        process.removeListener('SIGHUP', onSighup)
+        return attach({ url, session, match, previous })
+      }
+      return leave(null, 1)
+    }
+    leave(
+      code === 1013 ? 'disconnected: this terminal fell too far behind' : `disconnected (${code}) ${reason}`,
+      code === SESSION_ENDED ? 0 : 1)
+  })
   ws.on('error', err => leave(`attach: ${err.message}`, 1))
 }

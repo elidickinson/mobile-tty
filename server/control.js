@@ -2,13 +2,7 @@
 // act on it, over the same login the phone and attach use. A server that is
 // not answering is an answer, not an error: say how to start one and leave.
 
-import { ask, indexArgument, matching, pickFrom, placeRow } from './picker.js'
-
-const baseUrl = url => {
-  const target = new URL(url)
-  target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:'
-  return target
-}
+import { ask, baseUrl, endOne, pickTarget, placeRow } from './picker.js'
 
 const login = async (url, password) => {
   const response = await fetch(new URL('/login', baseUrl(url)), {
@@ -55,24 +49,30 @@ export async function sessions(url) {
  *  started session and the ws url to attach to, or nothing after saying why
  *  not. `attach` joins what exists; this starts one — in any directory the
  *  supervisor can see, since a joined session is a full bash prompt either way. */
-export async function start(url, { cwd }) {
+export async function start(url, { cwd, confirm = ask }) {
   const result = await reach(url)
   if (!result) return noServer(url)
   if (result.error) return
   if (result.status) return console.error(result.status === 401
     ? 'new: login refused — set MTTY_PASSWORD and try again'
     : `new: could not reach the server (HTTP ${result.status})`)
-  const res = await fetch(new URL('/start', baseUrl(url)), {
+  const post = () => fetch(new URL('/start', baseUrl(url)), {
     method: 'POST',
     headers: { ...result.headers, 'content-type': 'application/json' },
     body: JSON.stringify({ cwd }),
   }).catch(() => null)
+  let res = await post()
   if (!res) return noServer(url)
+  if (res.status === 409) {
+    if (!await endOne(url, result.headers, confirm)) return
+    res = await post()
+    if (!res) return noServer(url)
+    if (res.status === 409) return console.error(`new: ${await res.text()}`)
+    if (!res.ok) return console.error(`new: could not start a session (HTTP ${res.status})`)
+  }
   if (!res.ok) return console.error(res.status === 422
     ? `new: no such directory: ${cwd}`
-    : res.status === 409
-      ? `new: ${await res.text()}`
-      : `new: could not start a session (HTTP ${res.status})`)
+    : `new: could not start a session (HTTP ${res.status})`)
   const { processId } = await res.json()
   // attach() logs in again itself: the HttpOnly cookie reach got cannot cross
   // to the ws handshake, and a second login mints its own valid token.
@@ -89,30 +89,7 @@ export async function end(url, { match, yes = false }) {
   const running = data.sessions.filter(s => s.running)
   if (running.length === 0) return console.error('nothing is running')
 
-  let target
-  const index = indexArgument(match)
-  if (index !== null) {
-    if (!Number.isSafeInteger(index) || index < 1 || index > running.length) {
-      console.error(`no running session numbered ${match}`)
-      return
-    }
-    target = running[index - 1]
-  } else if (match) {
-    const hits = matching(running, match)
-    if (hits.length === 1) target = hits[0]
-    else if (hits.length === 0) {
-      console.error(`nothing running matches ${JSON.stringify(match)}`)
-      return
-    } else {
-      console.error('more than one matches:')
-      target = await pickFrom(hits, { ask, out: console.error })
-    }
-  } else if (running.length === 1) {
-    target = running[0]
-  } else {
-    console.error('which session?')
-    target = await pickFrom(running, { ask, out: console.error })
-  }
+  const target = await pickTarget(running, match)
   if (!target) return
 
   if (!yes) {

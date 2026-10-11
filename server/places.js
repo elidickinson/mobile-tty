@@ -87,8 +87,8 @@ const noteUnknownFormat = (file, header) => {
  * about the file rather than a fault, and the answer is simply that there is
  * no session here. A header that does say whose session it is, but in a shape
  * this reader does not know, is different again: pi has moved its store on,
- * and answering "no session here" quietly would empty the menu and leave
- * eviction blind to subagent work, so it is reported instead.
+ * and answering "no session here" quietly would empty the menu and hide
+ * sessions, so it is reported instead.
  */
 const readHeader = async file => {
   const handle = await open(file, 'r')

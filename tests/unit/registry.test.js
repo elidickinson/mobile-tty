@@ -10,7 +10,10 @@ import assert from 'node:assert/strict'
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Registry } from '../../server/registry.js'
+
+const cliPath = fileURLToPath(new URL('../../server/cli.js', import.meta.url))
 
 test('a spawn that fails outright keeps nothing behind', async () => {
   // Not every spawn failure is a program that dies: the fork itself can be
@@ -26,6 +29,19 @@ test('a spawn that fails outright keeps nothing behind', async () => {
     assert.deepEqual(registry.running(), [])
     assert.deepEqual(await readdir(socketDir), [], 'no identity file left to claim an owner')
   } finally {
+    await rm(socketDir, { recursive: true, force: true })
+  }
+})
+
+test('an idle unwatched session still fills the cap', async () => {
+  const socketDir = await mkdtemp(join(tmpdir(), 'mtty-registry-'))
+  const registry = new Registry({ cliPath, program: 'sleep', programArgs: ['30'], socketDir, cap: 1 })
+  try {
+    const child = await registry.start('first', socketDir)
+    assert.equal(child.sockets.length, 0)
+    assert.equal(await registry.start('second', socketDir), null)
+  } finally {
+    await registry.endAll()
     await rm(socketDir, { recursive: true, force: true })
   }
 })

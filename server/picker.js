@@ -4,6 +4,14 @@
 // both read `GET /places`.
 import { createInterface } from 'node:readline/promises'
 
+// A url the supervisor answers over http: the same endpoint is reached by ws,
+// wss, http and https depending on how the caller was told about it.
+export const baseUrl = url => {
+  const target = new URL(url)
+  target.protocol = target.protocol === 'wss:' ? 'https:' : 'http:'
+  return target
+}
+
 // How many rows one page shows. Everything past it is one `more` away rather
 // than one long wall of text.
 export const PICK_ROWS = 10
@@ -49,6 +57,82 @@ export const indexArgument = arg => {
   if (typeof arg !== 'string') return null
   if (/^\d+$/.test(arg)) return Number(arg)
   return /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(arg) ? Number.NaN : null
+}
+
+/**
+ * The one running session to act on: a bare number over the list as given, a
+ * fragment naming exactly one, the only row there is, or a numbered prompt
+ * when none of those answers it. Says why when there is no match at all.
+ */
+export const pickTarget = async (rows, match, prompt = 'which session?') => {
+  const index = indexArgument(match)
+  if (index !== null) {
+    if (!Number.isSafeInteger(index) || index < 1 || index > rows.length) {
+      console.error(`no running session numbered ${match}`)
+      return null
+    }
+    return rows[index - 1]
+  }
+  if (match) {
+    const hits = matching(rows, match)
+    if (hits.length === 1) return hits[0]
+    if (hits.length === 0) {
+      console.error(`nothing running matches ${JSON.stringify(match)}`)
+      return null
+    }
+    console.error('more than one matches:')
+    return await pickFrom(hits, { ask, out: console.error })
+  }
+  if (rows.length === 1) return rows[0]
+  console.error(prompt)
+  return await pickFrom(rows, { ask, out: console.error })
+}
+
+/**
+ * The move a full pool forces: end one running session so the refused action
+ * can go through. Offers what is up in the order the server gives them up,
+ * confirms the choice, and asks for it to be ended. True once a terminal is
+ * gone, false when nothing was picked, confirmed or ended.
+ */
+export const endOne = async (url, headers, confirm = ask) => {
+  const res = await fetch(new URL('/places?running=1', baseUrl(url)), { headers }).catch(() => null)
+  if (!res) {
+    console.error('could not reach the server')
+    return false
+  }
+  if (!res.ok) {
+    console.error(`could not list sessions (HTTP ${res.status})`)
+    return false
+  }
+  const { sessions } = await res.json()
+  if (sessions.length === 0) {
+    console.error('nothing is running to end')
+    return false
+  }
+  const target = await pickTarget(sessions, null, 'which session to end?')
+  if (!target) {
+    console.error('left it running')
+    return false
+  }
+  const answer = (await confirm(`end "${target.label || target.name}"? [y/N] `)).trim().toLowerCase()
+  if (answer !== 'y' && answer !== 'yes') {
+    console.error('left it running')
+    return false
+  }
+  const del = await fetch(new URL(`/terminal?process=${encodeURIComponent(target.processId)}`, baseUrl(url)), {
+    method: 'DELETE',
+    headers,
+  }).catch(() => null)
+  if (!del) {
+    console.error('could not reach the server')
+    return false
+  }
+  if (!del.ok && del.status !== 404) {
+    console.error(`could not end it (HTTP ${del.status})`)
+    return false
+  }
+  console.error(`ended: ${target.label || target.name}`)
+  return true
 }
 
 /**

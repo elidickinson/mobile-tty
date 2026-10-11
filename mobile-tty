@@ -53,9 +53,8 @@ Options
   --lan          short for --bind 0.0.0.0
   --bind ADDR    listen on one address (default 127.0.0.1, or $MTTY_BIND)
   --port N       default 7681, or $MTTY_PORT
-  --cap N        how many sessions run at once (default 6); past that, starting
-                 one ends the least recently written that nobody is watching
-                 and that has been quiet for ten minutes, or is refused
+  --cap N        how many sessions run at once (default 6); at the limit,
+                 starting or joining asks which running session to end
   --hostname NAME the name a proxy in front of this presents, e.g. the
                  Cloudflare or tailnet hostname (or $MTTY_HOSTNAME)
   --theme NAME   dark (default) or light; the menu can also switch per-device

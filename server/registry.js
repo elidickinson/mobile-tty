@@ -6,20 +6,12 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { lastWrite } from './places.js'
 
 const KILL_GRACE_MS = 2_000
-// How long a session must be left alone before it can be ended to free a slot
-// for a new one. Generous on purpose: the question is whether anyone is
-// coming back to this in the next few minutes, not whether the model is done.
-const IDLE_MS = 10 * 60_000
 // How many sessions may run at once. The one place the pool size is decided.
 const CAP = 6
 const SESSION_EXTENSION = fileURLToPath(new URL('../pi-extensions/mtty-session.ts', import.meta.url))
 const takesSessionId = command => basename(command) === 'pi'
-
-/** When this PTY was last seen doing anything at all. */
-const touchedAt = child => Math.max(child.joinedAt, child.lastOutputAt ?? 0)
 
 export class Registry {
   #children = new Map() // processId -> child
@@ -30,18 +22,18 @@ export class Registry {
   #cap
   #theme
   #nextSocket = 0
-  #evicting = new Set()
-  #idleMs
 
-  constructor({ cliPath, program, programArgs = [], socketDir, cap = CAP, theme = 'dark', idleMs = IDLE_MS }) {
+  constructor({ cliPath, program, programArgs = [], socketDir, cap = CAP, theme = 'dark' }) {
     this.#cliPath = cliPath
     this.#program = program
     this.#programArgs = programArgs
     this.#socketDir = socketDir
     this.#cap = cap
     this.#theme = theme
-    this.#idleMs = idleMs
   }
+
+  /** How many sessions may run at once. */
+  get cap() { return this.#cap }
 
   child(processId) { return this.#children.get(processId) }
 
@@ -72,7 +64,8 @@ export class Registry {
   }
 
   /** Join a current conversation if it is live, otherwise start another PTY.
-   *  Null when the pool is full and nothing in it may be ended to make room. */
+   *  Null when the cap is already reached: ending something is the user's
+   *  call, made from the pick list, never this registry's. */
   async ensure(sessionId, cwd) {
     const existing = this.owner(sessionId, cwd)
     if (existing) {
@@ -83,7 +76,7 @@ export class Registry {
   }
 
   async start(sessionId, cwd) {
-    if (!(await this.#makeRoom())) return null
+    if (this.running().length >= this.#cap) return null
     const processId = randomUUID()
     // Short, unique names within this supervisor's private directory. Neither
     // transport nor runtime identity is derived from a Pi conversation ID.
@@ -155,36 +148,5 @@ export class Registry {
 
   async endAll() {
     await Promise.all(this.running().map(child => this.end(child.processId, 'server stopped')))
-  }
-
-  /**
-   * Free a slot for one more, or report that nothing may be ended. A session
-   * is only a victim when nobody is watching it and nothing has touched it for
-   * `idleMs` -- pi's own writes count, so a session that handed work to a
-   * subagent stays busy even while it sits at its prompt. Of those, the one
-   * written longest ago goes: what is in a session beats when it was opened.
-   */
-  async #makeRoom() {
-    if (this.#children.size - this.#evicting.size < this.#cap) return true
-    const since = Date.now() - this.#idleMs
-    const victims = []
-    for (const child of this.running()) {
-      if (this.#evicting.has(child.processId)) continue
-      if (child.sockets.length > 0) continue
-      if (touchedAt(child) > since) continue
-      const { file } = this.current(child)
-      // Writes to the transcript and to any fork of it, and the PTY where
-      // nothing is written down, as for a program that keeps no store.
-      const written = Math.max(child.lastOutputAt ?? 0, file ? await lastWrite(file) : 0)
-      if (written > since) continue
-      victims.push({ child, written })
-    }
-    const victim = victims.sort((a, b) => a.written - b.written)[0]?.child
-    if (!victim) return false
-    this.#evicting.add(victim.processId)
-    this.end(victim.processId, 'evicted to make room')
-      .catch(err => console.error(`server: could not end terminal ${victim.processId}`, err))
-      .finally(() => this.#evicting.delete(victim.processId))
-    return true
   }
 }

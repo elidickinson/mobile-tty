@@ -102,6 +102,15 @@ const SESSION_ENDED = 1001
 // to a dropped socket. A refusal is final; anything else is a phone that lost
 // its network and gets the ordinary backoff.
 const REFUSED = code => code >= 4000 && code < 5000
+// A refusal for a full pool is the one that can be taken back: end something,
+// ask again, and it goes through. Every other refusal is final.
+const POOL_FULL = 4006
+// What the menu is showing. The picker is the one case where a tap on a row
+// ends a session instead of joining it, so it is drawn apart from the list.
+let menuView = 'normal'
+// The join or start the picker is standing in place of, kept until the action
+// it names succeeds or the picker is cancelled.
+let poolRetry = null
 const samePlace = (a, b) => Boolean(a && b && a.id === b.id && a.cwd === b.cwd)
 // What the last visit was looking at, whole: a process ID that is gone means
 // nothing on its own, while the conversation it was showing is still there to
@@ -123,13 +132,14 @@ const fetchPlaces = (window = {}) => {
   const query = new URLSearchParams()
   if (window.offset) query.set('offset', window.offset)
   if (window.limit) query.set('limit', window.limit)
+  if (window.running) query.set('running', '1')
   return fetch(`/places${query.size ? `?${query}` : ''}`).then(r => r.json())
 }
 function refreshPlaces({ preserveNotice = false } = {}) {
   if (!preserveNotice) clearMenuNotice()
   const request = ++placesRequest
   return fetchPlaces({ limit: MENU_PAGE }).then(data => {
-    if (request === placesRequest) showPlaces(data)
+    if (request === placesRequest && menuView === 'normal') showPlaces(data)
   })
 }
 
@@ -206,11 +216,15 @@ const conn = new TtydConnection({
     // the keys typed at a session that never took them, and let the menu say
     // why. A dropped socket instead keeps its backoff and reconnects silently.
     if (status === 'disconnected' && REFUSED(code) && pendingPlace) {
+      const refused = pendingPlace
       pendingPlace = null
       conn.stop()
       conn.discardInput()
-      showMenuNotice(reason || 'could not join that conversation')
       showConnection('disconnected')
+      // A full pool is the one refusal this viewer can take back: end a
+      // session, ask for this one again.
+      if (code === POOL_FULL) return showPoolFull(reason, () => joinSession(refused))
+      showMenuNotice(reason || 'could not join that conversation')
       openMenu({ preserveNotice: true })
       return
     }
@@ -792,6 +806,8 @@ function foldDiag(open) {
 }
 
 function openMenu({ preserveNotice = false } = {}) {
+  menuView = 'normal'
+  poolRetry = null
   dismissKeyboard()
   // The pad would cover the sheet the same way the keyboard does.
   showPad(false)
@@ -965,12 +981,15 @@ function armEnd(id) {
   }, 4_000)
 }
 
-/** End a running PTY, then refresh the shared place list. */
+/** End a running PTY, then refresh the shared place list. Answers whether the
+ *  terminal is gone, which is all the full-pool picker can go on. */
 async function endSession(sess) {
+  let gone = false
   endingIds.add(sess.processId)
   updateEndControl(sess.processId)
   try {
     const res = await fetch(`/terminal?process=${encodeURIComponent(sess.processId)}`, { method: 'DELETE' })
+    gone = res.ok || res.status === 404
     if (!res.ok && res.status !== 404) $('menu-state').textContent = `End failed (${res.status})`
   } catch {
     $('menu-state').textContent = 'End failed'
@@ -981,6 +1000,74 @@ async function endSession(sess) {
     updateEndControl(sess.processId)
     refreshPlaces().catch(() => {})
   }
+  return gone
+}
+
+/**
+ * The pool is full: say what the server said, offer one row per running
+ * session to end, in the order the server picked, and do the refused action
+ * again once one of them is gone. Two taps to end, the same as the End
+ * control on a list row. Cancel goes back to the ordinary menu.
+ */
+async function showPoolFull(reason, retry) {
+  let running
+  try {
+    running = (await fetchPlaces({ running: true })).sessions
+  } catch (error) {
+    openMenu({ preserveNotice: true })
+    showMenuNotice(error.message)
+    return
+  }
+  clearEndArm()
+  openMenu({ preserveNotice: true })
+  // The ordinary list must not draw over the picker while the menu is open.
+  menuView = 'pick'
+  poolRetry = retry
+  places.textContent = ''
+  for (const sess of running) {
+    const tap = async () => {
+      if (armedEndId !== sess.processId) return armEnd(sess.processId)
+      clearEndArm()
+      if (await endSession(sess)) {
+        const next = poolRetry
+        poolRetry = null
+        await next()
+      }
+    }
+    const wrap = document.createElement('div')
+    wrap.className = 'place-row has-end'
+
+    const row = document.createElement('button')
+    row.className = 'place running'
+    const name = document.createElement('span')
+    name.className = 'place-name'
+    name.textContent = sess.label
+    // What the row's `at` says is when the transcript was touched; the picker
+    // is ordered by the last sign of work anywhere in the session.
+    row.append(name, placePath({ ...sess, at: sess.active }))
+    row.addEventListener('click', tap)
+
+    const end = document.createElement('button')
+    end.className = 'place-end'
+    end.dataset.processId = sess.processId
+    end.dataset.label = sess.label
+    end.addEventListener('click', tap)
+    updateEndControl(sess.processId, end)
+    wrap.append(row, end)
+    places.append(wrap)
+  }
+
+  const cancel = document.createElement('button')
+  cancel.className = 'place dir'
+  const cancelName = document.createElement('span')
+  cancelName.className = 'place-name'
+  cancelName.textContent = running.length ? 'Cancel' : 'Nothing is running to end'
+  cancel.append(cancelName)
+  cancel.addEventListener('click', () => openMenu())
+  places.append(cancel)
+
+  showMenuNotice(reason)
+  if (!running.length) { menuView = 'normal'; poolRetry = null }
 }
 
 /** `3m`, `2h`, `5d`: file mtime is when the session was last active. */
@@ -1080,6 +1167,7 @@ async function startSession(dir) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ cwd: dir }),
   })
+  if (res.status === 409) return showPoolFull(await res.text().catch(() => ''), () => startSession(dir))
   if (!res.ok) return showMenuNotice(await res.text().catch(() => 'could not start a session'))
   const { id, cwd, processId } = await res.json()
   // Name and path come from the PROCESS frame that follows, which is the one
@@ -1095,6 +1183,9 @@ function joinSession(sess) {
   selectionVersion++
   clearEndArm()
   clearMenuNotice()
+  // Reaching a session is the end of the picker that asked for it.
+  menuView = 'normal'
+  poolRetry = null
   pendingPlace = sess
   const url = sessionUrl(sess)
   if (conn.started) conn.join(url)
