@@ -405,13 +405,13 @@ test('a folder nothing lists is walked to and started in', async ({ page }) => {
   await rows(page).filter({ hasText: 'Other folder…' }).click()
 
   // The walk begins in this server's own folder and descends from there.
-  await rows(page).filter({ hasText: 'tests' }).click()
-  await expect(rows(page).filter({ hasText: 'fixtures' })).toBeVisible()
+  await page.getByRole('button', { name: 'tests', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'fixtures', exact: true })).toBeVisible()
   await rows(page).filter({ hasText: '‹ Up' }).click()
-  await expect(rows(page).filter({ hasText: 'tests' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'tests', exact: true })).toBeVisible()
 
-  await rows(page).filter({ hasText: 'tests' }).click()
-  await rows(page).filter({ hasText: 'fixtures' }).click()
+  await page.getByRole('button', { name: 'tests', exact: true }).click()
+  await page.getByRole('button', { name: 'fixtures', exact: true }).click()
   await rows(page).filter({ hasText: 'Start a session here' }).click()
   await expect.poll(() => page.title()).toContain('/fixtures')
   await expect.poll(async () =>
