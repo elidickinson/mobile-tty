@@ -39,6 +39,8 @@ const join = (url, handshake = { AuthToken: '', columns: 50, rows: 20 }) => new 
     resolve(result)
   }
   deadline = setTimeout(() => ws.terminate(), 3_000)
+  // terminate() before the handshake completes emits an error; unhandled, it crashes the runner.
+  ws.on('error', () => finish({ code: null, output }))
   ws.on('open', () => ws.send(JSON.stringify(handshake)))
   ws.on('message', d => {
     const buf = Buffer.from(d)
