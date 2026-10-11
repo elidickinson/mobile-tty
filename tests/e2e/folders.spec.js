@@ -72,6 +72,8 @@ test('tabs switch between running sessions', async ({ page }) => {
 })
 
 test("the tab bar's right arrow shows while tabs overflow and scrolls them into view", async ({ page }) => {
+  // Narrow enough that six unmarked tabs overflow.
+  await page.setViewportSize({ width: 300, height: 812 })
   await ready(page)
   // Six tabs in a phone-width bar: five more sessions in beta's own cwd.
   const cwd = await page.evaluate(async () => (await (await fetch('/places')).json()).sessions.find(s => s.running).cwd)

@@ -158,17 +158,13 @@ async function refreshTabs() {
     seen.set(sess.label, number)
     const copies = ordered.filter(other => other.label === sess.label).length
     const button = document.createElement('button')
-    button.className = `tab${sess.unread ? ' unread' : ''}`
+    const mark = markOf(sess)
+    button.className = `tab${mark ? ` ${mark}` : ''}`
     button.dataset.processId = sess.processId
     if (sess.processId === currentPlace?.processId) button.setAttribute('aria-current', 'true')
     const name = document.createElement('span')
     name.className = 'tab-name'
-    if (sess.unread) {
-      const hidden = document.createElement('span')
-      hidden.className = 'sr-only'
-      hidden.textContent = 'unread '
-      name.append(hidden)
-    }
+    if (mark) name.append(srOnly(`${mark} `))
     name.append(document.createTextNode(`${sess.label}${copies > 1 ? ` ${number}` : ''}`))
     button.append(name)
     button.addEventListener('click', () => {
@@ -929,6 +925,16 @@ function showPlaces({ sessions, more, offset, here }) {
   showMore({ more, offset }, sessions)
 }
 
+/** What a running session's marker says: pi is working, or finished a turn nobody saw. */
+const markOf = sess => sess.working ? 'working' : sess.unread ? 'unread' : null
+
+function srOnly(text) {
+  const hidden = document.createElement('span')
+  hidden.className = 'sr-only'
+  hidden.textContent = text
+  return hidden
+}
+
 /** One session row, for the list and for every page appended under it. */
 function sessionRow(sess) {
   const wrap = document.createElement('div')
@@ -939,20 +945,15 @@ function sessionRow(sess) {
   const row = document.createElement('button')
   row.className = samePlace(sess, currentPlace) ? 'place here' : 'place'
   if (sess.running) row.classList.add('running')
-  if (sess.running && sess.unread) row.classList.add('unread')
+  const mark = sess.running && markOf(sess)
+  if (mark) row.classList.add(mark)
 
   const name = document.createElement('span')
   name.className = 'place-name'
   // pi names a session once it has read the first exchange; before that,
   // the label is whatever was first asked, so the row is never bare.
-  if (sess.running && sess.unread) {
-    const hidden = document.createElement('span')
-    hidden.className = 'sr-only'
-    hidden.textContent = 'unread '
-    name.append(hidden, document.createTextNode(sess.label))
-  } else {
-    name.textContent = sess.label
-  }
+  if (mark) name.append(srOnly(`${mark} `))
+  name.append(sess.label)
   row.append(name, placePath(sess))
   row.addEventListener('click', () => joinSession(sess))
   wrap.append(row)

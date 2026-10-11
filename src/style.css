@@ -124,6 +124,7 @@ html, body {
 #tabs .tab { flex: 0 0 auto; border: 0; border-radius: 6px; padding: 3px 8px; background: var(--raised); color: var(--fg); font: inherit; }
 #tabs .tab[aria-current="true"] { background: var(--pressed); color: var(--accent); }
 #tabs .tab.unread .tab-name::before { content: '● '; color: var(--accent); }
+#tabs .tab.working .tab-name::before { content: '⏳️ '; }
 
 .tabs-arrow {
   position: absolute;
@@ -472,6 +473,7 @@ html, body {
 
 /* Still running in the background, whether or not it is the one open now. */
 .place.unread .place-name::before { content: '● '; color: var(--accent); }
+.place.working .place-name::before { content: '⏳️ '; }
 .place.running .place-name::after { content: ' ● '; color: var(--ok, #5fbf7c); }
 .place.here.running .place-name::after { content: ' ● ·'; color: var(--ok, #5fbf7c); }
 

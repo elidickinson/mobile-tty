@@ -271,76 +271,48 @@ test('GET /places lists every session and which ones are running', async () => {
   }
 })
 
-test('a transcript written while unwatched makes a running session unread', async () => {
-  const store = await storeFor([{ name: 'work', id: 'a' }])
-  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
-  const viewer = join(base, 'a')
-  try {
-    await viewer.opened
-    await until(() => viewer.output.length > 0, 'the session to be running')
-    viewer.close()
-    await viewer.closed
-    const child = supervisor.registry.running()[0]
-    const file = store.file('work', 'a')
-    await writeFile(child.identityPath, JSON.stringify({ id: 'a', cwd: store.at('work'), file }))
-    await utimes(file, new Date(), new Date(child.seenAt + 1_000))
-
-    const { sessions } = await fetch(`${page}/places?running=1`).then(r => r.json())
-    assert.equal(sessions[0].unread, true)
-  } finally {
-    await supervisor.close()
-    await rm(store.root, { recursive: true, force: true })
-  }
-})
-
-test('leaving marks watched writes read, while later writes are unread', async () => {
-  const store = await storeFor([{ name: 'work', id: 'a' }])
-  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
-  const viewer = join(base, 'a')
-  try {
-    await viewer.opened
-    await until(() => viewer.output.length > 0, 'the session to be running')
-    const child = supervisor.registry.running()[0]
-    const file = store.file('work', 'a')
-    const list = async () => (await fetch(`${page}/places?running=1`).then(r => r.json())).sessions[0]
-    await writeFile(child.identityPath, JSON.stringify({ id: 'a', cwd: store.at('work'), file }))
-    await utimes(file, new Date(), new Date(child.seenAt + 50))
-    await new Promise(resolve => setTimeout(resolve, 60))
-    assert.equal((await list()).unread, false)
-    viewer.close()
-    await viewer.closed
-
-    assert.equal((await list()).unread, false)
-    await utimes(file, new Date(), new Date(child.seenAt + 1_000))
-    assert.equal((await list()).unread, true)
-  } finally {
-    await supervisor.close()
-    await rm(store.root, { recursive: true, force: true })
-  }
-})
-
-test('both place listings mark running writes unread and omit unread on saved rows', async () => {
+test('a turn that ends while unwatched is working, then unread in both listings', async () => {
   const store = await storeFor([{ name: 'live', id: 'a' }, { name: 'saved', id: 'b' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
   const viewer = join(base, 'a')
+  const list = async () => (await fetch(`${page}/places?running=1`).then(r => r.json())).sessions[0]
   try {
     await viewer.opened
     await until(() => viewer.output.length > 0, 'the session to be running')
-    const child = supervisor.registry.running()[0]
-    const file = store.file('live', 'a')
-    await writeFile(child.identityPath, JSON.stringify({ id: 'a', cwd: store.at('live'), file }))
+    viewer.send('/turn 1000\r')
+    await until(async () => (await list()).working, 'the turn to start')
     viewer.close()
     await viewer.closed
-    await utimes(file, new Date(), new Date(child.seenAt + 1_000))
+    assert.equal((await list()).unread, false, 'not unread while still working')
 
-    const running = await fetch(`${page}/places?running=1`).then(r => r.json())
-    assert.equal(running.sessions[0].unread, true)
+    await until(async () => !(await list()).working, 'the turn to end')
+    assert.equal((await list()).unread, true)
     const plain = await fetch(`${page}/places`).then(r => r.json())
     const byId = Object.fromEntries(plain.sessions.map(s => [s.id, s]))
     assert.equal(byId.a.unread, true)
     assert.equal('unread' in byId.b, false)
   } finally {
     viewer.close()
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a turn that ends while watched stays read after leaving', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  const list = async () => (await fetch(`${page}/places?running=1`).then(r => r.json())).sessions[0]
+  try {
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the session to be running')
+    viewer.send('/turn 200\r')
+    await until(async () => (await list()).working, 'the turn to start')
+    await until(async () => !(await list()).working, 'the turn to end')
+    viewer.close()
+    await viewer.closed
+    assert.equal((await list()).unread, false)
+  } finally {
     await supervisor.close()
     await rm(store.root, { recursive: true, force: true })
   }

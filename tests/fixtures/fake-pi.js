@@ -52,6 +52,11 @@ const submit = () => {
     const n = parseInt(line.slice(6), 10) || 80
     out(`\x1b[${size()[1]};1H`)
     for (let i = 0; i < n; i++) out(`scrollback line ${i}\r\n`)
+  } else if (line.startsWith('/turn')) {
+    // An agent turn of the given milliseconds, as the mtty-footer extension
+    // reports one: working, then not.
+    report(true)
+    setTimeout(() => report(false), parseInt(line.slice(5), 10) || 500)
   } else if (line.startsWith('/stream')) {
     // A line every 100ms: the shape of pi writing a long answer. Each line is
     // a real newline on the bottom row, so the screen genuinely scrolls and
@@ -71,14 +76,16 @@ const submit = () => {
   }
 }
 
-// The status strip, once: the report the mtty-footer pi extension sends the
-// real program's server, so the e2e suite can see the strip without pi. One
-// connection carrying one object and closing behind it, as the extension does.
-if (process.env.MTTY_FOOTER) {
+// The report the mtty-footer pi extension sends the real program's server, so
+// the suites can see the strip and tab markers without pi. One connection
+// carrying one object and closing behind it, as the extension does.
+function report(working) {
+  if (!process.env.MTTY_FOOTER) return
   const sock = connect(process.env.MTTY_FOOTER)
   sock.on('error', () => {})
-  sock.end('{"provider":"fake","id":"pi","thinking":"max"}\n')
+  sock.end(`${JSON.stringify({ provider: 'fake', id: 'pi', thinking: 'max', working })}\n`)
 }
+report(false)
 
 let esc = 0   // 0 none, 1 after ESC, 2 inside a CSI/SS3 sequence
 process.stdin.setRawMode(true)

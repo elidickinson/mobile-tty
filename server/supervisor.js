@@ -66,16 +66,18 @@ export function createSupervisor({ port, bind, hostname, password, command, args
    *  for the full-pool picker, where it marks the last sign of work. */
   const runningRows = async (withActive = false) => Promise.all(registry.running().map(async child => {
     const current = registry.current(child)
-    const written = Math.max(child.lastOutputAt ?? 0, current.file ? await lastWrite(current.file) : 0)
+    const written = async () => Math.max(child.lastOutputAt ?? 0, current.file ? await lastWrite(current.file) : 0)
     return {
       id: current.id,
       cwd: current.cwd,
       file: current.file,
       ...placeNames(current.cwd),
       at: current.at ?? child.joinedAt,
-      ...(withActive ? { active: written || child.joinedAt } : {}),
-      // Unread when nobody is watching and a write came after the last viewer left or spawn.
-      unread: watching(child.processId) === 0 && written > child.seenAt,
+      ...(withActive ? { active: await written() || child.joinedAt } : {}),
+      // As pi's mtty-footer extension reports it: any other program never works.
+      working: child.working,
+      // Unread when nobody is watching and a turn ended after the last viewer left or spawn.
+      unread: !child.working && watching(child.processId) === 0 && child.doneAt > child.seenAt,
       label: basename(current.cwd),
       processId: child.processId,
       startedAt: child.startedAt,

@@ -41,7 +41,7 @@ export const ago = at => {
 export const placeRow = (s, i) =>
   `  ${i ? `${i}) ` : '   '}${s.running ? '●' : ' '} ${(s.label || s.name).slice(0, 60).padEnd(60)}  ${s.path}` +
   (s.viewers == null ? '' : `  ${s.viewers} watching`) +
-  (s.unread ? '  unread' : '') +
+  (s.working ? '  working' : s.unread ? '  unread' : '') +
   `  ${ago(s.at)}`
 
 /** The rows a name-or-path fragment picks out. Empty string matches nothing

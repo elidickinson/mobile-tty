@@ -104,7 +104,7 @@ export class Registry {
       throw err
     }
     const joinedAt = Date.now()
-    const child = { processId, sessionId, proc, socketPath, identityPath, cwd, joinedAt, startedAt: joinedAt, seenAt: joinedAt, sockets: [] }
+    const child = { processId, sessionId, proc, socketPath, identityPath, cwd, joinedAt, startedAt: joinedAt, seenAt: joinedAt, working: false, doneAt: 0, sockets: [] }
     this.#children.set(processId, child)
     let settled = false
     let resolveGone
@@ -125,8 +125,15 @@ export class Registry {
     }
     proc.on('exit', settle)
     // The child says when its PTY last moved. At zero viewers it is the only
-    // sign that somebody is still working through this session.
-    proc.on('message', msg => { if (msg?.mtty === 'activity') child.lastOutputAt = msg.at })
+    // sign that somebody is still working through this session. It also
+    // relays whether pi is working, and a turn ending is what makes it unread.
+    proc.on('message', msg => {
+      if (msg?.mtty === 'activity') child.lastOutputAt = msg.at
+      if (msg?.mtty === 'working') {
+        if (child.working && !msg.working) child.doneAt = Date.now()
+        child.working = msg.working
+      }
+    })
     proc.on('error', err => {
       // No pid means the fork itself failed and there is no exit to come.
       // Anything else is a live child reporting a signal or IPC problem, which

@@ -76,11 +76,16 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
   const viewers = new Set()
   // The status strip's channel, up before the program is: the extension reports
   // the model and thinking level of whatever this PTY runs, and the last report
-  // is what a viewer joining mid-session is given after its screen.
+  // is what a viewer joining mid-session is given after its screen. Whether pi
+  // is working is the supervisor's, for the tab markers, not the strip's.
   let lastFooter = null
+  let lastWorking = false
   const stopFooter = openFooter(footerSocket, text => {
-    const state = decodeFooter(text)
-    if (!state) return
+    const decoded = decodeFooter(text)
+    if (!decoded) return
+    const { working, ...state } = decoded
+    if (process.send && working !== lastWorking) process.send({ mtty: 'working', working })
+    lastWorking = working
     lastFooter = state
     for (const viewer of viewers) viewer.footer(state)
   })
