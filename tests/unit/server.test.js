@@ -31,11 +31,14 @@ const join = (url, handshake = { AuthToken: '', columns: 50, rows: 20 }) => new 
   const ws = new WebSocket(url, ['tty'])
   let output = 0
   let settled = false
+  let deadline
   const finish = result => {
     if (settled) return
     settled = true
+    clearTimeout(deadline)
     resolve(result)
   }
+  deadline = setTimeout(() => ws.terminate(), 3_000)
   ws.on('open', () => ws.send(JSON.stringify(handshake)))
   ws.on('message', d => {
     const buf = Buffer.from(d)
