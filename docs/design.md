@@ -38,7 +38,7 @@ The core is a separate choice, since `@wterm/dom` takes any `TerminalCore`. `@wt
 
 ## The vendored wterm fork
 
-`vendor/wterm` carries `@wterm/dom` 0.3.4 with local changes confined to the client input path (`input.ts`) and two promoted integration points, imported straight into the bundle and covered by `npm run typecheck`. The design record for the input work is [`docs/plan-ios-input.md`](plan-ios-input.md).
+`vendor/wterm` carries `@wterm/dom` 0.3.4 with local changes confined to the client input path (`input.ts`) and two promoted integration points, imported straight into the bundle and covered by `npm run typecheck`.
 
 - **The hidden field is a mirror of the PTY's input line, and a diff is the transport.** `flush()` segments field and mirror into graphemes, takes the shared prefix and suffix, and sends the middle as DELs plus inserted text -- so held-backspace repeats, dictation and the emoji keyboard all arrive as exact line edits, and the input and composition events firing in either order cost nothing, the flush being idempotent. A 4096-char cap and a 30s idle keep the mirror bounded; every line change made outside the diff (bar keys, paste, PTY resets) resets it via `resetMirror()`.
 - **Unmodified Backspace stands aside when the field is non-empty**, so iOS's native repeat loop drives the deletion and the diff turns it into DEL bytes. Modified Backspace keeps the keydown path: alt+Backspace is esc+DEL (word delete), meta+Backspace kill-line.
@@ -79,6 +79,16 @@ pi truncates its footer to the terminal width as it renders, so at phone width t
 - A report is one connection carrying one JSON object and closing behind it: nothing to frame, nothing half-written to guard against, nothing to clean up. The extension is the one that skips a report when nothing has changed.
 - The server relays each report as a FOOTER frame and replays the latest to a latecomer. The frame names the model's provider and id and its thinking level; the line under the keys is the client's to draw.
 - The strip is one row, under the keys. The home-indicator band absorbs it when there is one (terminal keeps every row); otherwise the bar grows by the strip (terminal gives up one row). The grid never learns about it: the same rule as the keyboard.
+
+## Working and unread markers
+
+A running session is working (⏳️), unread (●), or neither. Guessing "working" from PTY output fails both ways -- a spinner looks busy, a long tool call looks idle -- so the markers take pi's word for it:
+
+- **pi's program status (OSC 7501).** The server spawns pi with `PI_PROGRAM_STATUS=1`, which makes pi 1.1.0+ report idle/working/blocked/done as an escape sequence. The mirror's headless xterm parses it, since the parser only ever sees whole sequences however the PTY splits them. Viewers get the bytes too; a browser ignores an OSC it does not know.
+- **Background subagents.** pi reports idle while its subagents run on, so `mtty-footer.ts` adds a `subagents` flag to its report, from a 1s poll of pi-subagents' registry (`hasRunning()`). Only background subagents are seen; workflows are not.
+- **Working** is pi working, or subagents running while pi is not blocked. A dialog is waiting on the user even with subagents running, so blocked counts as stopped -- including a dialog that opens on an idle pi.
+- **A stop counts once it has held for 1.5s**, and is dated from when it began. pi says done and working a few ms apart around a turn, and a subagent's result starts a follow-up turn just after the poll sees it finish; neither should flash a marker. A start counts at once.
+- **Unread** is stopped, nobody watching, and stopped after the last viewer left. It is worked out when the list is read, from the stop time and when the session was last seen, so a session starting again clears it with no extra bookkeeping.
 
 ## Reconnect and attach
 

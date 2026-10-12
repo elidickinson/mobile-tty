@@ -31,6 +31,10 @@ const BEL = 0x07
 // Far larger than any real sequence, including a long OSC title.
 const MAX_PENDING = 64 * 1024
 
+// What pi's program status report (OSC 7501) can say. Anything else is a
+// payload this does not understand, and is not a state.
+const PROGRAM_STATES = new Set(['idle', 'working', 'blocked', 'done', 'error', 'clear'])
+
 /**
  * Index just past the escape sequence starting at `i`, or -1 if it is unfinished.
  *
@@ -101,7 +105,7 @@ const completeUpTo = buf => {
 }
 
 export class Mirror {
-  constructor({ cols, rows, scrollback = 0 }) {
+  constructor({ cols, rows, scrollback = 0, onStatus = () => {} }) {
     this.scrollback = scrollback
     // Bytes held back because they do not yet form a complete sequence. They
     // belong to a new viewer after the snapshot, since the screen cannot
@@ -110,6 +114,14 @@ export class Mirror {
     this.term = new Terminal({ cols, rows, allowProposedApi: true, scrollback })
     this.serializer = new SerializeAddon()
     this.term.loadAddon(this.serializer)
+    // The program's status, as pi reports it (`state=working:app=pi:...`). The
+    // parser is the one reader of the stream that only ever sees whole
+    // sequences, however the PTY happened to split them.
+    this.term.parser.registerOscHandler(7501, data => {
+      const state = /^state=([a-z]+)(?::|$)/.exec(data)?.[1]
+      if (PROGRAM_STATES.has(state)) onStatus(state)
+      return true
+    })
   }
 
   write(bytes) {

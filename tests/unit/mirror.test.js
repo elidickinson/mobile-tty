@@ -90,6 +90,18 @@ test('only complete sequences reach the parser', async () => {
   }
 })
 
+test('program status is read whole, however the PTY splits it', async () => {
+  const states = []
+  const mirror = new Mirror({ cols: COLS, rows: ROWS, onStatus: s => states.push(s) })
+  mirror.write(Buffer.from('A\x1b]7501;state=wor'))
+  mirror.write(Buffer.from('king:app=pi\x1b\\B'))
+  // A state pi does not send, and a payload with no state at all, are no status.
+  mirror.write(Buffer.from('\x1b]7501;state=napping:app=pi\x1b\\\x1b]7501;?\x1b\\'))
+  mirror.write(Buffer.from('\x1b]7501;state=done:app=pi:msg=ZG9uZQ==\x1b\\'))
+  await mirror.drain()
+  assert.deepEqual(states, ['working', 'done'])
+})
+
 test('a character split across the snapshot is not lost', async () => {
   const mirror = new Mirror({ cols: COLS, rows: ROWS })
   mirror.write(Buffer.from('AAA'))

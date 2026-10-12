@@ -318,6 +318,73 @@ test('a turn that ends while watched stays read after leaving', async () => {
   }
 })
 
+test('subagents keep a session working after its run ends, and it is unread once they stop', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  const list = async () => (await fetch(`${page}/places?running=1`).then(r => r.json())).sessions[0]
+  try {
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the session to be running')
+    viewer.send('/turn 200\r/subagents 3000\r')
+    await until(async () => (await list()).working, 'the turn to start')
+    viewer.close()
+    await viewer.closed
+    // Past the end of the run and the hold behind it: the subagents are what keep it working.
+    await settle(2_000)
+    assert.equal((await list()).working, true)
+
+    await until(async () => !(await list()).working, 'the subagents to finish')
+    assert.equal((await list()).unread, true)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('blocking on a dialog while unwatched is unread, even with subagents running', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  const list = async () => (await fetch(`${page}/places?running=1`).then(r => r.json())).sessions[0]
+  try {
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the session to be running')
+    viewer.send('/subagents 10000\r/block 2000\r')
+    await until(async () => (await list()).working, 'the run to start')
+    viewer.close()
+    await viewer.closed
+
+    await until(async () => (await list()).unread, 'the dialog to count as stopped')
+    assert.equal((await list()).working, false)
+    await until(async () => (await list()).working, 'the run to go on after the dialog')
+    assert.equal((await list()).unread, false)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
+test('a dialog opening on an idle pi while unwatched is unread', async () => {
+  const store = await storeFor([{ name: 'work', id: 'a' }])
+  const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })
+  const viewer = join(base, 'a')
+  const list = async () => (await fetch(`${page}/places?running=1`).then(r => r.json())).sessions[0]
+  try {
+    await viewer.opened
+    await until(() => viewer.output.length > 0, 'the session to be running')
+    viewer.send('/ask 500\r')
+    viewer.close()
+    await viewer.closed
+
+    await until(async () => (await list()).unread, 'the dialog to count as stopped')
+    assert.equal((await list()).working, false)
+  } finally {
+    await supervisor.close()
+    await rm(store.root, { recursive: true, force: true })
+  }
+})
+
 test('/places hides forks from the list but answers them by exact id', async () => {
   const store = await storeFor([{ name: 'main', id: 'a' }, { name: 'main', id: 'b', parent: 'a' }])
   const { supervisor, base, page } = await start({ sessionDir: store.sessionDir })

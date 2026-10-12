@@ -41,6 +41,12 @@ const DEFAULT_SCROLLBACK = 1000
 // How often the PTY's movement is told to the supervisor at most. Ending idle
 // sessions is what it is for, so a word a second is all that needs.
 const ACTIVITY_MS = 1_000
+// How long the program has to have stopped working before the supervisor is
+// told. pi-subagents takes 300ms and more to start the turn that follows a
+// finished subagent, pi says done and working a few ms apart around a settled
+// run, and its status and the extension's subagent poll arrive by different
+// paths: none of those is the session stopping.
+const STOP_HOLD_MS = 1_500
 // Where the status strip's socket goes, for a server that was not told. A Unix
 // socket path is capped at 104 bytes on macOS and the temp directory is nearly
 // half of that, so the name is a short one -- and a random one, since a name a
@@ -74,18 +80,60 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
   // directory the supervisor itself was launched from.
   const program = command.includes('/') ? resolve(process.cwd(), command) : command
   const viewers = new Set()
+
+  // The supervisor is told over IPC, which a background child has and a
+  // foreground server does not. A channel that has closed is a supervisor that
+  // is gone, which is no reason to take the PTY down with it.
+  const tell = msg => { if (process.connected) process.send(msg) }
+
+  // Whether the program is working, for the tab markers: pi's own status (OSC
+  // 7501, read by the mirror) says working, or background subagents are
+  // running and pi is not waiting on the user. A program that reports neither
+  // never works. Starting is told at once; stopping only once it has held, and
+  // with the time it began, so a viewer who saw it stop and left during the
+  // hold has still seen it. A dialog opening on an idle pi is a stop of its
+  // own: either way the program is waiting on the user.
+  let programState = null
+  let subagents = false
+  const current = () =>
+    programState === 'working' || (subagents && programState !== 'blocked') ? 'working'
+      : programState === 'blocked' ? 'blocked' : 'resting'
+  // What the supervisor was last told this program is doing.
+  let told = 'resting'
+  let stopTimer = null
+  const settleWorking = () => {
+    if (current() === 'working') {
+      clearTimeout(stopTimer)
+      stopTimer = null
+      if (told !== 'working') tell({ mtty: 'working', working: true })
+      told = 'working'
+    } else if (current() !== told && !stopTimer) {
+      const stoppedAt = Date.now()
+      stopTimer = setTimeout(() => {
+        stopTimer = null
+        const now = current()
+        // A dialog closing on an idle pi is nothing to come back to.
+        if (told === 'working' || (now === 'blocked' && told !== 'blocked')) {
+          tell({ mtty: 'working', working: false, stoppedAt })
+        }
+        told = now
+      }, STOP_HOLD_MS)
+      stopTimer.unref()
+    }
+  }
+
   // The status strip's channel, up before the program is: the extension reports
   // the model and thinking level of whatever this PTY runs, and the last report
-  // is what a viewer joining mid-session is given after its screen. Whether pi
-  // is working is the supervisor's, for the tab markers, not the strip's.
+  // is what a viewer joining mid-session is given after its screen. Whether
+  // subagents are running is the tab markers' business, not the strip's.
   let lastFooter = null
-  let lastWorking = false
   const stopFooter = openFooter(footerSocket, text => {
     const decoded = decodeFooter(text)
     if (!decoded) return
-    const { working, ...state } = decoded
-    if (process.send && working !== lastWorking) process.send({ mtty: 'working', working })
-    lastWorking = working
+    const { subagents: running, ...state } = decoded
+    subagents = running
+    settleWorking()
+    if (JSON.stringify(state) === JSON.stringify(lastFooter)) return
     lastFooter = state
     for (const viewer of viewers) viewer.footer(state)
   })
@@ -119,8 +167,13 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
 
   /** Start the program and make it the session. Called exactly once. */
   const start = () => {
-    const session = new Session({ command: program, args, cwd, env: { ...process.env, MTTY_FOOTER: footerSocket } })
-    const unit = { session, mirror: new Mirror({ ...session.size, scrollback }), retired: false }
+    // PI_PROGRAM_STATUS: pi otherwise reports its status only to a terminal
+    // that answers its query, and nothing reliably answers for this PTY --
+    // there may be no viewer at all when pi starts.
+    const env = { ...process.env, MTTY_FOOTER: footerSocket, PI_PROGRAM_STATUS: '1' }
+    const session = new Session({ command: program, args, cwd, env })
+    const onStatus = state => { programState = state; settleWorking() }
+    const unit = { session, mirror: new Mirror({ ...session.size, scrollback, onStatus }), retired: false }
     unit.gone = new Promise(resolve => { unit.resolveGone = resolve })
 
     unit.stopIdentity = identityPath && watchIdentity(identityPath, text => {
@@ -162,9 +215,9 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
     session.onData = data => {
       // With no viewer attached, PTY output reports session activity.
       const now = Date.now()
-      if (process.send && now - announcedActivity >= ACTIVITY_MS) {
+      if (now - announcedActivity >= ACTIVITY_MS) {
         announcedActivity = now
-        process.send({ mtty: 'activity', at: now })
+        tell({ mtty: 'activity', at: now })
       }
       // Viewers first: the mirror is a convenience, and a failure in it must not
       // cost anyone bytes it was about to be sent.
@@ -385,6 +438,7 @@ export function createTerminalServer({ port, bind, socketPath, hostname, passwor
     async close() {
       clearInterval(ping)
       clearTimeout(fitTimer)
+      clearTimeout(stopTimer)
       stopFooter()
       active?.stopIdentity?.()
       active?.session.kill()

@@ -10,6 +10,6 @@
     "forceConsistentCasingInFileNames": true,
     "noEmit": true
   },
-  "include": ["vendor/wterm/packages/@wterm/dom/src"],
+  "include": ["vendor/wterm/packages/@wterm/dom/src", "pi-extensions"],
   "exclude": ["vendor/wterm/packages/@wterm/dom/src/__tests__"]
 }

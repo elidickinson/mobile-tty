@@ -471,11 +471,13 @@ html, body {
 /* Where you already are, so a list of a hundred rows still says which is this. */
 .place.here .place-name::after { content: ' ·'; color: var(--accent); }
 
-/* Still running in the background, whether or not it is the one open now. */
-.place.unread .place-name::before { content: '● '; color: var(--accent); }
-.place.working .place-name::before { content: '⏳️ '; }
-.place.running .place-name::after { content: ' ● '; color: var(--ok, #5fbf7c); }
-.place.here.running .place-name::after { content: ' ● ·'; color: var(--ok, #5fbf7c); }
+/* Every session row keeps the same slot ahead of its name, so names line up
+   whatever it holds: working, unread, running, or nothing for a saved one.
+   The new-session row above them lines up with them too. */
+.place-row .place-name::before, .place.start .place-name::before { content: ''; display: inline-block; width: 2ch; text-align: center; }
+.place.running .place-name::before { content: '○'; color: var(--faint); }
+.place.unread .place-name::before { content: '●'; color: var(--accent); }
+.place.working .place-name::before { content: '⏳️'; }
 
 /* The end action is a sibling button over the row's right edge, not a nested
    control. Its width and the row's reserved space stay fixed while confirming. */

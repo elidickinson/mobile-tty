@@ -74,11 +74,11 @@ export function createSupervisor({ port, bind, hostname, password, command, args
       ...placeNames(current.cwd),
       at: current.at ?? child.joinedAt,
       ...(withActive ? { active: await written() || child.joinedAt } : {}),
-      // As pi's mtty-footer extension reports it: any other program never works.
+      // As the child reports it (server/index.js): a program that says nothing never works.
       working: child.working,
-      // Unread when nobody is watching and a turn ended after the last viewer left or spawn.
+      // Unread when nobody is watching and it stopped working after the last viewer left or spawn.
       // The registry's list, not open sockets: it drops a viewer in the same step seenAt is stamped.
-      unread: !child.working && child.sockets.length === 0 && child.doneAt > child.seenAt,
+      unread: !child.working && child.sockets.length === 0 && child.stoppedAt > child.seenAt,
       label: basename(current.cwd),
       processId: child.processId,
       startedAt: child.startedAt,

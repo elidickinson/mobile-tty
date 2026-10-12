@@ -37,12 +37,14 @@ const connectViewer = async (url, columns, rows) => {
   const ws = new WebSocket(url, ['tty'])
   let lastOutput = Date.now()
   let outputCount = 0
+  let raw = ''
   const footers = []
 
   ws.on('message', data => {
     const frame = Buffer.from(data)
     if (frame[0] === OUTPUT) {
       core.writeRaw(frame.subarray(1))
+      raw += frame.subarray(1).toString()
       lastOutput = Date.now()
       outputCount++
     } else if (frame[0] === SET_SIZE) {
@@ -75,6 +77,7 @@ const connectViewer = async (url, columns, rows) => {
     text,
     quiet,
     outputCount: () => outputCount,
+    raw: () => raw,
     footers: () => footers,
     input: text => ws.send(Buffer.concat([Buffer.from([INPUT]), Buffer.from(text)])),
     resize: (cols, nextRows) => ws.send(Buffer.from(`1${JSON.stringify({ columns: cols, rows: nextRows })}`)),
@@ -132,6 +135,8 @@ test('real pi keeps an attached and post-resize viewer coherent', { timeout: 60_
     assert.equal(typeof footer.provider, 'string', 'the strip names the model\'s provider')
     assert.equal(typeof footer.id, 'string', 'the strip names the model')
     assert.ok('thinking' in footer, 'the strip carries the thinking level')
+    // pi reports its status as its UI starts, and only because the server asks it to.
+    assert.match(early.raw(), /\x1b\]7501;state=[a-z]+/, 'pi\'s program status (OSC 7501) reaches viewers')
     const ready = early.text().match(/MTTY_EXTENSION_READY pid=(\d+)/)
     assert.ok(ready, 'extension readiness marker has the scratch pi PID')
     piPid = Number(ready[1])

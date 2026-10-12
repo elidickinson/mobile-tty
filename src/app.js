@@ -925,8 +925,17 @@ function showPlaces({ sessions, more, offset, here }) {
   showMore({ more, offset }, sessions)
 }
 
-/** What a running session's marker says: pi is working, or finished a turn nobody saw. */
+/** What a running session's marker says: it is working, or stopped while nobody watched. */
 const markOf = sess => sess.working ? 'working' : sess.unread ? 'unread' : null
+
+/** Every running row has a marker; one that is neither working nor unread is
+ *  just running. The spoken word sits outside the name, which stays the label,
+ *  so this goes on the row before the name does. */
+function markRunning(row, sess) {
+  const mark = markOf(sess) ?? 'running'
+  row.classList.add('running', mark)
+  row.append(srOnly(`${mark} `))
+}
 
 function srOnly(text) {
   const hidden = document.createElement('span')
@@ -944,15 +953,12 @@ function sessionRow(sess) {
 
   const row = document.createElement('button')
   row.className = samePlace(sess, currentPlace) ? 'place here' : 'place'
-  if (sess.running) row.classList.add('running')
-  const mark = sess.running && markOf(sess)
-  if (mark) row.classList.add(mark)
+  if (sess.running) markRunning(row, sess)
 
   const name = document.createElement('span')
   name.className = 'place-name'
   // pi names a session once it has read the first exchange; before that,
   // the label is whatever was first asked, so the row is never bare.
-  if (mark) name.append(srOnly(`${mark} `))
   name.append(sess.label)
   row.append(name, placePath(sess))
   row.addEventListener('click', () => joinSession(sess))
@@ -1105,7 +1111,8 @@ async function showPoolFull(reason, retry) {
     wrap.className = 'place-row has-end'
 
     const row = document.createElement('button')
-    row.className = 'place running'
+    row.className = 'place'
+    markRunning(row, sess)
     const name = document.createElement('span')
     name.className = 'place-name'
     name.textContent = sess.label

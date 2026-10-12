@@ -28,7 +28,7 @@ const serverUrl = () => {
 // branch for "password set but refused" so the notify can say login refused.
 const cookieFor = async (url: string): Promise<string | null | false> => {
   const password = process.env.MTTY_PASSWORD;
-  if (!password) return undefined as string | null | false;
+  if (!password) return null;
   const response = await fetch(new URL("/login", url), {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },

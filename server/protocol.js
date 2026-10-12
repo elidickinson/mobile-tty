@@ -59,14 +59,14 @@ export const decodeSize = buf => {
  * The status strip's state, as the extension sends it over its own socket. An
  * empty id is a state of its own -- pi has no model to name -- and anything
  * that is neither that nor a model name is dropped rather than relayed: this
- * reaches a phone that has nothing to draw from it. An extension too old to
- * report `working` is reported as not working.
+ * reaches a phone that has nothing to draw from it. Subagents are running
+ * only when the report says so in as many words.
  */
 export const decodeFooter = buf => {
   try {
-    const { provider, id, thinking, working } = JSON.parse(buf.toString())
+    const { provider, id, thinking, subagents } = JSON.parse(buf.toString())
     if (typeof provider !== 'string' || typeof id !== 'string') return null
-    return { provider, id, thinking: typeof thinking === 'string' ? thinking : null, working: working === true }
+    return { provider, id, thinking: typeof thinking === 'string' ? thinking : null, subagents: subagents === true }
   } catch {
     return null
   }
