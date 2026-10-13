@@ -1,129 +1,109 @@
 # Design
 
-Why the thing is shaped this way: what the parts are, what was rejected, and what the platform forced.
+Architecture and rationale for the current implementation. For setup and user-facing
+behavior, see the [README](../README.md).
 
-## The server
+## Server and sessions
 
-`server/index.js` owns one PTY through node-pty and speaks a five-constant WebSocket protocol, so the client parses it in ~30 lines. `server/supervisor.js` is a second layer in front of it -- see **Background sessions** below -- that holds several of these at once; everything in this section is still true of one of them.
+One supervisor routes clients to isolated per-terminal workers:
 
-- **One PTY, multiple viewers.** Everyone sees the same stream; ending that session's process ends the program running in it.
-- **A new viewer gets a picture, not a redraw.** An `@xterm/headless` mirror holds the current screen, so joining costs the size of the screen no matter how long the transcript is.
-- **One document**, CSS and JS inline. Makes cache management simple. No service worker (they cannot register from `data:` URLs) -- costing offline support, which is meaningless for a terminal.
-- **No build step.** esbuild runs inside the request, not into `dist/`. A document built from disk when asked for cannot be stale, and the client can be edited without the restart that would kill pi. ~50 ms, a few times a day.
-- **Freshness is the page's job**, since iOS holds the launch document whatever the headers say. A build stamp (a hash of the document, also its ETag) is compared; the page reloads past the cache. `no-cache` rather than `no-store`, so an unchanged client costs a 304.
-- **Not dtach or tmux.** dtach drops bytes (on `EAGAIN` it abandons the unwritten tail of a 4096-byte read and never retries -- measured 9.3 MB across 55,989 gaps in a resize storm; `tests/integrity/` is the standing gate against repeating it). tmux takes the outer alternate screen unconditionally, and that screen has no scrollback -- the whole reason for a DOM renderer.
+```mermaid
+flowchart LR
+  V["Browser / attach"] <-->|"HTTP / WebSocket"| S["Supervisor<br/>auth, routing, client build"]
+  S <-->|"private Unix socket"| W["Worker<br/>server/index.js"]
+  W <-->|"node-pty"| P["pi or other program"]
+  W -->|"PTY output"| M["Headless mirror<br/>screen + scrollback"]
+  M -->|"snapshot on join"| W
+```
 
-## Background sessions
+`server/supervisor.js` handles the HTTP interface and starts workers through
+`server/registry.js`. Each worker owns one PTY and serves any number of viewers. It
+stays alive when viewers disconnect. The pool is capped at six by default (`--cap`);
+restarting the supervisor ends its workers.
 
-Originally there was exactly one program at a time, and switching folders ended it and started another: every invariant above was "one PTY, N viewers, one screen" for the *whole server*. That traded away the thing running pi in a few terminals gives you for free -- coming back to one that's still going. The fix keeps that trade everywhere above true, just no longer at the scope of the whole process: it's true per session, and the server holds several sessions rather than one.
+A live terminal has a stable process ID, separate from the identity of the pi
+conversation it currently displays. Viewers join a process with `/ws?process=<id>`;
+opening a saved conversation uses its pi ID and working directory. Pi's `/new` and
+`/resume` can change the conversation without changing the process or its viewers.
+`server/places.js` combines pi's saved history with running terminals, and
+`pi-extensions/mtty-session.ts` reports the conversation currently open in each pi.
 
-- **A session is still exactly `server/index.js`**, unmodified in what it does -- one PTY, N viewers, one screen, for its whole life. What's new is that it binds a Unix socket (`socketPath`) instead of a port, and nothing reachable only over that socket needs its own login or origin check, since only the supervisor's own process tree can open it.
-- **`server/supervisor.js` routes to a PTY, not a pi conversation.** A live PTY gets a stable process ID; `/ws?process=<id>` joins it even after pi's `/new` or `/resume`. A saved conversation is opened by `/ws?session=<id>&cwd=<path>` only when no live PTY already owns it. The supervisor forwards terminal frames unchanged, and selecting another row closes the old connection and opens a new one; the frame that names which conversation a PTY is showing comes from the child, which owns the identity file. `GET /places` merges pi's saved conversations with live PTYs.
-- **Pi conversations and live terminals have separate identities.** `header.id` plus `cwd` identifies a saved conversation. The supervised pi extension writes the active conversation after startup, `/new`, and `/resume`, canonical transcript path included; the child relays each change to attached viewers while the PTY's process ID stays fixed. A `/resume` onto a transcript another supervised terminal of this server already has open is refused, rather than quietly giving one transcript two owners. Two switches that route into the same transcript in the same instant can still both proceed -- nothing arbitrates that, and pi tolerates the two writers -- so this is a courtesy, not a lock. `server/places.js` lists saved conversations by recency, and the supervisor marks whichever one each live PTY currently has open. A new conversation without a transcript still gets a live row.
-- **A session outlives the viewer that joined it, on purpose**, and the pool is bounded (`cap`, default 6, `--cap` to change). When the pool is full, a start or join is refused until the caller picks a running session to end. A restart of the supervisor still ends every session at once -- no adoption or reattachment across it was built, since that traded a meaningful amount of complexity (persisted socket tables, orphan detection) for a case (the server process itself restarting) that was already destructive before this existed.
-- **`POST /start` begins a fresh PTY in an existing directory.** The response returns its stable process ID so a viewer can attach before pi has written a transcript. `mobile-tty new` starts one in the caller's directory.
+Each child forwards PTY bytes to its viewers and to `server/mirror.js`, an
+`@xterm/headless` terminal. The mirror supplies joining and reconnecting viewers with
+the current screen and scrollback instead of making pi redraw its transcript. The
+snapshot is capped at 1000 lines, matching the browser terminal core's limit.
 
-## Renderer: wterm, DOM over canvas
+`server/client.js` builds the HTML on request with esbuild, inlining the client,
+styles, and VT WASM in one document. Its hash is used for freshness checks and the
+ETag. Client edits need a page reload; server edits need a restart, which stops the
+sessions.
 
-- **`@wterm/dom` renders to the DOM**, so momentum scroll, selection handles and find come free. Canvas renderers would bring their own viewport and scrollbar; here the wterm element is the one scroller.
-- **Inlined base64 WASM** -- what survives the single-document constraint. No separate fetch, no MIME to get right.
-- **`write(Uint8Array)` hands raw bytes to the parser.** A sequence split across two messages is reassembled by the core; JS never decodes the socket.
-- **The renderer owns the screen model, scrollback, painting and key encoding; the server owns none of it.**
-- xterm.js was rejected: largest bundle, long-open mobile bugs (#1101, #2403, #1007, #5721).
-- **Browser scrollback cap: 1000 lines** -- writing 26,000 lines into the VT core held 1000. The limit is inside its WASM with no option to raise it, which is why the snapshot is fixed at the same number.
+## Browser terminal and input
 
-The core is a separate choice, since `@wterm/dom` takes any `TerminalCore`. `@wterm/ghostty` is broken at 0.3.3 (WASM trap on grapheme clusters, inert `scrollbackLimit`, 431 KB of uninlined WASM); `ghostty-vt-core` holds the working swap, to retest on a later release.
+`src/app.js` renders through `@wterm/dom` from the vendored `vendor/wterm` package,
+using the pinned `@wterm/core` WASM terminal engine. The DOM terminal provides native
+scrolling, selection, and find. PTY bytes go directly to the renderer, which owns the
+screen and scrollback. The app avoids the alternate screen to keep that history
+available to browser scrolling; applications that require it, including vim and
+Claude Code, are unsupported. The renderer keeps 1000 lines; reconnecting cannot
+restore older history.
 
-**Known bug:** a column shrink loses on-screen text with nothing scrolling off -- 192 of 537 characters from 80 to 50 columns, 5 even from 80 to 79. libghostty reflows the same input correctly, the strongest reason to revisit the core. The current core also answers no queries but CPR, so pi's startup probes go unanswered.
+Pi's own input box stays visible because its autocomplete depends on it. The cost is
+about five or six terminal rows. The vendored renderer's input path mirrors the
+hidden keyboard field and sends edits as text changes, which handles iOS dictation,
+QuickPath, and held Backspace. Its follow-output behavior checks the scroller's
+current position when drawing, avoiding a jump to the bottom during a swipe.
 
-## The vendored wterm fork
+`src/viewport.js` uses `visualViewport` for the visible app area, but keeps the PTY
+grid stable while the keyboard opens. The keyboard occludes the grid rather than
+forcing pi to reflow mid-input. Orientation changes and explicit grid presets can
+resize it. Render zoom only scales the display. Safe-area insets are handled
+asymmetrically to preserve rows and keep the key bar clear of the home indicator.
 
-`vendor/wterm` carries `@wterm/dom` 0.3.4 with local changes confined to the client input path (`input.ts`) and two promoted integration points, imported straight into the bundle and covered by `npm run typecheck`.
+One PTY has one grid for all viewers. The server chooses the narrowest requested
+size, so a desktop may show a phone-width terminal. It coalesces resizes and reports
+the selected size to viewers. `attach` uses the same protocol and cannot resize the
+PTY independently.
 
-- **The hidden field is a mirror of the PTY's input line, and a diff is the transport.** `flush()` segments field and mirror into graphemes, takes the shared prefix and suffix, and sends the middle as DELs plus inserted text -- so held-backspace repeats, dictation and the emoji keyboard all arrive as exact line edits, and the input and composition events firing in either order cost nothing, the flush being idempotent. A 4096-char cap and a 30s idle keep the mirror bounded; every line change made outside the diff (bar keys, paste, PTY resets) resets it via `resetMirror()`.
-- **Unmodified Backspace stands aside when the field is non-empty**, so iOS's native repeat loop drives the deletion and the diff turns it into DEL bytes. Modified Backspace keeps the keydown path: alt+Backspace is esc+DEL (word delete), meta+Backspace kill-line.
-- **QuickPath's separator is emulated**: iOS spaces only swipe-scored words, so a swiped single letter -- and whatever is swiped or dictated after it -- arrives glued to the previous word. A letters-only insertion landing against a word character gets its separator spliced in before the diff, on both the input-event and marked-text delivery paths.
-- **The field sits sticky at the scrollport's bottom** instead of parked off-screen at the top, so WebKit's reveal-the-caret scroll has nothing to chase and cannot drag a reader to the top of history.
-- **Follow-output is decided where the scroller is, not where it was.** wterm latches "was at the bottom" when bytes arrive but renders a frame later, and a latch that outlives the scroll that voided it snaps the box back down mid-flick; the render now re-decides from the box's actual position. `followOutput(on)` re-asserts the latch wterm's scroll handler lowers, and `onAfterPaint` lets the client adjust painted geometry between the paint and wterm's own scroll pinning.
+## Status and reconnects
 
-## Input, keyboard, viewport
+The optional `mtty-footer.ts` extension sends model and thinking-level updates to the
+server, which replays the latest report to new viewers for the status strip. Pi 1.1.0
+and later can report program status through OSC 7501. The server uses that status,
+plus the extension's background-subagent count, for the working marker. A blocked
+pi is treated as stopped. The unread marker applies when a session stopped after its
+last viewer left.
 
-pi's autocomplete fires *as you type*, directly above its input box, so a client-side composer would break it. Keystrokes stream straight to pi and **pi's own input box stays visible**, costing 5-6 rows. Autocorrect stays off: a *corrected* identifier points the agent at the wrong file, where a typo in prose is inferred straight through (and in fact iOS sent 0 `insertReplacementText` events over 7 typed chars).
-
-The problem is viewport control, not resize policy. pi reflows fine at any size, but the surviving rows go to its own input box and that window cannot be moved.
-
-- **Size from `visualViewport`**, never `height:100%` -- that is the layout viewport and puts the UI under the keyboard.
-- **Pin the bottom** on every viewport change; holding `scrollTop` leaves pi's input box below the fold.
-- **Insets are asymmetric.** iOS excludes the top one already, and honouring it again costs rows. The bottom one is visible only while the keyboard is down, so the key bar grows to cover it.
-- **Standalone** via `apple-mobile-web-app-capable`, worth **+7 rows** over Safari.
-- **Bar keys never dismiss the keyboard.** iOS ends editing when DOM focus leaves the hidden input, and a tap's default activation moves focus to the button. Bar buttons are non-focusable and their presses are prevented; `⌨` and the menu blur the input themselves to dismiss on purpose.
-
-## Scrolling and resizing
-
-- **Real scrollback, scrolled natively.** Nothing takes the alternate screen, so terminal scrollback is real history: no copy-mode, no synthesised mouse events, no reader view.
-- **Vertical scroll on the terminal element, horizontal pan on the frame** -- neither gesture claims the other.
-- **Page keys page the view, not the app**, since pi answers PageUp with `\e[1G\e[?25l`.
-- **Follow-output needs no toggle**: wterm sticks to the bottom only when already there.
-
-**Reflow and render scale are separate operations**, conflated by every existing tool into one font-size slider. Reflow is cols/rows and SIGWINCH, via presets plus Fit. Render scale is `transform: scale` over a *pinned* grid, so pi still believes it is on a desktop. No pinch: over an occluding keyboard, on a surface that is already a scroller, it is a bad bargain.
-
-**The grid is sized from the layout viewport**, which ignores the keyboard, so opening the keyboard never reflows pi. Involuntary events never touch the grid; **rotation does**, being deliberate and worth 93 columns against portrait's 50. One refit on the next frame after a change keeps rows from stranding below the fold while insets settle.
-
-**The scroller ends at the last written row.** pi draws its input box after the transcript rather than on the last row, so a keyboard-down-sized grid is mostly empty on a fresh session. Everything that means "the bottom" (the pin, the at-bottom test, wterm's follow-output and scroll-on-keystroke) measures the scroller, hiding the empty rows and anchoring to the bottom of the box -- one correction for every consumer.
-
-## The status strip
-
-pi truncates its footer to the terminal width as it renders, so at phone width the model name is never written to the PTY -- there is no wider copy to recover. The strip captures it at the source instead:
-
-- The `pi-extensions/mtty-footer.ts` extension reports the active model and thinking level to the socket `$MTTY_FOOTER` names; inert without the variable, so it can be installed globally.
-- A report is one connection carrying one JSON object and closing behind it: nothing to frame, nothing half-written to guard against, nothing to clean up. The extension is the one that skips a report when nothing has changed.
-- The server relays each report as a FOOTER frame and replays the latest to a latecomer. The frame names the model's provider and id and its thinking level; the line under the keys is the client's to draw.
-- The strip is one row, under the keys. The home-indicator band absorbs it when there is one (terminal keeps every row); otherwise the bar grows by the strip (terminal gives up one row). The grid never learns about it: the same rule as the keyboard.
-
-## Working and unread markers
-
-A running session is working (⏳️), unread (●), or neither. Guessing "working" from PTY output fails both ways -- a spinner looks busy, a long tool call looks idle -- so the markers take pi's word for it:
-
-- **pi's program status (OSC 7501).** The server spawns pi with `PI_PROGRAM_STATUS=1`, which makes pi 1.1.0+ report idle/working/blocked/done as an escape sequence. The mirror's headless xterm parses it, since the parser only ever sees whole sequences however the PTY splits them. Viewers get the bytes too; a browser ignores an OSC it does not know.
-- **Background subagents.** pi reports idle while its subagents run on, so `mtty-footer.ts` adds a `subagents` flag to its report, from a 1s poll of pi-subagents' registry (`hasRunning()`). Only background subagents are seen; workflows are not.
-- **Working** is pi working, or subagents running while pi is not blocked. A dialog is waiting on the user even with subagents running, so blocked counts as stopped -- including a dialog that opens on an idle pi.
-- **A stop counts once it has held for 1.5s**, and is dated from when it began. pi says done and working a few ms apart around a turn, and a subagent's result starts a follow-up turn just after the poll sees it finish; neither should flash a marker. A start counts at once.
-- **Unread** is stopped, nobody watching, and stopped after the last viewer left. It is worked out when the list is read, from the stop time and when the session was last seen, so a session starting again clears it with no extra bookkeeping.
-
-## Reconnect and attach
-
-- **The server holds the screen, so attaching costs nothing and prompts nobody.** That matters because pi renders relatively and re-draws its **entire transcript** on SIGWINCH -- measured 12 KB after one turn, +3.3 KB per trivial turn, linear.
-- **The snapshot carries the screen plus 1000 lines of scrollback** (~75 KB): pi does not page itself, so scrollback is the only way to read back; 1000 is also the browser core's cap, so a deeper snapshot would reach only `attach` while every phone reconnect paid for lines the browser drops.
-- **A drop leaves the stale screen up**, not a blank. Input queues while down; resizes do not, since the handshake carries the size.
-
-`attach` is a client of the same protocol, so the desktop cannot resize the PTY behind the server's back. It acts like a terminal on its own account: raw mode restored on every exit path, pi's and the snapshot's modes undone on the way out, SIGWINCH forwarded, `Ctrl-C`/`Ctrl-Z` passed through, `Ctrl-]` to detach. Its initial snapshot takes over the terminal; later grid changes send the size and let pi's real PTY redraw update it. The detach chord cannot be discovered, so `attach` names it on a cleared screen, holds its hello briefly, and the server sends nothing until the hello -- nothing buffered, nothing lost.
-
-One PTY has one size, and **the narrowest wins**: a desktop showing a phone-width column is legible where the reverse is not. The server picks the size and tells every viewer what it actually is; the common case is free, since the phone is already the narrowest. (Smallest shared grid 20x8, so no viewer shrinks everyone to nothing; 100 ms resize coalescing, so a flapping viewer does not make pi re-render repeatedly; 4 MB backlog cap, then that viewer is disconnected -- never sent a gap.)
-
-Adopting an *already running* pi needs ptrace surgery (`reptyr`), Linux-only, so a restart ends the session and starts a fresh conversation, unless pi is given one to resume.
-
-## Development
-
-- **Editing `server/` needs a restart** (kills the program); **editing the client (`src/`) does not** -- the document is built per request.
-- **Tests:** `npm test` (unit, including the snapshot round-trip), `npx playwright test` (WebKit at the device size), `npm run test:integrity` (no viewer is ever sent a gap), `npm run test:smoke` and `npm run test:real-pi` (against real pi, no prompts, no tokens).
-- **Philosophy:** anything mechanisable is a pure function; the device verifies the viewport adapter (`tests/unit/viewport.test.js` replays the five on-device configurations at the measured cell size, 8.04x15 at 13px); no visual goldens -- they would churn while the design moves.
-
-The tape: iPhone 6 pro, 402x874 pt @3x. Standalone portrait is 50x54 with the keyboard down, 50x33 up; landscape 93x22. Safari in a tab costs 160 pt of chrome. Keyboard detection: >=100 pt of lost viewport, so collapsing browser chrome does not read as a keyboard.
+The server retains the screen while no viewers are connected. A dropped connection
+leaves the last screen visible, queues input until reconnect, and does not queue
+resizes. Snapshots include the bounded scrollback. `attach` is another viewer, with
+terminal modes restored on exit and Ctrl-] to detach.
 
 ## Access
 
-Cloudflare tunnel, reusing the pi-phone pattern. Tailscale needs a client on every device; LAN-only defeats the purpose.
+Choose Cloudflare Access or `$MTTY_PASSWORD`. The password option is intended for a
+trusted network. Both use browser cookies: Safari does not send an Authorization
+header on a WebSocket handshake, and the page cannot add one. Password tokens live
+in memory and are invalidated by a server restart.
 
-**Authentication is a cookie either way.** Safari puts no `Authorization` header on a WebSocket handshake and the page cannot add one, so basic auth would load the page and never connect. Access does it at the edge. `$MTTY_PASSWORD` is the opt-in alternative for a trusted network: a login page and a random in-memory token, invalidated by the restart that has already killed the program. `attach` does the same login rather than bypassing it, since trusting loopback would trust the whole internet through cloudflared. One or the other, not both.
+The supervisor checks browser `Origin` on the WebSocket handshake to prevent another
+site from opening a connection to a local terminal. When the server is behind a
+proxy, its hostname must be declared with `--hostname` or `$MTTY_HOSTNAME`; names are
+not inferred. Requests without an Origin are allowed for non-browser clients such
+as `attach`. The per-terminal Unix sockets are only used by the supervisor's child
+processes.
 
-The threat model is narrow on purpose: a page on some other site your browser visits must not get the terminal. That is the only adversary a loopback tool can honestly name -- the server is not claiming to be a public web application -- and the mechanism is chosen for it.
+## Constraints and development
 
-**Origin is checked on the handshake.** Browsers let any page open a WebSocket to any host -- the same-origin policy does not apply and there is no preflight -- so without the check, any page you visit could open `ws://127.0.0.1:7681/ws` and type into pi.
+The browser terminal core caps scrollback at 1000 lines, and that is also the server
+snapshot limit. Its current reflow can lose visible text when columns shrink, and it
+answers cursor-position queries but not other terminal queries. These are renderer
+limitations; the mirror and client use the same byte stream.
 
-- Matching `Origin` against `Host` is not enough: rebinding gets both to say the same attacker-owned name. Host must be an address (cannot be rebound) or the one name given with `--hostname`. **Declared, never inferred.**
-- A request with no Origin is allowed: only browsers send it, `attach` and curl send none, and anything hostile that is not a browser forges headers freely -- refusing it costs real clients and buys nothing.
-- Scheme is not compared, so an attacker-controlled http endpoint on the declared hostname could pass a wss:// handshake. That needs a foothold this attacker does not have, and names the real limit of the check.
+Useful checks:
 
-**An expired or invalidated login leaves an open client wedged**: the socket itself keeps working (auth is handshake-only), but when it drops, the reconnects are refused and the client retries forever with the stale screen up. The fix is the menu's **Reload app**, not a redirect -- the app cannot surface a login the socket no longer lets through.
-
-**Joining a saved conversation requires an ID the server can resolve and its folder; starting a new PTY requires an existing directory.** `GET /places` lists pi's saved history and live terminals -- forked sessions (a subagent's run, a `/fork`, a `/clone`) are left off the list but still resolved when named by exact ID, so a caller that knows the ID needs no menu row. `POST /start` can start pi in any directory the server can access. Both operations require the same authentication as the terminal itself.
+- `npm test` runs the unit tests, including snapshot round-trips.
+- `npm run typecheck` checks the vendored TypeScript renderer.
+- `npm run test:e2e` runs the WebKit device tests.
+- `npm run test:integrity` checks that viewers are not sent gaps.
+- `npm run test:smoke` and `npm run test:real-pi` exercise the real server and pi.
