@@ -14,13 +14,29 @@
 // for anyone to read; unchanged state is not reported at all.
 //
 //   { "provider": "anthropic", "id": "claude-opus-5", "thinking": "max", "subagents": false }
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+//
+// The state is read from a live context rather than cached from the events that
+// mention it: while its session runs, a context is getters over what pi holds
+// now, not a snapshot of the event that handed it over, so the poll re-reads it
+// and a change that came with no event is still reported. A context stops
+// working once pi has replaced its session, and reading one then throws -- from a
+// timer that is an uncaughtException -- so reads are guarded and the context goes
+// away with the session. Delivery is best effort: a connection that fails is
+// retried on the next tick, but a report some receiver discarded without the
+// socket failing is not knowable from here.
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { connect } from "node:net";
 
 // pi-subagents' in-process registry is the one surface that answers "is any
 // subagent still running", nested ones included. Absent without pi-subagents.
 const SUBAGENT_MANAGER_KEY = Symbol.for("pi-subagents:manager");
-const SUBAGENT_POLL_MS = 1000;
+// How often the live state is re-read and the registry re-checked.
+const POLL_MS = 1000;
+// How long a change waits before it is reported. A session switch fires several
+// within one millisecond -- this session's start, another extension carrying the
+// model selection across the switch -- and each uncoalesced one can briefly put a
+// state on the strip that pi has already moved past.
+const COALESCE_MS = 100;
 
 // Third-party code behind an undocumented slot, called from a timer: a throw
 // would take pi down, so one counts as nothing running.
@@ -37,61 +53,94 @@ export default function (pi: ExtensionAPI) {
   if (!out) return;
 
   let last = "";
-  let model = {};
+  let session: ExtensionContext | undefined;
   let poll: ReturnType<typeof setInterval> | undefined;
+  let settle: ReturnType<typeof setTimeout> | undefined;
 
-  // The facts rather than the line drawn from them: which client shows this
-  // and how wide it is, is not this process's business. No model is reported as
-  // no model -- an empty id -- rather than not reported at all: a session that
+  const stop = () => {
+    clearInterval(poll);
+    clearTimeout(settle);
+    poll = undefined;
+    settle = undefined;
+  };
+
+  // The facts rather than the line drawn from them: which client shows this and
+  // how wide it is, is not this process's business. No model is reported as no
+  // model -- an empty id -- rather than not reported at all: a session that
   // starts without one must clear the strip, not leave the last session's model
   // sitting on it.
-  const modelOf = (ctx: any) => ({
-    provider: ctx.model?.provider ?? "",
-    id: ctx.model?.id ?? "",
-    thinking: ctx.model?.reasoning ? (ctx.thinkingLevel ?? "off") : null,
-  });
-
-  // The model is cached rather than the ctx: the poll has none of its own, and
-  // a ctx kept past its event is stale.
-  const write = (ctx?: any, subagents = subagentsRunning()) => {
-    if (ctx) model = modelOf(ctx);
-    const line = JSON.stringify({ ...model, subagents });
+  const put = (line: string) => {
     if (line === last) return;
-    // A report is remembered only once it has been taken, so one that failed is
-    // free to be sent again on the next change instead of being skipped as a
-    // repeat. The error is the report's and not the session's: an extension
-    // must not disturb the pi it was installed for over a status line, and
-    // connect() can throw as well as emit.
+    // A report is remembered as soon as it leaves and forgotten if the connection
+    // fails, so one that did not get through is retried on the next tick instead
+    // of being skipped as a repeat. The error is the report's and not the
+    // session's: an extension must not disturb the pi it was installed for over a
+    // status line, and connect() can throw as well as emit.
     try {
       const sock = connect(out);
-      sock.on("error", () => {});
-      sock.on("close", (hadError) => { if (!hadError) last = line; });
+      sock.on("error", () => { if (last === line) last = ""; });
       sock.end(`${line}\n`);
+      last = line;
     } catch {}
   };
 
-  // Only the TUI session reports for this pi. pi-subagents binds extensions
-  // into its in-process subagent sessions too, in print mode, and those would
+  const send = (subagents = subagentsRunning()) => {
+    if (!session) return;
+    let state: Record<string, unknown>;
+    try {
+      const model = session.model;
+      state = {
+        provider: model?.provider ?? "",
+        id: model?.id ?? "",
+        thinking: model?.reasoning ? (session.thinkingLevel ?? "off") : null,
+      };
+    } catch {
+      stop(); // this context is no longer readable, so there is nothing to report
+      return;
+    }
+    put(JSON.stringify({ ...state, subagents }));
+  };
+
+  const report = () => {
+    clearTimeout(settle);
+    // The armed flag has to go when the arm fires: a poll tick that finds one
+    // pending stands down, since the pending report carries this state anyway,
+    // and one left standing here would have every later tick stand down too.
+    settle = setTimeout(() => { settle = undefined; send(); }, COALESCE_MS);
+    settle.unref();
+  };
+
+  // Only the TUI session reports for this pi. pi-subagents binds extensions into
+  // its in-process subagent sessions too, in print mode, and those would
   // otherwise put the subagent's model on the strip.
   pi.on("session_start", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    ctx.ui.setStatus("mobile-tty", ctx.ui.theme.fg("accent", "mobile-tty"));
-    write(ctx);
-    poll ??= setInterval(() => write(), SUBAGENT_POLL_MS);
+    session = ctx;
+    // Before anything that can throw: a session that lost its report or its poll
+    // because drawing a status line went wrong would stay wrong until the model
+    // was changed by hand.
+    poll ??= setInterval(() => { if (!settle) send(); }, POLL_MS);
     poll.unref();
+    report();
+    ctx.ui.setStatus("mobile-tty", ctx.ui.theme.fg("accent", "mobile-tty"));
   });
   pi.on("model_select", (_event, ctx) => {
-    if (ctx.mode === "tui") write(ctx);
+    if (ctx.mode === "tui") report();
   });
   pi.on("thinking_level_select", (_event, ctx) => {
-    if (ctx.mode === "tui") write(ctx);
+    if (ctx.mode === "tui") report();
   });
-  // The poll stops with the session, so its last word must not be that
-  // subagents are running: nothing would come along to take it back.
+  // The poll stops with the session, so its last word must not be that subagents
+  // are running: pi-subagents aborts them during shutdown, and nothing else would
+  // come to take the flag back. Only the flag is taken back, by rewriting the line
+  // last issued -- the model in it is what the strip was told, and the session
+  // replacing this one reports its own. The rewrite relies on this file's own
+  // serialization, which puts subagents last, and on a quote inside an id being
+  // escaped, so the trailing key cannot be matched by one.
   pi.on("session_shutdown", (_event, ctx) => {
     if (ctx.mode !== "tui") return;
-    clearInterval(poll);
-    poll = undefined;
-    write(undefined, false);
+    stop();
+    if (last.endsWith('"subagents":true}')) put(last.replace(/"subagents":true\}$/, '"subagents":false}'));
+    session = undefined;
   });
 }
